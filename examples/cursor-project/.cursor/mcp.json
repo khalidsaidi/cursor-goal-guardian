@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "goal-guardian": {
+      "command": "node",
+      "args": [
+        "/ABSOLUTE/PATH/TO/THIS/REPO/packages/cursor-goal-guardian-mcp/dist/index.js"
+      ],
+      "env": {
+        "GOAL_GUARDIAN_WORKSPACE_ROOT": "/ABSOLUTE/PATH/TO/THE/PROJECT/WORKSPACE"
+      }
+    }
+  }
+}

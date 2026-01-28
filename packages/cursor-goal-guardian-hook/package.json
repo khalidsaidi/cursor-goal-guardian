@@ -1,0 +1,19 @@
+{
+  "name": "cursor-goal-guardian-hook",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "cursor-goal-guardian-hook": "dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "fallback-chain-js": "^0.1.0",
+    "minimatch": "^9.0.3"
+  }
+}

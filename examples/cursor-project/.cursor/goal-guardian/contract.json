@@ -1,0 +1,14 @@
+{
+  "goal": "Build an anti-goal-drift workflow for Cursor using an MCP goal authority and enforced permits.",
+  "success_criteria": [
+    "MCP server exposes tools: guardian_get_contract, guardian_initialize_contract, guardian_check_step, guardian_issue_permit, guardian_commit_result",
+    "Cursor hooks block shell and MCP calls without a valid permit token",
+    "Permits are short-lived and stored in .ai (gitignored) and cannot be read by the model",
+    "Clear README + example configs (.cursor/mcp.json and .cursor/hooks.json) are provided"
+  ],
+  "constraints": [
+    "No silent scope expansion: every step must map to explicit success criteria IDs.",
+    "Prefer deterministic enforcement via hooks over prompt-only guidance.",
+    "Never log to stdout inside the MCP server except JSON-RPC."
+  ]
+}

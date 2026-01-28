@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      { "command": "cursor-goal-guardian-hook" }
+    ],
+    "beforeMCPExecution": [
+      { "command": "cursor-goal-guardian-hook" }
+    ],
+    "beforeReadFile": [
+      { "command": "cursor-goal-guardian-hook" }
+    ],
+    "afterFileEdit": [
+      { "command": "cursor-goal-guardian-hook" }
+    ],
+    "stop": [
+      { "command": "cursor-goal-guardian-hook" }
+    ]
+  }
+}

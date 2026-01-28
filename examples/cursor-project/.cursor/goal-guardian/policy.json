@@ -1,0 +1,18 @@
+{
+  "requirePermitForShell": true,
+  "requirePermitForMcp": true,
+  "requirePermitForRead": false,
+  "autoRevertUnauthorizedEdits": false,
+
+  "alwaysAllow": {
+    "shell": ["git status*", "git diff*", "ls*", "pwd"],
+    "mcp": ["goal-guardian/*"],
+    "read": [".cursor/goal-guardian/**", ".cursor/hooks.json", ".cursor/mcp.json"]
+  },
+
+  "alwaysDeny": {
+    "shell": ["rm -rf /*", "rm -rf /", "*curl*|*sh*", "*wget*|*sh*"],
+    "mcp": [],
+    "read": [".ai/goal-guardian/**", ".git/**", "**/.env", "**/.env.*", "**/*.pem", "**/*.key"]
+  }
+}

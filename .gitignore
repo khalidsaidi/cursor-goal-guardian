@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+coverage/
+.DS_Store
+
+# Agent scratch + runtime state (must not pollute app code)
+.ai/
+
+# Local Cursor logs (optional)
+.cursor/*.log
+
+# If you store runtime goal-guardian state in project configs, ignore those too:
+# .cursor/goal-guardian/progress.json
+# .cursor/goal-guardian/plan.json
