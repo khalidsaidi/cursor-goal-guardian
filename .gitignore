@@ -13,3 +13,6 @@ coverage/
 # If you store runtime goal-guardian state in project configs, ignore those too:
 # .cursor/goal-guardian/progress.json
 # .cursor/goal-guardian/plan.json
+
+# VS Code extension package
+*.vsix

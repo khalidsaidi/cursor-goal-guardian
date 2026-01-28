@@ -21,6 +21,18 @@ importers:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@20.19.30)
 
+  packages/cursor-goal-guardian-extension:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.30
+      '@types/vscode':
+        specifier: ^1.85.0
+        version: 1.108.1
+      typescript:
+        specifier: ^5.3.3
+        version: 5.9.3
+
   packages/cursor-goal-guardian-hook:
     dependencies:
       fallback-chain-js:
@@ -487,6 +499,9 @@ packages:
 
   '@types/node@20.19.30':
     resolution: {integrity: sha512-WJtwWJu7UdlvzEAUm484QNg5eAoq5QR08KDNx7g45Usrs2NtOPiX8ugDqmKdXkyL03rBqU5dYNYVQetEpBHq2g==}
+
+  '@types/vscode@1.108.1':
+    resolution: {integrity: sha512-DerV0BbSzt87TbrqmZ7lRDIYaMiqvP8tmJTzW2p49ZBVtGUnGAu2RGQd1Wv4XMzEVUpaHbsemVM5nfuQJj7H6w==}
 
   '@vitest/expect@2.1.9':
     resolution: {integrity: sha512-UJCIkTBenHeKT1TTlKMJWy1laZewsRIzYighyYiJKZreqtdxSos/S1t+ktRMQWu2CKqaarrkeszJx1cgC5tGZw==}
@@ -1325,6 +1340,8 @@ snapshots:
   '@types/node@20.19.30':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/vscode@1.108.1': {}
 
   '@vitest/expect@2.1.9':
     dependencies:

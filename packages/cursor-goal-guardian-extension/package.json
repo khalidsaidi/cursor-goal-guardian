@@ -1,0 +1,48 @@
+{
+  "name": "cursor-goal-guardian-extension",
+  "displayName": "Cursor Goal Guardian",
+  "description": "Installs and configures Goal Guardian (MCP + Hooks) for Cursor workspaces.",
+  "version": "0.1.0",
+  "publisher": "khalidsaidi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/khalidsaidi/cursor-goal-guardian.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onCommand:goalGuardian.install",
+    "onCommand:goalGuardian.openContract",
+    "onCommand:goalGuardian.uninstall"
+  ],
+  "main": "dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "goalGuardian.install",
+        "title": "Goal Guardian: Install/Configure in Workspace"
+      },
+      {
+        "command": "goalGuardian.openContract",
+        "title": "Goal Guardian: Open Contract"
+      },
+      {
+        "command": "goalGuardian.uninstall",
+        "title": "Goal Guardian: Remove from Workspace"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "package": "node ../../scripts/package-extension.js",
+    "publish": "node ../../scripts/publish-extension.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  }
+}

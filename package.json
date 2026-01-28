@@ -7,7 +7,9 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "dev:mcp": "pnpm --filter cursor-goal-guardian-mcp dev",
-    "dev:hook": "pnpm --filter cursor-goal-guardian-hook dev"
+    "dev:hook": "pnpm --filter cursor-goal-guardian-hook dev",
+    "package:vsix": "node scripts/package-extension.js",
+    "publish:ovsx": "node scripts/publish-extension.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
