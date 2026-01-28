@@ -1,7 +1,7 @@
 {
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
-  "description": "Installs and configures Goal Guardian (MCP + Hooks) for Cursor workspaces.",
+  "description": "Blocks risky actions in Cursor unless a permit is issued (MCP + Hooks).",
   "version": "0.1.0",
   "publisher": "khalidsaidi",
   "license": "MIT",
@@ -13,6 +13,7 @@
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
+  "keywords": ["cursor", "mcp", "hooks", "security", "workflow", "guardrail"],
   "activationEvents": [
     "onCommand:goalGuardian.install",
     "onCommand:goalGuardian.openContract",
