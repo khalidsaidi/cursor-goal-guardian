@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "goal-guardian": {
+      "command": "node",
+      "args": [
+        "/home/khalid/cursor-goal-guardian/packages/cursor-goal-guardian-mcp/dist/index.js"
+      ],
+      "env": {
+        "GOAL_GUARDIAN_WORKSPACE_ROOT": "/home/khalid/cursor-goal-guardian/examples/local-project"
+      }
+    }
+  }
+}
