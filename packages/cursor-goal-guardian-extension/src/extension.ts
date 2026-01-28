@@ -23,8 +23,22 @@ async function ensureDir(dirPath: string): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
 }
 
-async function writeJson(filePath: string, data: unknown, overwrite: boolean): Promise<boolean> {
-  if (!overwrite && (await fileExists(filePath))) return false;
+async function backupIfExists(filePath: string): Promise<void> {
+  if (!(await fileExists(filePath))) return;
+  const backupPath = `${filePath}.bak-${Date.now()}`;
+  await fs.copyFile(filePath, backupPath);
+}
+
+async function readJson<T>(filePath: string, fallbackValue: T): Promise<T> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallbackValue;
+  }
+}
+
+async function writeJson(filePath: string, data: unknown): Promise<boolean> {
   await ensureDir(path.dirname(filePath));
   await fs.writeFile(filePath, JSON.stringify(data, null, 2), "utf8");
   return true;
@@ -68,7 +82,18 @@ function hookCommand(hookPath: string): string {
   return `node ${quoted}`;
 }
 
-async function installFiles(context: vscode.ExtensionContext, overwrite: boolean): Promise<void> {
+function mergeHookCommand(existing: any, hookName: string, command: string): boolean {
+  if (!existing.hooks) existing.hooks = {};
+  if (!Array.isArray(existing.hooks[hookName])) existing.hooks[hookName] = [];
+  const arr = existing.hooks[hookName] as Array<{ command?: string }>;
+  if (!arr.some((h) => h?.command === command)) {
+    arr.push({ command });
+    return true;
+  }
+  return false;
+}
+
+async function installFiles(context: vscode.ExtensionContext): Promise<void> {
   const workspaceRoot = getWorkspaceRoot();
   if (!workspaceRoot) {
     vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
@@ -111,17 +136,50 @@ async function installFiles(context: vscode.ExtensionContext, overwrite: boolean
 
   await ensureDir(guardianDir);
 
-  const wroteContract = await writeJson(contractPath, defaultContract(), overwrite);
-  const wrotePolicy = await writeJson(policyPath, defaultPolicy(), overwrite);
-  const wroteHooks = await writeJson(hooksPath, hooksJson, overwrite);
-  const wroteMcp = await writeJson(mcpPath, mcpJson, overwrite);
+  const changed: string[] = [];
 
-  const changed = [
-    wroteContract ? "contract.json" : null,
-    wrotePolicy ? "policy.json" : null,
-    wroteHooks ? "hooks.json" : null,
-    wroteMcp ? "mcp.json" : null
-  ].filter(Boolean);
+  if (!(await fileExists(contractPath))) {
+    await writeJson(contractPath, defaultContract());
+    changed.push("contract.json");
+  }
+
+  if (!(await fileExists(policyPath))) {
+    await writeJson(policyPath, defaultPolicy());
+    changed.push("policy.json");
+  }
+
+  if (!(await fileExists(hooksPath))) {
+    await writeJson(hooksPath, hooksJson);
+    changed.push("hooks.json");
+  } else {
+    const existing = await readJson<any>(hooksPath, { version: 1, hooks: {} });
+    const cmd = hookCommand(hookCli);
+    let modified = false;
+    modified = mergeHookCommand(existing, "beforeShellExecution", cmd) || modified;
+    modified = mergeHookCommand(existing, "beforeMCPExecution", cmd) || modified;
+    modified = mergeHookCommand(existing, "beforeReadFile", cmd) || modified;
+    modified = mergeHookCommand(existing, "afterFileEdit", cmd) || modified;
+    modified = mergeHookCommand(existing, "stop", cmd) || modified;
+    if (modified) {
+      await backupIfExists(hooksPath);
+      await writeJson(hooksPath, { version: existing.version ?? 1, hooks: existing.hooks });
+      changed.push("hooks.json (merged)");
+    }
+  }
+
+  if (!(await fileExists(mcpPath))) {
+    await writeJson(mcpPath, mcpJson);
+    changed.push("mcp.json");
+  } else {
+    const existing = await readJson<any>(mcpPath, { mcpServers: {} });
+    if (!existing.mcpServers) existing.mcpServers = {};
+    if (!existing.mcpServers["goal-guardian"]) {
+      existing.mcpServers["goal-guardian"] = mcpJson.mcpServers["goal-guardian"];
+      await backupIfExists(mcpPath);
+      await writeJson(mcpPath, existing);
+      changed.push("mcp.json (merged)");
+    }
+  }
 
   if (changed.length === 0) {
     vscode.window.showInformationMessage(`${EXT_NAME}: Files already exist. Nothing changed.`);
@@ -156,14 +214,7 @@ async function uninstallFiles(): Promise<void> {
 
 export function activate(context: vscode.ExtensionContext): void {
   const installCmd = vscode.commands.registerCommand("goalGuardian.install", async () => {
-    const overwrite = await vscode.window.showWarningMessage(
-      `${EXT_NAME}: Overwrite existing .cursor configs if they exist?`,
-      { modal: true },
-      "Overwrite",
-      "Cancel"
-    );
-    if (overwrite !== "Overwrite") return;
-    await installFiles(context, true);
+    await installFiles(context);
   });
 
   const openContract = vscode.commands.registerCommand("goalGuardian.openContract", async () => {
@@ -174,7 +225,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const contractPath = path.join(workspaceRoot, ".cursor", "goal-guardian", "contract.json");
     if (!(await fileExists(contractPath))) {
-      await installFiles(context, false);
+      await installFiles(context);
     }
     const doc = await vscode.workspace.openTextDocument(contractPath);
     await vscode.window.showTextDocument(doc, { preview: false });
