@@ -1,6 +1,6 @@
 # Cursor Goal Guardian Extension
 
-![Goal Guardian Banner](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/banner.png)
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/banner.png" alt="Goal Guardian Banner" width="100%" style="max-width:760px;height:auto;" />
 
 Goal Guardian keeps the AI aligned by **warning, guiding, and only hard-blocking truly dangerous actions**.
 It installs Cursor Hooks + an MCP server config **into your workspace**.
