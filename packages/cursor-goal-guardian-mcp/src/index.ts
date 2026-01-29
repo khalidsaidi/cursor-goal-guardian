@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fallback } from "fallback-chain-js";
+import { minimatch } from "minimatch";
 
 /**
  * Cursor Goal Guardian MCP Server
@@ -90,6 +91,44 @@ async function computeWorkspaceRoot(): Promise<string> {
   ]);
 }
 
+type ViolationTracker = {
+  warningCounts: Record<string, number>;
+  lastReset: string;
+};
+
+type PolicySeverity = "HARD_BLOCK" | "WARN" | "PERMIT_REQUIRED" | "ALLOWED";
+
+type PolicyRule = {
+  pattern: string;
+  severity: PolicySeverity;
+  reason?: string;
+};
+
+type GoalGuardianPolicy = {
+  requirePermitForShell: boolean;
+  requirePermitForMcp: boolean;
+  requirePermitForRead: boolean;
+  autoRevertUnauthorizedEdits: boolean;
+  alwaysAllow: {
+    shell: string[];
+    mcp: string[];
+    read: string[];
+  };
+  alwaysDeny: {
+    shell: string[];
+    mcp: string[];
+    read: string[];
+  };
+  warningConfig: {
+    maxWarningsBeforeBlock: number;
+    warningResetMinutes: number;
+    showGoalReminder: boolean;
+  };
+  shellRules?: PolicyRule[];
+  mcpRules?: PolicyRule[];
+  readRules?: PolicyRule[];
+};
+
 function getPaths(workspaceRoot: string) {
   const cursorDir = path.join(workspaceRoot, ".cursor", "goal-guardian");
   const aiDir = path.join(workspaceRoot, ".ai", "goal-guardian");
@@ -101,6 +140,8 @@ function getPaths(workspaceRoot: string) {
     progressPath: path.join(cursorDir, "progress.json"),
     checksPath: path.join(aiDir, "checks.json"),
     permitsPath: path.join(aiDir, "permits.json"),
+    violationsPath: path.join(aiDir, "violations.json"),
+    policyPath: path.join(cursorDir, "policy.json"),
   };
 }
 
@@ -208,6 +249,112 @@ function permitDocPruneExpired(doc: PermitsDoc): PermitsDoc {
   const permits = (doc.permits ?? []).filter((p) => Date.parse(p.expires_at) > now);
   return { permits };
 }
+
+// Use minimatch for glob matching (same as hook)
+function globAny(patterns: string[], value: string): boolean {
+  return patterns.some((pat) => minimatch(value, pat, { dot: true, nocase: true }));
+}
+
+function classifySeverity(
+  rules: PolicyRule[] | undefined,
+  value: string
+): { severity: PolicySeverity; rule: PolicyRule | null } {
+  if (!rules || rules.length === 0) {
+    return { severity: "PERMIT_REQUIRED", rule: null };
+  }
+
+  for (const rule of rules) {
+    if (minimatch(value, rule.pattern, { dot: true, nocase: true })) {
+      return { severity: rule.severity, rule };
+    }
+  }
+
+  return { severity: "PERMIT_REQUIRED", rule: null };
+}
+
+function defaultPolicy(): GoalGuardianPolicy {
+  return {
+    requirePermitForShell: true,
+    requirePermitForMcp: true,
+    requirePermitForRead: false,
+    autoRevertUnauthorizedEdits: false,
+    alwaysAllow: {
+      shell: ["git status*", "git diff*", "git rev-parse*", "ls*", "pwd", "node -v", "npm -v", "pnpm -v"],
+      mcp: ["goal-guardian/*"],
+      read: [".cursor/goal-guardian/**", ".cursor/hooks.json", ".cursor/mcp.json"],
+    },
+    alwaysDeny: {
+      shell: ["rm -rf /*", "rm -rf /", "*curl*|*sh*", "*wget*|*sh*"],
+      mcp: [],
+      read: [".ai/goal-guardian/**", ".git/**", "**/.env", "**/.env.*", "**/*.pem", "**/*.key"],
+    },
+    warningConfig: {
+      maxWarningsBeforeBlock: 3,
+      warningResetMinutes: 60,
+      showGoalReminder: true,
+    },
+    shellRules: [
+      { pattern: "rm -rf /", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
+      { pattern: "rm -rf /*", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
+      { pattern: "*curl*|*sh*", severity: "HARD_BLOCK", reason: "Remote code execution" },
+      { pattern: "*wget*|*sh*", severity: "HARD_BLOCK", reason: "Remote code execution" },
+      { pattern: "rm -rf *", severity: "WARN", reason: "Recursive force delete" },
+      { pattern: "*--force*", severity: "WARN", reason: "Force flag bypasses safety checks" },
+      { pattern: "git reset --hard*", severity: "WARN", reason: "Destructive git operation" },
+      { pattern: "git push --force*", severity: "WARN", reason: "Force push can overwrite history" },
+      { pattern: "npm publish*", severity: "WARN", reason: "Publishing to npm registry" },
+      { pattern: "git status*", severity: "ALLOWED", reason: "Read-only git operation" },
+      { pattern: "git diff*", severity: "ALLOWED", reason: "Read-only git operation" },
+      { pattern: "ls*", severity: "ALLOWED", reason: "List directory contents" },
+      { pattern: "pwd", severity: "ALLOWED", reason: "Print working directory" },
+    ],
+    mcpRules: [{ pattern: "goal-guardian/*", severity: "ALLOWED", reason: "Goal Guardian MCP tools" }],
+    readRules: [
+      { pattern: "**/.env", severity: "HARD_BLOCK", reason: "Environment secrets" },
+      { pattern: "**/.env.*", severity: "HARD_BLOCK", reason: "Environment secrets" },
+      { pattern: ".cursor/goal-guardian/**", severity: "ALLOWED", reason: "Guardian configuration" },
+    ],
+  };
+}
+
+async function loadPolicy(pathsObj: ReturnType<typeof getPaths>): Promise<GoalGuardianPolicy> {
+  const base = defaultPolicy();
+  const fromFile = await readJson<Partial<GoalGuardianPolicy>>(pathsObj.policyPath, {});
+
+  return {
+    ...base,
+    ...fromFile,
+    alwaysAllow: {
+      shell: fromFile.alwaysAllow?.shell ?? base.alwaysAllow.shell,
+      mcp: fromFile.alwaysAllow?.mcp ?? base.alwaysAllow.mcp,
+      read: fromFile.alwaysAllow?.read ?? base.alwaysAllow.read,
+    },
+    alwaysDeny: {
+      shell: fromFile.alwaysDeny?.shell ?? base.alwaysDeny.shell,
+      mcp: fromFile.alwaysDeny?.mcp ?? base.alwaysDeny.mcp,
+      read: fromFile.alwaysDeny?.read ?? base.alwaysDeny.read,
+    },
+    warningConfig: {
+      ...base.warningConfig,
+      ...fromFile.warningConfig,
+    },
+    shellRules: fromFile.shellRules ?? base.shellRules,
+    mcpRules: fromFile.mcpRules ?? base.mcpRules,
+    readRules: fromFile.readRules ?? base.readRules,
+  };
+}
+
+type PreviewResult = {
+  wouldSucceed: boolean;
+  severity: PolicySeverity;
+  reason: string;
+  suggestedPermitRequest?: {
+    step: string;
+    maps_to: string[];
+    allow_field: string;
+    allow_pattern: string;
+  };
+};
 
 const server = new McpServer({
   name: SERVER_NAME,
@@ -353,7 +500,7 @@ server.registerTool(
         content: [{ type: "text", text: `❌ Unknown step_id: ${step_id}. Run guardian_check_step first.` }],
       };
     }
-    if (!check.on_goal || check.score < 0.6) {
+    if (!check.on_goal || check.score < 0.5) {
       return {
         content: [
           {
@@ -431,6 +578,251 @@ server.registerTool(
             `Revoked ${before - after} permit(s) for step_id ${step_id}`,
         },
       ],
+    };
+  },
+);
+
+server.registerTool(
+  "guardian_preview_action",
+  {
+    description:
+      "Preview whether an action would be allowed without actually attempting it. Use this to check if a command, MCP call, or file read would succeed before trying.",
+    inputSchema: {
+      action_type: z.enum(["shell", "mcp", "read", "write"]).describe("The type of action to preview."),
+      action_value: z
+        .string()
+        .min(1)
+        .describe("The action value (command string, 'server/tool' for MCP, or file path for read/write)."),
+    },
+  },
+  async ({ action_type, action_value }) => {
+    const root = await computeWorkspaceRoot();
+    const p = getPaths(root);
+    await ensureDirs(p);
+
+    const policy = await loadPolicy(p);
+    const permitsDoc = permitDocPruneExpired(await readJson<PermitsDoc>(p.permitsPath, { permits: [] }));
+    const violations = await readJson<ViolationTracker>(p.violationsPath, { warningCounts: {}, lastReset: nowIso() });
+    const permit = permitsDoc.permits.length > 0 ? permitsDoc.permits[0] : null;
+
+    let result: PreviewResult;
+
+    if (action_type === "shell") {
+      const { severity, rule } = classifySeverity(policy.shellRules, action_value);
+
+      if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.shell, action_value)) {
+        result = {
+          wouldSucceed: false,
+          severity: "HARD_BLOCK",
+          reason: rule?.reason ?? "Blocked by policy - cannot be permitted",
+        };
+      } else if (severity === "ALLOWED" || globAny(policy.alwaysAllow.shell, action_value)) {
+        result = {
+          wouldSucceed: true,
+          severity: "ALLOWED",
+          reason: rule?.reason ?? "Always allowed",
+        };
+      } else if (severity === "WARN") {
+        const pattern = rule?.pattern ?? action_value;
+        const count = violations.warningCounts[pattern] ?? 0;
+        const max = policy.warningConfig.maxWarningsBeforeBlock;
+        if (count >= max) {
+          result = {
+            wouldSucceed: false,
+            severity: "WARN",
+            reason: `Warning limit exceeded (${count}/${max}). Request a permit to proceed.`,
+            suggestedPermitRequest: {
+              step: `Execute shell command: ${action_value}`,
+              maps_to: ["SC1"],
+              allow_field: "allow_shell",
+              allow_pattern: `${action_value.split(" ")[0]}*`,
+            },
+          };
+        } else {
+          result = {
+            wouldSucceed: true,
+            severity: "WARN",
+            reason: `Would issue warning (${count + 1}/${max}): ${rule?.reason ?? "risky operation"}`,
+          };
+        }
+      } else {
+        // PERMIT_REQUIRED
+        if (!policy.requirePermitForShell) {
+          result = {
+            wouldSucceed: true,
+            severity: "PERMIT_REQUIRED",
+            reason: "Permit not required for shell (policy setting)",
+          };
+        } else if (permit && globAny(permit.allow.shell ?? [], action_value)) {
+          result = {
+            wouldSucceed: true,
+            severity: "PERMIT_REQUIRED",
+            reason: "Current permit allows this command",
+          };
+        } else {
+          result = {
+            wouldSucceed: false,
+            severity: "PERMIT_REQUIRED",
+            reason: "No valid permit for this command",
+            suggestedPermitRequest: {
+              step: `Execute shell command: ${action_value}`,
+              maps_to: ["SC1"],
+              allow_field: "allow_shell",
+              allow_pattern: `${action_value.split(" ")[0]}*`,
+            },
+          };
+        }
+      }
+    } else if (action_type === "mcp") {
+      const { severity, rule } = classifySeverity(policy.mcpRules, action_value);
+
+      if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.mcp, action_value)) {
+        result = {
+          wouldSucceed: false,
+          severity: "HARD_BLOCK",
+          reason: rule?.reason ?? "Blocked by policy",
+        };
+      } else if (severity === "ALLOWED" || globAny(policy.alwaysAllow.mcp, action_value)) {
+        result = {
+          wouldSucceed: true,
+          severity: "ALLOWED",
+          reason: rule?.reason ?? "Always allowed",
+        };
+      } else if (!policy.requirePermitForMcp) {
+        result = {
+          wouldSucceed: true,
+          severity: "PERMIT_REQUIRED",
+          reason: "Permit not required for MCP (policy setting)",
+        };
+      } else if (permit && globAny(permit.allow.mcp ?? [], action_value)) {
+        result = {
+          wouldSucceed: true,
+          severity: "PERMIT_REQUIRED",
+          reason: "Current permit allows this MCP call",
+        };
+      } else {
+        result = {
+          wouldSucceed: false,
+          severity: "PERMIT_REQUIRED",
+          reason: "No valid permit for this MCP call",
+          suggestedPermitRequest: {
+            step: `Execute MCP call: ${action_value}`,
+            maps_to: ["SC1"],
+            allow_field: "allow_mcp",
+            allow_pattern: action_value,
+          },
+        };
+      }
+    } else {
+      // read or write
+      const { severity, rule } = classifySeverity(policy.readRules, action_value);
+
+      if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.read, action_value)) {
+        result = {
+          wouldSucceed: false,
+          severity: "HARD_BLOCK",
+          reason: rule?.reason ?? "Blocked by policy",
+        };
+      } else if (severity === "ALLOWED" || globAny(policy.alwaysAllow.read, action_value)) {
+        result = {
+          wouldSucceed: true,
+          severity: "ALLOWED",
+          reason: rule?.reason ?? "Always allowed",
+        };
+      } else if (!policy.requirePermitForRead) {
+        result = {
+          wouldSucceed: true,
+          severity: "PERMIT_REQUIRED",
+          reason: "Permit not required for file operations (policy setting)",
+        };
+      } else {
+        const allowField = action_type === "read" ? "allow_read" : "allow_write";
+        const permitPatterns = action_type === "read" ? permit?.allow.read : permit?.allow.write;
+        if (permit && globAny(permitPatterns ?? [], action_value)) {
+          result = {
+            wouldSucceed: true,
+            severity: "PERMIT_REQUIRED",
+            reason: `Current permit allows this ${action_type} operation`,
+          };
+        } else {
+          result = {
+            wouldSucceed: false,
+            severity: "PERMIT_REQUIRED",
+            reason: `No valid permit for this ${action_type} operation`,
+            suggestedPermitRequest: {
+              step: `${action_type === "read" ? "Read" : "Write"} file: ${action_value}`,
+              maps_to: ["SC1"],
+              allow_field: allowField,
+              allow_pattern: action_value,
+            },
+          };
+        }
+      }
+    }
+
+    return {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    };
+  },
+);
+
+server.registerTool(
+  "guardian_get_status",
+  {
+    description:
+      "Get the current Goal Guardian status including contract, permits, and warning state. Useful for understanding the current guardrail state.",
+    inputSchema: {},
+  },
+  async () => {
+    const root = await computeWorkspaceRoot();
+    const p = getPaths(root);
+    await ensureDirs(p);
+
+    const contract = await readJson<GoalContract>(p.contractPath, defaultContract());
+    const permitsDoc = permitDocPruneExpired(await readJson<PermitsDoc>(p.permitsPath, { permits: [] }));
+    const violations = await readJson<ViolationTracker>(p.violationsPath, { warningCounts: {}, lastReset: nowIso() });
+    const policy = await loadPolicy(p);
+
+    const hasContract = Boolean(contract.goal && contract.goal.trim().length > 0);
+    const criteriaCount = contract.success_criteria.length;
+    const activePermits = permitsDoc.permits.map((perm) => ({
+      token: perm.token,
+      step_id: perm.step_id,
+      expires_at: perm.expires_at,
+      shell_patterns: perm.allow.shell.length,
+      mcp_patterns: perm.allow.mcp.length,
+      read_patterns: perm.allow.read.length,
+      write_patterns: perm.allow.write.length,
+    }));
+
+    const totalWarnings = Object.values(violations.warningCounts).reduce((sum, c) => sum + c, 0);
+    const warningsByPattern = Object.entries(violations.warningCounts)
+      .filter(([_, count]) => count > 0)
+      .map(([pattern, count]) => ({ pattern, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const status = {
+      hasContract,
+      goal: contract.goal || null,
+      criteriaCount,
+      criteria: criteriaIds(contract),
+      constraints: contract.constraints,
+      activePermits,
+      warningState: {
+        totalWarnings,
+        maxWarningsBeforeBlock: policy.warningConfig.maxWarningsBeforeBlock,
+        warningsByPattern,
+        lastReset: violations.lastReset,
+      },
+      policy: {
+        requirePermitForShell: policy.requirePermitForShell,
+        requirePermitForMcp: policy.requirePermitForMcp,
+        requirePermitForRead: policy.requirePermitForRead,
+      },
+    };
+
+    return {
+      content: [{ type: "text", text: JSON.stringify(status, null, 2) }],
     };
   },
 );

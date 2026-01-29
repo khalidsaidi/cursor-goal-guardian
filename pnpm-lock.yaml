@@ -22,6 +22,10 @@ importers:
         version: 2.1.9(@types/node@20.19.30)
 
   packages/cursor-goal-guardian-extension:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.0.0
+        version: 1.25.3(hono@4.11.7)(zod@3.25.76)
     devDependencies:
       '@types/node':
         specifier: ^20.11.0
@@ -50,6 +54,9 @@ importers:
       fallback-chain-js:
         specifier: ^0.1.0
         version: 0.1.0
+      minimatch:
+        specifier: ^9.0.3
+        version: 9.0.5
       zod:
         specifier: ^3.23.8
         version: 3.25.76

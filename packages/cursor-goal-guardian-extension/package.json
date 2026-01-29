@@ -1,8 +1,8 @@
 {
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
-  "description": "Blocks risky actions in Cursor unless a permit is issued (MCP + Hooks).",
-  "version": "0.1.0",
+  "description": "Guardrail, not gate: warns, guides, and only hard-blocks dangerous AI actions.",
+  "version": "0.2.0",
   "publisher": "khalidsaidi",
   "license": "MIT",
   "repository": {
@@ -13,14 +13,21 @@
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
-  "keywords": ["cursor", "mcp", "hooks", "security", "workflow", "guardrail"],
+  "keywords": ["cursor", "mcp", "hooks", "security", "workflow", "guardrail", "ai-safety"],
   "activationEvents": [
-    "onCommand:goalGuardian.install",
-    "onCommand:goalGuardian.openContract",
-    "onCommand:goalGuardian.uninstall"
+    "onStartupFinished"
   ],
   "main": "dist/extension.js",
   "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "goalGuardian.goalPanel",
+          "name": "Goal Guardian"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "goalGuardian.install",
@@ -33,8 +40,37 @@
       {
         "command": "goalGuardian.uninstall",
         "title": "Goal Guardian: Remove from Workspace"
+      },
+      {
+        "command": "goalGuardian.showPanel",
+        "title": "Goal Guardian: Show Goal Panel"
+      },
+      {
+        "command": "goalGuardian.showAudit",
+        "title": "Goal Guardian: Show Audit Log"
+      },
+      {
+        "command": "goalGuardian.requestPermit",
+        "title": "Goal Guardian: Request Permit"
+      },
+      {
+        "command": "goalGuardian.autoPermitLastAction",
+        "title": "Goal Guardian: Auto‑Permit Last Action"
+      },
+      {
+        "command": "goalGuardian.refresh",
+        "title": "Goal Guardian: Refresh"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "goalGuardian.refresh",
+          "when": "view == goalGuardian.goalPanel",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -45,5 +81,8 @@
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
   }
 }
