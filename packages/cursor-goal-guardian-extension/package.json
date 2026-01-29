@@ -4,6 +4,11 @@
   "description": "Goal-first Cursor: warns on drift, guides the agent, and only hard-blocks catastrophic actions.",
   "version": "0.2.0",
   "publisher": "khalidsaidi",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#0f172a",
+    "theme": "dark"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
