@@ -4,7 +4,8 @@ import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { minimatch } from "minimatch";
 import { fallback } from "fallback-chain-js";
-import { defaultPolicy } from "./policy.js";
+import { defaultPolicy, defaultWarningConfig, } from "./policy.js";
+import { loadViolations, saveViolations, shouldResetWarnings, getWarningCount, incrementWarning, resetWarnings, } from "./violations.js";
 function toPosixRel(p) {
     return p.split(path.sep).join("/");
 }
@@ -63,6 +64,57 @@ function cursorResponseDeny(userMessage, agentMessage) {
         res.agentMessage = agentMessage;
     return res;
 }
+function cursorResponseWarn(userMessage, agentMessage, context) {
+    // Use "allow" permission since Cursor only recognizes allow/deny/ask
+    // Warning info is conveyed via userMessage and agentMessage
+    return {
+        continue: true,
+        permission: "allow",
+        userMessage, // Shows warning to user
+        agentMessage, // Tells agent about warning state
+        // Include context for logging/debugging (Cursor may ignore these)
+        _warning: {
+            count: context.warningCount,
+            max: context.maxWarnings,
+            suggestedAction: context.suggestedAction,
+            goalContext: context.goalContext,
+        },
+    };
+}
+async function loadContract(workspaceRoot) {
+    const contractPath = path.join(workspaceRoot, ".cursor", "goal-guardian", "contract.json");
+    try {
+        const raw = await fs.readFile(contractPath, "utf8");
+        return JSON.parse(raw);
+    }
+    catch {
+        return null;
+    }
+}
+function classifySeverity(rules, value) {
+    if (!rules || rules.length === 0) {
+        return { severity: "PERMIT_REQUIRED", rule: null };
+    }
+    for (const rule of rules) {
+        if (minimatch(value, rule.pattern, { dot: true, nocase: true })) {
+            return { severity: rule.severity, rule };
+        }
+    }
+    return { severity: "PERMIT_REQUIRED", rule: null };
+}
+function buildRecoveryMessage(action, actionValue, contract, suggestedPermitFields) {
+    const goalPart = contract?.goal
+        ? `Current goal: "${contract.goal}"\n\n`
+        : "No goal is set. Consider setting one first.\n\n";
+    return (`${goalPart}` +
+        `To proceed:\n` +
+        `1. Call guardian_check_step with:\n` +
+        `   - step: "Describe what this ${action} accomplishes"\n` +
+        `   - maps_to: ["SC1", ...] (relevant success criteria IDs)\n` +
+        `2. If approved, call guardian_issue_permit with:\n` +
+        `   - ${suggestedPermitFields}\n` +
+        `3. Retry the command`);
+}
 async function loadPolicy(workspaceRoot) {
     const envPath = process.env.GOAL_GUARDIAN_POLICY_PATH;
     const candidatePaths = [
@@ -98,6 +150,13 @@ async function loadPolicy(workspaceRoot) {
             mcp: fromFile.alwaysDeny?.mcp ?? base.alwaysDeny.mcp,
             read: fromFile.alwaysDeny?.read ?? base.alwaysDeny.read,
         },
+        warningConfig: {
+            ...defaultWarningConfig(),
+            ...fromFile.warningConfig,
+        },
+        shellRules: fromFile.shellRules ?? base.shellRules,
+        mcpRules: fromFile.mcpRules ?? base.mcpRules,
+        readRules: fromFile.readRules ?? base.readRules,
     };
 }
 async function loadActivePermit(workspaceRoot) {
@@ -142,32 +201,154 @@ async function main() {
         conversation_id: payload?.conversation_id,
         generation_id: payload?.generation_id,
     });
-    const recoveryMsg = "Blocked by Goal-Guardian. To proceed: (1) call MCP tool guardian_check_step, (2) if approved, call guardian_issue_permit, then retry.";
+    // Load violations tracker and contract for context
+    let violations = await loadViolations(workspaceRoot);
+    const contract = await loadContract(workspaceRoot);
+    // Reset warnings if enough time has passed
+    if (shouldResetWarnings(violations, policy.warningConfig.warningResetMinutes)) {
+        resetWarnings(violations);
+        await saveViolations(workspaceRoot, violations);
+    }
     if (eventName === "beforeShellExecution") {
         const cmd = String(payload?.command ?? "");
         if (cmd.length === 0) {
             process.stdout.write(JSON.stringify(cursorResponseAllow()));
             return;
         }
-        if (globAny(policy.alwaysDeny.shell, cmd)) {
-            process.stdout.write(JSON.stringify(cursorResponseDeny(`Blocked dangerous command: ${cmd}`)));
+        // Check severity-based rules first
+        const { severity, rule } = classifySeverity(policy.shellRules, cmd);
+        // HARD_BLOCK: Immediate block, no recovery
+        if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.shell, cmd)) {
+            const reason = rule?.reason ?? "Blocked by policy";
+            await appendAudit(workspaceRoot, {
+                event: "shellBlocked",
+                command: cmd,
+                severity: "HARD_BLOCK",
+                reason,
+            });
+            process.stdout.write(JSON.stringify(cursorResponseDeny(`BLOCKED: ${reason}`, `Command "${cmd}" is permanently blocked. This action cannot be permitted.`)));
             return;
         }
-        if (globAny(policy.alwaysAllow.shell, cmd)) {
+        // ALLOWED: Let through immediately
+        if (severity === "ALLOWED" || globAny(policy.alwaysAllow.shell, cmd)) {
             process.stdout.write(JSON.stringify(cursorResponseAllow()));
             return;
         }
+        // WARN: Check warning count, warn first then block
+        if (severity === "WARN") {
+            const matchedPattern = rule?.pattern ?? cmd;
+            const currentCount = getWarningCount(violations, matchedPattern);
+            const maxWarnings = policy.warningConfig.maxWarningsBeforeBlock;
+            if (currentCount >= maxWarnings) {
+                // Soft guardrail: keep allowing but emphasize permit request
+                await appendAudit(workspaceRoot, {
+                    event: "shellWarningLimit",
+                    command: cmd,
+                    severity: "WARN_ESCALATED",
+                    warningCount: currentCount,
+                    maxWarnings,
+                    reason: `Exceeded ${maxWarnings} warnings`,
+                    actionType: "shell",
+                    actionValue: cmd,
+                    suggestedAllow: cmd,
+                });
+                const warnMsg = `Warning (${currentCount}/${maxWarnings}): ${rule?.reason ?? "risky command"} — limit reached, consider a permit`;
+                process.stdout.write(JSON.stringify(cursorResponseWarn(warnMsg, "Command allowed, but warning limit reached. Consider requesting a permit to keep actions aligned.", {
+                    warningCount: currentCount,
+                    maxWarnings,
+                    suggestedAction: `Request a permit with allow_shell: ["${cmd}"]`,
+                    goalContext: contract
+                        ? {
+                            goal: contract.goal,
+                            relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                        }
+                        : undefined,
+                })));
+                return;
+            }
+            // Issue warning and allow
+            const newCount = incrementWarning(violations, matchedPattern);
+            await saveViolations(workspaceRoot, violations);
+            await appendAudit(workspaceRoot, {
+                event: "shellWarning",
+                command: cmd,
+                severity: "WARN",
+                warningCount: newCount,
+                maxWarnings,
+                reason: rule?.reason,
+                actionType: "shell",
+                actionValue: cmd,
+                suggestedAllow: cmd,
+            });
+            const goalContext = contract
+                ? {
+                    goal: contract.goal,
+                    relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                }
+                : undefined;
+            const warnMsg = policy.warningConfig.showGoalReminder && contract
+                ? `Warning (${newCount}/${maxWarnings}): ${rule?.reason ?? "risky command"}\nGoal: "${contract.goal}"`
+                : `Warning (${newCount}/${maxWarnings}): ${rule?.reason ?? "risky command"}`;
+            process.stdout.write(JSON.stringify(cursorResponseWarn(warnMsg, `Command allowed with warning. ${maxWarnings - newCount} warnings remaining before block.`, {
+                warningCount: newCount,
+                maxWarnings,
+                suggestedAction: `Request a permit with allow_shell: ["${cmd.split(" ")[0]}*"]`,
+                goalContext,
+            })));
+            return;
+        }
+        // PERMIT_REQUIRED: Standard permit check (existing behavior)
         if (!policy.requirePermitForShell) {
             process.stdout.write(JSON.stringify(cursorResponseAllow()));
             return;
         }
         if (!permit) {
-            process.stdout.write(JSON.stringify(cursorResponseDeny("No valid permit for shell command.", recoveryMsg)));
+            const recoveryMsg = buildRecoveryMessage("shell command", cmd, contract, `allow_shell: ["${cmd}"]`);
+            await appendAudit(workspaceRoot, {
+                event: "shellPermitSuggested",
+                command: cmd,
+                severity: "PERMIT_REQUIRED",
+                reason: "No valid permit",
+                actionType: "shell",
+                actionValue: cmd,
+                suggestedAllow: cmd,
+            });
+            process.stdout.write(JSON.stringify(cursorResponseWarn(`Goal check: "${contract?.goal ?? "No goal set"}"\nPermit recommended for: ${cmd}`, recoveryMsg, {
+                warningCount: 0,
+                maxWarnings: policy.warningConfig.maxWarningsBeforeBlock,
+                suggestedAction: `Request a permit with allow_shell: ["${cmd}"]`,
+                goalContext: contract
+                    ? {
+                        goal: contract.goal,
+                        relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                    }
+                    : undefined,
+            })));
             return;
         }
         const allowed = globAny(permit.allow.shell ?? [], cmd);
         if (!allowed) {
-            process.stdout.write(JSON.stringify(cursorResponseDeny(`Shell command not permitted for current step. Command: ${cmd}`, `Permit exists but does not allow this command. ${recoveryMsg}`)));
+            const recoveryMsg = buildRecoveryMessage("shell command", cmd, contract, `allow_shell: ["${cmd}"]`);
+            await appendAudit(workspaceRoot, {
+                event: "shellPermitSuggested",
+                command: cmd,
+                severity: "PERMIT_REQUIRED",
+                reason: "Permit does not allow this command",
+                actionType: "shell",
+                actionValue: cmd,
+                suggestedAllow: cmd,
+            });
+            process.stdout.write(JSON.stringify(cursorResponseWarn(`Goal check: "${contract?.goal ?? "No goal set"}"\nPermit recommended for: ${cmd}`, `Permit exists but does not allow this command.\n\n${recoveryMsg}`, {
+                warningCount: 0,
+                maxWarnings: policy.warningConfig.maxWarningsBeforeBlock,
+                suggestedAction: `Request a permit with allow_shell: ["${cmd}"]`,
+                goalContext: contract
+                    ? {
+                        goal: contract.goal,
+                        relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                    }
+                    : undefined,
+            })));
             return;
         }
         process.stdout.write(JSON.stringify(cursorResponseAllow()));
@@ -177,25 +358,132 @@ async function main() {
         const server = String(payload?.server ?? "").trim() || "unknown";
         const tool = String(payload?.tool_name ?? "").trim() || "unknown";
         const key = `${server}/${tool}`;
-        if (globAny(policy.alwaysAllow.mcp, key)) {
+        // Check severity-based rules first
+        const { severity, rule } = classifySeverity(policy.mcpRules, key);
+        // HARD_BLOCK
+        if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.mcp, key)) {
+            const reason = rule?.reason ?? "Blocked by policy";
+            await appendAudit(workspaceRoot, {
+                event: "mcpBlocked",
+                mcpKey: key,
+                severity: "HARD_BLOCK",
+                reason,
+            });
+            process.stdout.write(JSON.stringify(cursorResponseDeny(`BLOCKED: ${reason}`, `MCP call "${key}" is permanently blocked.`)));
+            return;
+        }
+        // ALLOWED
+        if (severity === "ALLOWED" || globAny(policy.alwaysAllow.mcp, key)) {
             process.stdout.write(JSON.stringify(cursorResponseAllow()));
             return;
         }
-        if (globAny(policy.alwaysDeny.mcp, key)) {
-            process.stdout.write(JSON.stringify(cursorResponseDeny(`MCP call denied: ${key}`)));
+        // WARN: Check warning count
+        if (severity === "WARN") {
+            const matchedPattern = rule?.pattern ?? key;
+            const currentCount = getWarningCount(violations, matchedPattern);
+            const maxWarnings = policy.warningConfig.maxWarningsBeforeBlock;
+            if (currentCount >= maxWarnings) {
+                await appendAudit(workspaceRoot, {
+                    event: "mcpWarningLimit",
+                    mcpKey: key,
+                    severity: "WARN_ESCALATED",
+                    warningCount: currentCount,
+                    maxWarnings,
+                    actionType: "mcp",
+                    actionValue: key,
+                    suggestedAllow: key,
+                });
+                process.stdout.write(JSON.stringify(cursorResponseWarn(`Warning (${currentCount}/${maxWarnings}): ${rule?.reason ?? "MCP call requires attention"} — limit reached`, "MCP call allowed, but warning limit reached. Consider requesting a permit.", {
+                    warningCount: currentCount,
+                    maxWarnings,
+                    suggestedAction: `Request a permit with allow_mcp: ["${key}"]`,
+                    goalContext: contract
+                        ? {
+                            goal: contract.goal,
+                            relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                        }
+                        : undefined,
+                })));
+                return;
+            }
+            const newCount = incrementWarning(violations, matchedPattern);
+            await saveViolations(workspaceRoot, violations);
+            await appendAudit(workspaceRoot, {
+                event: "mcpWarning",
+                mcpKey: key,
+                severity: "WARN",
+                warningCount: newCount,
+                maxWarnings,
+                actionType: "mcp",
+                actionValue: key,
+                suggestedAllow: key,
+            });
+            const goalContext = contract
+                ? {
+                    goal: contract.goal,
+                    relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                }
+                : undefined;
+            process.stdout.write(JSON.stringify(cursorResponseWarn(`Warning (${newCount}/${maxWarnings}): ${rule?.reason ?? "MCP call requires attention"}`, `MCP call allowed with warning. ${maxWarnings - newCount} warnings remaining.`, {
+                warningCount: newCount,
+                maxWarnings,
+                suggestedAction: `Request a permit with allow_mcp: ["${key}"]`,
+                goalContext,
+            })));
             return;
         }
+        // PERMIT_REQUIRED
         if (!policy.requirePermitForMcp) {
             process.stdout.write(JSON.stringify(cursorResponseAllow()));
             return;
         }
         if (!permit) {
-            process.stdout.write(JSON.stringify(cursorResponseDeny("No valid permit for MCP call.", recoveryMsg)));
+            const recoveryMsg = buildRecoveryMessage("MCP call", key, contract, `allow_mcp: ["${key}"]`);
+            await appendAudit(workspaceRoot, {
+                event: "mcpPermitSuggested",
+                mcpKey: key,
+                severity: "PERMIT_REQUIRED",
+                reason: "No valid permit",
+                actionType: "mcp",
+                actionValue: key,
+                suggestedAllow: key,
+            });
+            process.stdout.write(JSON.stringify(cursorResponseWarn(`Goal check: "${contract?.goal ?? "No goal set"}"\nPermit recommended for MCP: ${key}`, recoveryMsg, {
+                warningCount: 0,
+                maxWarnings: policy.warningConfig.maxWarningsBeforeBlock,
+                suggestedAction: `Request a permit with allow_mcp: ["${key}"]`,
+                goalContext: contract
+                    ? {
+                        goal: contract.goal,
+                        relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                    }
+                    : undefined,
+            })));
             return;
         }
         const allowed = globAny(permit.allow.mcp ?? [], key);
         if (!allowed) {
-            process.stdout.write(JSON.stringify(cursorResponseDeny(`MCP call not permitted for current step: ${key}`, `Permit exists but does not allow this MCP call. ${recoveryMsg}`)));
+            const recoveryMsg = buildRecoveryMessage("MCP call", key, contract, `allow_mcp: ["${key}"]`);
+            await appendAudit(workspaceRoot, {
+                event: "mcpPermitSuggested",
+                mcpKey: key,
+                severity: "PERMIT_REQUIRED",
+                reason: "Permit does not allow this call",
+                actionType: "mcp",
+                actionValue: key,
+                suggestedAllow: key,
+            });
+            process.stdout.write(JSON.stringify(cursorResponseWarn(`Goal check: "${contract?.goal ?? "No goal set"}"\nPermit recommended for MCP: ${key}`, `Permit exists but does not allow this MCP call.\n\n${recoveryMsg}`, {
+                warningCount: 0,
+                maxWarnings: policy.warningConfig.maxWarningsBeforeBlock,
+                suggestedAction: `Request a permit with allow_mcp: ["${key}"]`,
+                goalContext: contract
+                    ? {
+                        goal: contract.goal,
+                        relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                    }
+                    : undefined,
+            })));
             return;
         }
         process.stdout.write(JSON.stringify(cursorResponseAllow()));
@@ -207,25 +495,132 @@ async function main() {
             process.stdout.write(JSON.stringify(cursorResponseAllow()));
             return;
         }
-        if (globAny(policy.alwaysDeny.read, rel)) {
-            process.stdout.write(JSON.stringify(cursorResponseDeny(`Reading file denied by policy: ${rel}`)));
+        // Check severity-based rules first
+        const { severity, rule } = classifySeverity(policy.readRules, rel);
+        // HARD_BLOCK
+        if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.read, rel)) {
+            const reason = rule?.reason ?? "Blocked by policy";
+            await appendAudit(workspaceRoot, {
+                event: "readBlocked",
+                filePath: rel,
+                severity: "HARD_BLOCK",
+                reason,
+            });
+            process.stdout.write(JSON.stringify(cursorResponseDeny(`BLOCKED: ${reason}`, `Reading "${rel}" is permanently blocked for security.`)));
             return;
         }
-        if (globAny(policy.alwaysAllow.read, rel)) {
+        // ALLOWED
+        if (severity === "ALLOWED" || globAny(policy.alwaysAllow.read, rel)) {
             process.stdout.write(JSON.stringify(cursorResponseAllow()));
             return;
         }
+        // WARN
+        if (severity === "WARN") {
+            const matchedPattern = rule?.pattern ?? rel;
+            const currentCount = getWarningCount(violations, matchedPattern);
+            const maxWarnings = policy.warningConfig.maxWarningsBeforeBlock;
+            if (currentCount >= maxWarnings) {
+                await appendAudit(workspaceRoot, {
+                    event: "readWarningLimit",
+                    filePath: rel,
+                    severity: "WARN_ESCALATED",
+                    warningCount: currentCount,
+                    maxWarnings,
+                    actionType: "read",
+                    actionValue: rel,
+                    suggestedAllow: rel,
+                });
+                process.stdout.write(JSON.stringify(cursorResponseWarn(`Warning (${currentCount}/${maxWarnings}): ${rule?.reason ?? "file access requires attention"} — limit reached`, "File read allowed, but warning limit reached. Consider requesting a permit.", {
+                    warningCount: currentCount,
+                    maxWarnings,
+                    suggestedAction: `Request a permit with allow_read: ["${rel}"]`,
+                    goalContext: contract
+                        ? {
+                            goal: contract.goal,
+                            relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                        }
+                        : undefined,
+                })));
+                return;
+            }
+            const newCount = incrementWarning(violations, matchedPattern);
+            await saveViolations(workspaceRoot, violations);
+            await appendAudit(workspaceRoot, {
+                event: "readWarning",
+                filePath: rel,
+                severity: "WARN",
+                warningCount: newCount,
+                maxWarnings,
+                actionType: "read",
+                actionValue: rel,
+                suggestedAllow: rel,
+            });
+            const goalContext = contract
+                ? {
+                    goal: contract.goal,
+                    relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                }
+                : undefined;
+            process.stdout.write(JSON.stringify(cursorResponseWarn(`Warning (${newCount}/${maxWarnings}): ${rule?.reason ?? "file access requires attention"}`, `File read allowed with warning. ${maxWarnings - newCount} warnings remaining.`, {
+                warningCount: newCount,
+                maxWarnings,
+                suggestedAction: `Request a permit with allow_read: ["${rel}"]`,
+                goalContext,
+            })));
+            return;
+        }
+        // PERMIT_REQUIRED
         if (!policy.requirePermitForRead) {
             process.stdout.write(JSON.stringify(cursorResponseAllow()));
             return;
         }
         if (!permit) {
-            process.stdout.write(JSON.stringify(cursorResponseDeny("No valid permit for file read.", recoveryMsg)));
+            const recoveryMsg = buildRecoveryMessage("file read", rel, contract, `allow_read: ["${rel}"]`);
+            await appendAudit(workspaceRoot, {
+                event: "readPermitSuggested",
+                filePath: rel,
+                severity: "PERMIT_REQUIRED",
+                reason: "No valid permit",
+                actionType: "read",
+                actionValue: rel,
+                suggestedAllow: rel,
+            });
+            process.stdout.write(JSON.stringify(cursorResponseWarn(`Goal check: "${contract?.goal ?? "No goal set"}"\nPermit recommended for read: ${rel}`, recoveryMsg, {
+                warningCount: 0,
+                maxWarnings: policy.warningConfig.maxWarningsBeforeBlock,
+                suggestedAction: `Request a permit with allow_read: ["${rel}"]`,
+                goalContext: contract
+                    ? {
+                        goal: contract.goal,
+                        relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                    }
+                    : undefined,
+            })));
             return;
         }
         const allowed = globAny(permit.allow.read ?? [], rel);
         if (!allowed) {
-            process.stdout.write(JSON.stringify(cursorResponseDeny(`File read not permitted for current step: ${rel}`, `Permit exists but does not allow reading ${rel}. ${recoveryMsg}`)));
+            const recoveryMsg = buildRecoveryMessage("file read", rel, contract, `allow_read: ["${rel}"]`);
+            await appendAudit(workspaceRoot, {
+                event: "readPermitSuggested",
+                filePath: rel,
+                severity: "PERMIT_REQUIRED",
+                reason: "Permit does not allow this file",
+                actionType: "read",
+                actionValue: rel,
+                suggestedAllow: rel,
+            });
+            process.stdout.write(JSON.stringify(cursorResponseWarn(`Goal check: "${contract?.goal ?? "No goal set"}"\nPermit recommended for read: ${rel}`, `Permit exists but does not allow reading ${rel}.\n\n${recoveryMsg}`, {
+                warningCount: 0,
+                maxWarnings: policy.warningConfig.maxWarningsBeforeBlock,
+                suggestedAction: `Request a permit with allow_read: ["${rel}"]`,
+                goalContext: contract
+                    ? {
+                        goal: contract.goal,
+                        relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+                    }
+                    : undefined,
+            })));
             return;
         }
         process.stdout.write(JSON.stringify(cursorResponseAllow()));
