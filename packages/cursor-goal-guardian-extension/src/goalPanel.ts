@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import { loadState, loadActions, type AgentState, type AgentAction } from "./stateStore.js";
 
 type GoalContract = {
   goal: string;
@@ -81,6 +82,9 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
         case "autoPermit":
           vscode.commands.executeCommand("goalGuardian.autoPermitLastAction");
           break;
+        case "dispatchAction":
+          vscode.commands.executeCommand("goalGuardian.dispatchAction");
+          break;
       }
     });
   }
@@ -102,8 +106,10 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
     const permits = await this._loadPermits(workspaceRoot);
     const violations = await this._loadViolations(workspaceRoot);
     const lastAction = await this._loadLastAction(workspaceRoot);
+    const state = await this._loadState(workspaceRoot);
+    const lastReduxAction = await this._loadLastReduxAction(workspaceRoot);
 
-    this._view.webview.html = this._getHtml(contract, permits, violations, lastAction);
+    this._view.webview.html = this._getHtml(contract, permits, violations, lastAction, state, lastReduxAction);
   }
 
   private _getWorkspaceRoot(): string | null {
@@ -139,6 +145,24 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
     try {
       const raw = await fs.readFile(violationsPath, "utf8");
       return JSON.parse(raw) as ViolationTracker;
+    } catch {
+      return null;
+    }
+  }
+
+  private async _loadState(workspaceRoot: string): Promise<AgentState | null> {
+    try {
+      const state = await loadState(workspaceRoot);
+      return state;
+    } catch {
+      return null;
+    }
+  }
+
+  private async _loadLastReduxAction(workspaceRoot: string): Promise<AgentAction | null> {
+    try {
+      const actions = await loadActions(workspaceRoot);
+      return actions.length > 0 ? actions[actions.length - 1]! : null;
     } catch {
       return null;
     }
@@ -183,7 +207,9 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
     contract: GoalContract | null,
     permits: Permit[],
     violations: ViolationTracker | null,
-    lastAction: AuditEntry | null
+    lastAction: AuditEntry | null,
+    state: AgentState | null,
+    lastReduxAction: AgentAction | null
   ): string {
     const hasGoal = contract?.goal && contract.goal.trim().length > 0;
     const totalWarnings = violations
@@ -366,6 +392,26 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
         </div>
 
         ${
+          state
+            ? `
+        <div class="section">
+          <div class="section-title">
+            <span class="icon">&#128203;</span>
+            State Store
+          </div>
+          <div class="permit-card">
+            <div><strong>Active task:</strong> ${state.active_task ?? "None"}</div>
+            <div><strong>Tasks:</strong> ${state.tasks.length} total (${state.tasks.filter((t) => t.status === "done").length} done)</div>
+            <div><strong>Open questions:</strong> ${state.open_questions.filter((q) => q.status === "open").length}</div>
+            <div><strong>Decisions:</strong> ${state.decisions.length}</div>
+            <div><strong>Last action:</strong> ${lastReduxAction ? this._escapeHtml(lastReduxAction.type) : "None"}</div>
+          </div>
+        </div>
+        `
+            : ""
+        }
+
+        ${
           contract?.success_criteria && contract.success_criteria.length > 0
             ? `
         <div class="section">
@@ -450,9 +496,10 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
           <button class="btn" onclick="openContract()">Edit Contract</button>
           ${
             lastAction
-              ? `<button class="btn btn-secondary" onclick="autoPermit()">Auto‑Permit Last Action</button>`
+              ? `<button class="btn btn-secondary" onclick="autoPermit()">Auto-Permit Last Action</button>`
               : ""
           }
+          <button class="btn btn-secondary" onclick="dispatchAction()">Dispatch Action</button>
           <button class="btn btn-secondary" onclick="refresh()">Refresh</button>
         </div>
 
@@ -463,6 +510,9 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
           }
           function autoPermit() {
             vscode.postMessage({ command: 'autoPermit' });
+          }
+          function dispatchAction() {
+            vscode.postMessage({ command: 'dispatchAction' });
           }
           function refresh() {
             vscode.postMessage({ command: 'refresh' });

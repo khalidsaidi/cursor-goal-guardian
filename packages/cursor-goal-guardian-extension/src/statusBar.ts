@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
+import { loadState } from "./stateStore.js";
 
 type GoalContract = {
   goal: string;
@@ -72,6 +73,7 @@ export class StatusBarManager {
     const contract = await this._loadContract(workspaceRoot);
     const permits = await this._loadPermits(workspaceRoot);
     const violations = await this._loadViolations(workspaceRoot);
+    const state = await loadState(workspaceRoot).catch(() => null);
 
     const hasGoal = contract?.goal && contract.goal.trim().length > 0;
     const permitCount = permits.length;
@@ -99,6 +101,11 @@ export class StatusBarManager {
         text += ` $(warning) ${totalWarnings}`;
         tooltip += `\n${totalWarnings} warning(s)`;
       }
+    }
+
+    if (state?.active_task) {
+      text += ` $(list-selection) ${state.active_task}`;
+      tooltip += `\nActive task: ${state.active_task}`;
     }
 
     this._statusBarItem.text = text;

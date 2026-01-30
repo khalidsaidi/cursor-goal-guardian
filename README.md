@@ -67,3 +67,15 @@ pnpm -r test
 - The MCP server writes runtime data to `.ai/` (gitignored) to avoid exposing permits to the model.
 - The hook defaults to **permit-required** for shell and MCP calls, and optional for reads.
 - You can set `requirePermitForRead` to `true` in `policy.json` for a stricter mode.
+
+## The Redux mental model for agents
+
+| Redux concept | Agent equivalent in Cursor |
+| --- | --- |
+| Store | `state.json` (single source of truth) |
+| Actions | JSON events like `{ "type": "START_TASK", "taskId": "..." }` |
+| Reducer | Deterministic function that turns `(state, action)` into `nextState` |
+| Middleware | Cursor Rules (guardrails) + checklists via Commands |
+| DevTools / time travel | `actions.jsonl` log + git history |
+
+Why it matters: agents drift when the "current plan" only lives in chat history. Treating state and actions as first-class artifacts makes drift visible, debuggable, and preventable.

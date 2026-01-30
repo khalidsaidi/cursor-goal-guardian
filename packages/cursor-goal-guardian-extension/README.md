@@ -26,6 +26,23 @@ the hook **checks policy + goal alignment**. It will:
 - **Make the goal visible** in a sidebar panel and status bar
 - **Turn risky actions into guided decisions** instead of hard stops
 - **Keep an audit trail** of warnings and permits
+- **Maintain a single source of truth** with a Redux-style state store
+
+## Redux-style state store (on by default)
+
+This extension also creates a state store so the agent's plan lives in a single, explicit file (not chat history):
+
+- Store: `.cursor/goal-guardian/state.json`
+- Actions: `.cursor/goal-guardian/actions.jsonl`
+- Reducer: `.cursor/goal-guardian/reducer.js`
+- Rules: `.cursor/goal-guardian/rules.json`
+
+Flow: read state -> dispatch action -> reducer -> next state. Files are created automatically when the extension activates.
+
+Commands:
+- **Dispatch Action**
+- **Rebuild State From Actions**
+- **Open State Store / Action Log / Reducer / Rules**
 
 ## Quick start (1 minute)
 
@@ -42,6 +59,9 @@ the hook **checks policy + goal alignment**. It will:
 - **Goal Guardian: Open Contract**
 - **Goal Guardian: Remove from Workspace**
 - **Goal Guardian: Auto-Permit Last Action**
+- **Goal Guardian: Dispatch Action**
+- **Goal Guardian: Rebuild State From Actions**
+- **Goal Guardian: Open State Store / Action Log / Reducer / Rules**
 
 ## What it writes
 

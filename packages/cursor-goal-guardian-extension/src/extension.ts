@@ -4,6 +4,14 @@ import * as fs from "node:fs/promises";
 import { GoalPanelProvider } from "./goalPanel.js";
 import { StatusBarManager } from "./statusBar.js";
 import { AuditOutputChannel } from "./outputChannel.js";
+import {
+  ensureStateStoreFiles,
+  dispatchAction,
+  rebuildState,
+  getStatePaths,
+  loadRules,
+  loadState,
+} from "./stateStore.js";
 
 const EXT_NAME = "Goal Guardian";
 
@@ -45,6 +53,15 @@ async function writeJson(filePath: string, data: unknown): Promise<boolean> {
   await ensureDir(path.dirname(filePath));
   await fs.writeFile(filePath, JSON.stringify(data, null, 2), "utf8");
   return true;
+}
+
+async function openFileInEditor(filePath: string): Promise<void> {
+  try {
+    const doc = await vscode.workspace.openTextDocument(filePath);
+    await vscode.window.showTextDocument(doc, { preview: false });
+  } catch {
+    vscode.window.showErrorMessage(`${EXT_NAME}: Could not open ${filePath}`);
+  }
 }
 
 type AuditEntry = {
@@ -159,6 +176,105 @@ async function autoPermitForLastAction(context: vscode.ExtensionContext): Promis
       // ignore
     }
   }
+}
+
+async function dispatchActionInteractive(workspaceRoot: string): Promise<void> {
+  await ensureStateStoreFiles(workspaceRoot);
+  const state = await loadState(workspaceRoot);
+
+  const actionTypes = [
+    "SET_GOAL",
+    "ADD_TASKS",
+    "START_TASK",
+    "COMPLETE_TASK",
+    "OPEN_QUESTION",
+    "CLOSE_QUESTION",
+    "ADD_DECISION",
+    "PIN_CONTEXT",
+    "UNPIN_CONTEXT",
+    "CUSTOM_JSON",
+  ];
+
+  let picked = await vscode.window.showQuickPick(actionTypes, {
+    placeHolder: "Select action type",
+  });
+  if (!picked) return;
+
+  let payload: Record<string, unknown> = {};
+
+  if (picked === "SET_GOAL") {
+    const goal = await vscode.window.showInputBox({ prompt: "Goal statement", value: state.goal });
+    if (goal === undefined) return;
+    const dod = await vscode.window.showInputBox({
+      prompt: "Definition of done (comma-separated)",
+      value: state.definition_of_done.join(", "),
+    });
+    const constraints = await vscode.window.showInputBox({
+      prompt: "Constraints (comma-separated)",
+      value: state.constraints.join(", "),
+    });
+    payload = {
+      goal,
+      definition_of_done: (dod ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+      constraints: (constraints ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    };
+  } else if (picked === "ADD_TASKS") {
+    const tasks = await vscode.window.showInputBox({
+      prompt: "Tasks (comma-separated)",
+      placeHolder: "Design API, Implement handler, Add tests",
+    });
+    if (tasks === undefined) return;
+    payload = {
+      tasks: tasks.split(",").map((t) => ({ title: t.trim() })).filter((t) => t.title),
+    };
+  } else if (picked === "START_TASK" || picked === "COMPLETE_TASK") {
+    const taskId = await vscode.window.showInputBox({
+      prompt: "Task ID",
+      placeHolder: "task_...",
+    });
+    if (!taskId) return;
+    payload = { taskId };
+  } else if (picked === "OPEN_QUESTION") {
+    const text = await vscode.window.showInputBox({ prompt: "Question" });
+    if (!text) return;
+    payload = { text };
+  } else if (picked === "CLOSE_QUESTION") {
+    const qId = await vscode.window.showInputBox({ prompt: "Question ID" });
+    if (!qId) return;
+    payload = { id: qId };
+  } else if (picked === "ADD_DECISION") {
+    const text = await vscode.window.showInputBox({ prompt: "Decision text" });
+    if (!text) return;
+    const rationale = await vscode.window.showInputBox({ prompt: "Decision rationale" });
+    if (!rationale) return;
+    payload = { text, rationale };
+  } else if (picked === "PIN_CONTEXT" || picked === "UNPIN_CONTEXT") {
+    const p = await vscode.window.showInputBox({ prompt: "Path to pin/unpin" });
+    if (!p) return;
+    payload = { path: p };
+  } else if (picked === "CUSTOM_JSON") {
+    const raw = await vscode.window.showInputBox({
+      prompt: "Paste full action JSON (must include type + payload)",
+      placeHolder: "{\"type\":\"SET_GOAL\",\"payload\":{...}}",
+    });
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw);
+      const type = String(parsed.type ?? "");
+      if (!type) throw new Error("Missing type");
+      payload = parsed.payload ?? {};
+      picked = type;
+    } catch (err) {
+      vscode.window.showErrorMessage(`${EXT_NAME}: Invalid JSON action. ${String(err)}`);
+      return;
+    }
+  }
+
+  await dispatchAction(workspaceRoot, {
+    actor: "human",
+    type: picked,
+    payload,
+  });
 }
 
 function defaultContract() {
@@ -312,6 +428,9 @@ async function installFiles(context: vscode.ExtensionContext): Promise<void> {
     changed.push("policy.json");
   }
 
+  // State store files are on by default (Redux-style loop).
+  await ensureStateStoreFiles(workspaceRoot);
+
   if (!(await fileExists(hooksPath))) {
     await writeJson(hooksPath, hooksJson);
     changed.push("hooks.json");
@@ -377,6 +496,12 @@ async function uninstallFiles(): Promise<void> {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  const workspaceRoot = getWorkspaceRoot();
+  if (workspaceRoot) {
+    ensureStateStoreFiles(workspaceRoot).catch(() => {
+      // ignore; user can run Install/Configure to repair
+    });
+  }
   // Create UI components
   const goalPanelProvider = new GoalPanelProvider(context.extensionUri);
   const statusBarManager = new StatusBarManager();
@@ -506,6 +631,65 @@ The AI agent can execute these commands via the goal-guardian MCP server.`;
     statusBarManager.refresh();
   });
 
+  const openStateCmd = vscode.commands.registerCommand("goalGuardian.openState", async () => {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) return;
+    const p = getStatePaths(workspaceRoot);
+    await openFileInEditor(p.state);
+  });
+
+  const openActionsCmd = vscode.commands.registerCommand("goalGuardian.openActions", async () => {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) return;
+    const p = getStatePaths(workspaceRoot);
+    await openFileInEditor(p.actions);
+  });
+
+  const openReducerCmd = vscode.commands.registerCommand("goalGuardian.openReducer", async () => {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) return;
+    const p = getStatePaths(workspaceRoot);
+    await openFileInEditor(p.reducer);
+  });
+
+  const openRulesCmd = vscode.commands.registerCommand("goalGuardian.openRules", async () => {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) return;
+    const p = getStatePaths(workspaceRoot);
+    await openFileInEditor(p.rules);
+  });
+
+  const dispatchActionCmd = vscode.commands.registerCommand("goalGuardian.dispatchAction", async () => {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) {
+      vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
+      return;
+    }
+    try {
+      await dispatchActionInteractive(workspaceRoot);
+      goalPanelProvider.refresh();
+      statusBarManager.refresh();
+    } catch (err) {
+      vscode.window.showErrorMessage(`${EXT_NAME}: ${String(err)}`);
+    }
+  });
+
+  const rebuildStateCmd = vscode.commands.registerCommand("goalGuardian.rebuildState", async () => {
+    const workspaceRoot = getWorkspaceRoot();
+    if (!workspaceRoot) {
+      vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
+      return;
+    }
+    try {
+      await rebuildState(workspaceRoot);
+      goalPanelProvider.refresh();
+      statusBarManager.refresh();
+      vscode.window.showInformationMessage(`${EXT_NAME}: State rebuilt from actions.`);
+    } catch (err) {
+      vscode.window.showErrorMessage(`${EXT_NAME}: ${String(err)}`);
+    }
+  });
+
   // Watch for contract file changes to auto-refresh
   const contractWatcher = vscode.workspace.createFileSystemWatcher(
     "**/goal-guardian/contract.json"
@@ -523,6 +707,34 @@ The AI agent can execute these commands via the goal-guardian MCP server.`;
     statusBarManager.refresh();
   });
 
+  const stateWatcher = vscode.workspace.createFileSystemWatcher(
+    "**/goal-guardian/state.json"
+  );
+  stateWatcher.onDidChange(() => {
+    goalPanelProvider.refresh();
+    statusBarManager.refresh();
+  });
+  stateWatcher.onDidCreate(() => {
+    goalPanelProvider.refresh();
+    statusBarManager.refresh();
+  });
+  stateWatcher.onDidDelete(() => {
+    goalPanelProvider.refresh();
+    statusBarManager.refresh();
+  });
+
+  const actionsWatcher = vscode.workspace.createFileSystemWatcher(
+    "**/goal-guardian/actions.jsonl"
+  );
+  actionsWatcher.onDidChange(() => {
+    goalPanelProvider.refresh();
+    statusBarManager.refresh();
+  });
+  actionsWatcher.onDidCreate(() => {
+    goalPanelProvider.refresh();
+    statusBarManager.refresh();
+  });
+
   context.subscriptions.push(
     panelRegistration,
     statusBarManager,
@@ -535,7 +747,15 @@ The AI agent can execute these commands via the goal-guardian MCP server.`;
     refreshCmd,
     requestPermitCmd,
     autoPermitCmd,
-    contractWatcher
+    openStateCmd,
+    openActionsCmd,
+    openReducerCmd,
+    openRulesCmd,
+    dispatchActionCmd,
+    rebuildStateCmd,
+    contractWatcher,
+    stateWatcher,
+    actionsWatcher
   );
 }
 

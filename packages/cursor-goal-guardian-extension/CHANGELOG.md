@@ -1,11 +1,18 @@
 # Changelog
 
+## 0.3.0
+- Redux-style state store (state.json + actions.jsonl) enabled by default
+- Deterministic reducer with invariants and time-travel rebuild
+- Auto snapshots and strict hash validation
+- New commands: Dispatch Action, Rebuild State, Open State/Actions/Reducer/Rules
+- Goal panel shows state summary and last action
+
 ## 0.2.0
 - **"Guardrail Not Gate" redesign**: Graduated severity system replaces binary allow/deny
 - **New severity levels**: HARD_BLOCK, WARN, PERMIT_REQUIRED, ALLOWED
 - **Warning accumulation**: Risky commands warn first, block after 3 warnings (configurable)
 - **Soft permits**: Permit-required actions warn and continue instead of hard-blocking
-- **Auto‑Permit Last Action**: One‑click permit issuance from the Goal Panel
+- **Auto-Permit Last Action**: One-click permit issuance from the Goal Panel
 - **Goal Panel**: New sidebar panel showing goal, criteria, permits, and warnings
 - **Status Bar**: Shows goal state, permit count, and warning count
 - **Audit Output Channel**: View audit.log entries in VS Code

@@ -2,7 +2,7 @@
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
   "description": "Goal-first Cursor: warns on drift, guides the agent, and only hard-blocks catastrophic actions.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
   "galleryBanner": {
@@ -65,6 +65,30 @@
       {
         "command": "goalGuardian.refresh",
         "title": "Goal Guardian: Refresh"
+      },
+      {
+        "command": "goalGuardian.openState",
+        "title": "Goal Guardian: Open State Store"
+      },
+      {
+        "command": "goalGuardian.openActions",
+        "title": "Goal Guardian: Open Action Log"
+      },
+      {
+        "command": "goalGuardian.openReducer",
+        "title": "Goal Guardian: Open Reducer"
+      },
+      {
+        "command": "goalGuardian.openRules",
+        "title": "Goal Guardian: Open Rules"
+      },
+      {
+        "command": "goalGuardian.dispatchAction",
+        "title": "Goal Guardian: Dispatch Action"
+      },
+      {
+        "command": "goalGuardian.rebuildState",
+        "title": "Goal Guardian: Rebuild State From Actions"
       }
     ],
     "menus": {
@@ -88,6 +112,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ajv": "^8.17.1"
   }
 }
