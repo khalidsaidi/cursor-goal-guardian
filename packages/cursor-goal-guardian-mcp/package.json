@@ -18,5 +18,8 @@
     "fallback-chain-js": "^0.1.0",
     "minimatch": "^9.0.3",
     "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0"
   }
 }

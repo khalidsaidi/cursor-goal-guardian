@@ -137,7 +137,7 @@ async function autoPermitForLastAction(context: vscode.ExtensionContext): Promis
   const mcpCli = path.join(context.extensionPath, "bin", "goal-guardian-mcp.js");
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
-  const client = new Client({ name: "goal-guardian-extension", version: "0.2.0" });
+  const client = new Client({ name: "goal-guardian-extension", version: "0.3.2" });
   const transport = new StdioClientTransport({
     command: "node",
     args: [mcpCli],
@@ -357,20 +357,30 @@ function defaultPolicy() {
   };
 }
 
-function hookCommand(hookPath: string): string {
-  const quoted = hookPath.includes(" ") ? `"${hookPath}"` : hookPath;
-  return `node ${quoted}`;
+function hookCommand(hookPath: string, mcpPath: string): string {
+  const hookQuoted = hookPath.includes(" ") ? `"${hookPath}"` : hookPath;
+  const mcpQuoted = mcpPath.includes(" ") ? `"${mcpPath}"` : mcpPath;
+  return `node ${hookQuoted} --mcp ${mcpQuoted}`;
 }
 
-function mergeHookCommand(existing: any, hookName: string, command: string): boolean {
+function mergeHookCommand(existing: any, hookName: string, command: string, hookPath: string): boolean {
   if (!existing.hooks) existing.hooks = {};
   if (!Array.isArray(existing.hooks[hookName])) existing.hooks[hookName] = [];
   const arr = existing.hooks[hookName] as Array<{ command?: string }>;
-  if (!arr.some((h) => h?.command === command)) {
-    arr.push({ command });
+  const hookQuoted = hookPath.includes(" ") ? `"${hookPath}"` : hookPath;
+  const legacyPrefix = `node ${hookQuoted}`;
+  const legacyEntries = arr.filter(
+    (h) => typeof h?.command === "string" && h.command.startsWith(legacyPrefix) && !h.command.includes("--mcp")
+  );
+  if (legacyEntries.length > 0) {
+    existing.hooks[hookName] = arr.filter((h) => !legacyEntries.includes(h));
+  }
+  const arrAfter = existing.hooks[hookName] as Array<{ command?: string }>;
+  if (!arrAfter.some((h) => h?.command === command)) {
+    arrAfter.push({ command });
     return true;
   }
-  return false;
+  return legacyEntries.length > 0;
 }
 
 async function installFiles(context: vscode.ExtensionContext): Promise<void> {
@@ -389,11 +399,11 @@ async function installFiles(context: vscode.ExtensionContext): Promise<void> {
   const hooksJson = {
     version: 1,
     hooks: {
-      beforeShellExecution: [{ command: hookCommand(hookCli) }],
-      beforeMCPExecution: [{ command: hookCommand(hookCli) }],
-      beforeReadFile: [{ command: hookCommand(hookCli) }],
-      afterFileEdit: [{ command: hookCommand(hookCli) }],
-      stop: [{ command: hookCommand(hookCli) }]
+      beforeShellExecution: [{ command: hookCommand(hookCli, mcpCli) }],
+      beforeMCPExecution: [{ command: hookCommand(hookCli, mcpCli) }],
+      beforeReadFile: [{ command: hookCommand(hookCli, mcpCli) }],
+      afterFileEdit: [{ command: hookCommand(hookCli, mcpCli) }],
+      stop: [{ command: hookCommand(hookCli, mcpCli) }]
     }
   };
 
@@ -436,13 +446,13 @@ async function installFiles(context: vscode.ExtensionContext): Promise<void> {
     changed.push("hooks.json");
   } else {
     const existing = await readJson<any>(hooksPath, { version: 1, hooks: {} });
-    const cmd = hookCommand(hookCli);
+    const cmd = hookCommand(hookCli, mcpCli);
     let modified = false;
-    modified = mergeHookCommand(existing, "beforeShellExecution", cmd) || modified;
-    modified = mergeHookCommand(existing, "beforeMCPExecution", cmd) || modified;
-    modified = mergeHookCommand(existing, "beforeReadFile", cmd) || modified;
-    modified = mergeHookCommand(existing, "afterFileEdit", cmd) || modified;
-    modified = mergeHookCommand(existing, "stop", cmd) || modified;
+    modified = mergeHookCommand(existing, "beforeShellExecution", cmd, hookCli) || modified;
+    modified = mergeHookCommand(existing, "beforeMCPExecution", cmd, hookCli) || modified;
+    modified = mergeHookCommand(existing, "beforeReadFile", cmd, hookCli) || modified;
+    modified = mergeHookCommand(existing, "afterFileEdit", cmd, hookCli) || modified;
+    modified = mergeHookCommand(existing, "stop", cmd, hookCli) || modified;
     if (modified) {
       await backupIfExists(hooksPath);
       await writeJson(hooksPath, { version: existing.version ?? 1, hooks: existing.hooks });
@@ -495,6 +505,32 @@ async function uninstallFiles(): Promise<void> {
   vscode.window.showInformationMessage(`${EXT_NAME}: Removed .cursor/goal-guardian and hooks/mcp configs (if present).`);
 }
 
+async function migrateHookCommands(context: vscode.ExtensionContext): Promise<void> {
+  const workspaceRoot = getWorkspaceRoot();
+  if (!workspaceRoot) return;
+
+  const cursorDir = path.join(workspaceRoot, ".cursor");
+  const hooksPath = path.join(cursorDir, "hooks.json");
+  if (!(await fileExists(hooksPath))) return;
+
+  const hookCli = path.join(context.extensionPath, "bin", "goal-guardian-hook.js");
+  const mcpCli = path.join(context.extensionPath, "bin", "goal-guardian-mcp.js");
+  const cmd = hookCommand(hookCli, mcpCli);
+
+  const existing = await readJson<any>(hooksPath, { version: 1, hooks: {} });
+  let modified = false;
+  modified = mergeHookCommand(existing, "beforeShellExecution", cmd, hookCli) || modified;
+  modified = mergeHookCommand(existing, "beforeMCPExecution", cmd, hookCli) || modified;
+  modified = mergeHookCommand(existing, "beforeReadFile", cmd, hookCli) || modified;
+  modified = mergeHookCommand(existing, "afterFileEdit", cmd, hookCli) || modified;
+  modified = mergeHookCommand(existing, "stop", cmd, hookCli) || modified;
+
+  if (modified) {
+    await backupIfExists(hooksPath);
+    await writeJson(hooksPath, { version: existing.version ?? 1, hooks: existing.hooks });
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const workspaceRoot = getWorkspaceRoot();
   if (workspaceRoot) {
@@ -502,6 +538,9 @@ export function activate(context: vscode.ExtensionContext): void {
       // ignore; user can run Install/Configure to repair
     });
   }
+  migrateHookCommands(context).catch(() => {
+    // ignore; migration is best-effort
+  });
   // Create UI components
   const goalPanelProvider = new GoalPanelProvider(context.extensionUri);
   const statusBarManager = new StatusBarManager();

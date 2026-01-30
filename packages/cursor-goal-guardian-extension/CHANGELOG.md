@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2
+- Fix action timeline layout so diff panel never overlaps.
+- Refresh Redux screenshot and publication assets.
+- Harden packaging script paths for reliable builds.
+
+## 0.3.1
+- MCP‑controlled hooks: all action decisions flow through the Goal‑Guardian MCP server
+- New status badge in Goal Panel (“MCP‑controlled”)
+- Timeline graph + latest state diff panel
+- Redux state screenshot added to marketplace README
+
 ## 0.3.0
 - Redux-style state store (state.json + actions.jsonl) enabled by default
 - Deterministic reducer with invariants and time-travel rebuild

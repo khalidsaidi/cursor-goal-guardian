@@ -348,6 +348,8 @@ type PreviewResult = {
   wouldSucceed: boolean;
   severity: PolicySeverity;
   reason: string;
+  warningCount?: number;
+  maxWarnings?: number;
   suggestedPermitRequest?: {
     step: string;
     maps_to: string[];
@@ -593,9 +595,13 @@ server.registerTool(
         .string()
         .min(1)
         .describe("The action value (command string, 'server/tool' for MCP, or file path for read/write)."),
+      record_warning: z
+        .boolean()
+        .optional()
+        .describe("If true, record warning counts for WARN-level actions."),
     },
   },
-  async ({ action_type, action_value }) => {
+  async ({ action_type, action_value, record_warning }) => {
     const root = await computeWorkspaceRoot();
     const p = getPaths(root);
     await ensureDirs(p);
@@ -631,6 +637,8 @@ server.registerTool(
             wouldSucceed: false,
             severity: "WARN",
             reason: `Warning limit exceeded (${count}/${max}). Request a permit to proceed.`,
+            warningCount: count,
+            maxWarnings: max,
             suggestedPermitRequest: {
               step: `Execute shell command: ${action_value}`,
               maps_to: ["SC1"],
@@ -639,10 +647,16 @@ server.registerTool(
             },
           };
         } else {
+          if (record_warning) {
+            violations.warningCounts[pattern] = count + 1;
+            await writeJsonAtomic(p.violationsPath, violations);
+          }
           result = {
             wouldSucceed: true,
             severity: "WARN",
             reason: `Would issue warning (${count + 1}/${max}): ${rule?.reason ?? "risky operation"}`,
+            warningCount: count + 1,
+            maxWarnings: max,
           };
         }
       } else {
@@ -688,6 +702,37 @@ server.registerTool(
           severity: "ALLOWED",
           reason: rule?.reason ?? "Always allowed",
         };
+      } else if (severity === "WARN") {
+        const pattern = rule?.pattern ?? action_value;
+        const count = violations.warningCounts[pattern] ?? 0;
+        const max = policy.warningConfig.maxWarningsBeforeBlock;
+        if (count >= max) {
+          result = {
+            wouldSucceed: false,
+            severity: "WARN",
+            reason: `Warning limit exceeded (${count}/${max}). Request a permit to proceed.`,
+            warningCount: count,
+            maxWarnings: max,
+            suggestedPermitRequest: {
+              step: `Execute MCP call: ${action_value}`,
+              maps_to: ["SC1"],
+              allow_field: "allow_mcp",
+              allow_pattern: action_value,
+            },
+          };
+        } else {
+          if (record_warning) {
+            violations.warningCounts[pattern] = count + 1;
+            await writeJsonAtomic(p.violationsPath, violations);
+          }
+          result = {
+            wouldSucceed: true,
+            severity: "WARN",
+            reason: `Would issue warning (${count + 1}/${max}): ${rule?.reason ?? "risky MCP call"}`,
+            warningCount: count + 1,
+            maxWarnings: max,
+          };
+        }
       } else if (!policy.requirePermitForMcp) {
         result = {
           wouldSucceed: true,
@@ -729,6 +774,37 @@ server.registerTool(
           severity: "ALLOWED",
           reason: rule?.reason ?? "Always allowed",
         };
+      } else if (severity === "WARN") {
+        const pattern = rule?.pattern ?? action_value;
+        const count = violations.warningCounts[pattern] ?? 0;
+        const max = policy.warningConfig.maxWarningsBeforeBlock;
+        if (count >= max) {
+          result = {
+            wouldSucceed: false,
+            severity: "WARN",
+            reason: `Warning limit exceeded (${count}/${max}). Request a permit to proceed.`,
+            warningCount: count,
+            maxWarnings: max,
+            suggestedPermitRequest: {
+              step: `Access file: ${action_value}`,
+              maps_to: ["SC1"],
+              allow_field: action_type === "read" ? "allow_read" : "allow_write",
+              allow_pattern: action_value,
+            },
+          };
+        } else {
+          if (record_warning) {
+            violations.warningCounts[pattern] = count + 1;
+            await writeJsonAtomic(p.violationsPath, violations);
+          }
+          result = {
+            wouldSucceed: true,
+            severity: "WARN",
+            reason: `Would issue warning (${count + 1}/${max}): ${rule?.reason ?? "risky file access"}`,
+            warningCount: count + 1,
+            maxWarnings: max,
+          };
+        }
       } else if (!policy.requirePermitForRead) {
         result = {
           wouldSucceed: true,

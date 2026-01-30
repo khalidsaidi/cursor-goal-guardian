@@ -2,7 +2,7 @@
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
   "description": "Goal-first Cursor: warns on drift, guides the agent, and only hard-blocks catastrophic actions.",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
   "galleryBanner": {
@@ -102,7 +102,8 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node ../../scripts/bundle-extension.js",
+    "test": "vitest run",
     "package": "node ../../scripts/package-extension.js",
     "publish": "node ../../scripts/publish-extension.js"
   },
@@ -113,6 +114,9 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "ajv": "^8.17.1"
+    "ajv": "^8.17.1",
+    "fallback-chain-js": "^0.1.0",
+    "minimatch": "^9.0.3",
+    "zod": "^3.23.8"
   }
 }

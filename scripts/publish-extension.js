@@ -19,4 +19,4 @@ run("pnpm", ["--filter", "cursor-goal-guardian-mcp", "build"], {}, root);
 run("pnpm", ["--filter", "cursor-goal-guardian-hook", "build"], {}, root);
 run("pnpm", ["--filter", "cursor-goal-guardian-extension", "build"], {}, root);
 run("node", ["scripts/copy-binaries.js"], {}, root);
-run("pnpm", ["dlx", "ovsx", "publish", "-p", token], {}, extDir);
+run("pnpm", ["dlx", "ovsx", "publish", "--no-dependencies", "-p", token], {}, extDir);

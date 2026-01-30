@@ -4,6 +4,8 @@ import fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { minimatch } from "minimatch";
 import { fallback } from "fallback-chain-js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
   defaultPolicy,
   defaultWarningConfig,
@@ -47,6 +49,20 @@ type Permit = {
 };
 
 type PermitsDoc = { permits: Permit[] };
+
+type PreviewResult = {
+  wouldSucceed: boolean;
+  severity: "HARD_BLOCK" | "WARN" | "PERMIT_REQUIRED" | "ALLOWED";
+  reason: string;
+  warningCount?: number;
+  maxWarnings?: number;
+  suggestedPermitRequest?: {
+    step: string;
+    maps_to: string[];
+    allow_field: "allow_shell" | "allow_mcp" | "allow_read" | "allow_write";
+    allow_pattern: string;
+  };
+};
 
 function toPosixRel(p: string): string {
   return p.split(path.sep).join("/");
@@ -94,6 +110,59 @@ async function resolveHookEventName(payload: any): Promise<string> {
     );
   } catch {
     return "unknown";
+  }
+}
+
+function getArgValue(flag: string): string | null {
+  const idx = process.argv.indexOf(flag);
+  if (idx === -1) return null;
+  const next = process.argv[idx + 1];
+  if (!next || next.startsWith("--")) return null;
+  return next;
+}
+
+function resolveMcpPath(): string | null {
+  return (
+    getArgValue("--mcp") ??
+    getArgValue("--mcpPath") ??
+    process.env.GOAL_GUARDIAN_MCP_PATH ??
+    null
+  );
+}
+
+async function previewViaMcp(
+  mcpPath: string,
+  workspaceRoot: string,
+  actionType: "shell" | "mcp" | "read" | "write",
+  actionValue: string
+): Promise<PreviewResult | null> {
+  const client = new Client({ name: "goal-guardian-hook", version: "0.3.2" });
+  const transport = new StdioClientTransport({
+    command: "node",
+    args: [mcpPath],
+    env: { GOAL_GUARDIAN_WORKSPACE_ROOT: workspaceRoot },
+  });
+
+  try {
+    await client.connect(transport);
+    const res = await client.callTool({
+      name: "guardian_preview_action",
+      arguments: {
+        action_type: actionType,
+        action_value: actionValue,
+        record_warning: true,
+      },
+    });
+    const text = (res as any)?.content?.[0]?.text ?? "{}";
+    return JSON.parse(text) as PreviewResult;
+  } catch {
+    return null;
+  } finally {
+    try {
+      await client.close();
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -189,6 +258,50 @@ function buildRecoveryMessage(
   );
 }
 
+function previewToResponse(
+  preview: PreviewResult,
+  actionType: "shell" | "mcp" | "read" | "write",
+  actionValue: string,
+  policy: GoalGuardianPolicy,
+  contract: GoalContract | null
+) {
+  const maxWarnings = preview.maxWarnings ?? policy.warningConfig.maxWarningsBeforeBlock;
+  const warningCount = preview.warningCount ?? 0;
+  const suggested = preview.suggestedPermitRequest;
+  const suggestedAction = suggested
+    ? `Request a permit with ${suggested.allow_field}: ["${suggested.allow_pattern}"]`
+    : `Request a permit for ${actionType}`;
+
+  const goalContext = contract
+    ? {
+        goal: contract.goal,
+        relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`),
+      }
+    : undefined;
+
+  if (!preview.wouldSucceed) {
+    const agentMsg = suggested
+      ? buildRecoveryMessage(actionType, actionValue, contract, `${suggested.allow_field}: ["${suggested.allow_pattern}"]`)
+      : `Action blocked by MCP policy. ${actionValue}`;
+    return cursorResponseDeny(preview.reason, agentMsg);
+  }
+
+  if (preview.severity === "WARN") {
+    return cursorResponseWarn(
+      preview.reason,
+      `Allowed with warning. ${maxWarnings - warningCount} warnings remaining before block.`,
+      {
+        warningCount,
+        maxWarnings,
+        suggestedAction,
+        goalContext,
+      }
+    );
+  }
+
+  return cursorResponseAllow();
+}
+
 async function loadPolicy(workspaceRoot: string): Promise<GoalGuardianPolicy> {
   const envPath = process.env.GOAL_GUARDIAN_POLICY_PATH;
   const candidatePaths = [
@@ -278,6 +391,7 @@ async function main(): Promise<void> {
   const workspaceRoot = await resolveWorkspaceRoot(payload);
   const policy = await loadPolicy(workspaceRoot);
   const permit = await loadActivePermit(workspaceRoot);
+  const mcpPath = resolveMcpPath();
 
   await appendAudit(workspaceRoot, {
     event: eventName,
@@ -300,6 +414,15 @@ async function main(): Promise<void> {
     if (cmd.length === 0) {
       process.stdout.write(JSON.stringify(cursorResponseAllow()));
       return;
+    }
+
+    if (mcpPath) {
+      const preview = await previewViaMcp(mcpPath, workspaceRoot, "shell", cmd);
+      if (preview) {
+        const decision = previewToResponse(preview, "shell", cmd, policy, contract);
+        process.stdout.write(JSON.stringify(decision));
+        return;
+      }
     }
 
     // Check severity-based rules first
@@ -508,6 +631,15 @@ async function main(): Promise<void> {
     const tool = String(payload?.tool_name ?? "").trim() || "unknown";
     const key = `${server}/${tool}`;
 
+    if (mcpPath) {
+      const preview = await previewViaMcp(mcpPath, workspaceRoot, "mcp", key);
+      if (preview) {
+        const decision = previewToResponse(preview, "mcp", key, policy, contract);
+        process.stdout.write(JSON.stringify(decision));
+        return;
+      }
+    }
+
     // Check severity-based rules first
     const { severity, rule } = classifySeverity(policy.mcpRules, key);
 
@@ -705,6 +837,15 @@ async function main(): Promise<void> {
     if (!rel) {
       process.stdout.write(JSON.stringify(cursorResponseAllow()));
       return;
+    }
+
+    if (mcpPath) {
+      const preview = await previewViaMcp(mcpPath, workspaceRoot, "read", rel);
+      if (preview) {
+        const decision = previewToResponse(preview, "read", rel, policy, contract);
+        process.stdout.write(JSON.stringify(decision));
+        return;
+      }
     }
 
     // Check severity-based rules first
