@@ -16420,7 +16420,7 @@ function resolveMcpPath() {
   return getArgValue("--mcp") ?? getArgValue("--mcpPath") ?? process.env.GOAL_GUARDIAN_MCP_PATH ?? null;
 }
 async function previewViaMcp(mcpPath, workspaceRoot, actionType, actionValue) {
-  const client = new Client({ name: "goal-guardian-hook", version: "0.3.2" });
+  const client = new Client({ name: "goal-guardian-hook", version: "0.3.3" });
   const transport = new StdioClientTransport({
     command: "node",
     args: [mcpPath],

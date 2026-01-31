@@ -2,10 +2,21 @@
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/banner.png" alt="Goal Guardian Banner" width="700" />
 
-Goal Guardian keeps the AI aligned by **anchoring it to explicit state**, then **warning, guiding, and only hard-blocking truly dangerous actions**.
+Goal Guardian is a **Redux‑based agent system**: it keeps the AI aligned by **anchoring it to explicit state**, then **warning, guiding, and only hard‑blocking truly dangerous actions**.
 It installs Cursor Hooks + an MCP server config **into your workspace**.
 
-**In one line:** Goal-first Cursor. Warn on drift, guide back to the goal, and only hard-block catastrophic actions.
+**In one line:** Redux‑based anti‑drift for Cursor. A real state store + action log, with MCP‑controlled guardrails.
+
+## Redux‑based, not chat‑based
+
+This extension replaces “the plan in chat history” with a **Redux‑style state machine**:
+
+- **Store (single source of truth):** `.cursor/goal-guardian/state.json`
+- **Actions (append‑only log):** `.cursor/goal-guardian/actions.jsonl`
+- **Reducer (deterministic updates):** `.cursor/goal-guardian/reducer.js`
+- **Rules (invariants/strictness):** `.cursor/goal-guardian/rules.json`
+
+Everything the agent does should map to an action → reducer → next state.
 
 ## What it actually does (in plain English)
 
@@ -145,7 +156,7 @@ Manual smoke test:
 
 ## Redux state screenshot
 
-<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/redux-state.png?v=0.3.2" alt="Redux state view" width="900" />
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/redux-state.png?v=0.3.3" alt="Redux state view" width="900" />
 
 ## Troubleshooting
 

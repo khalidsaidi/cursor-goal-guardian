@@ -136,7 +136,7 @@ async function previewViaMcp(
   actionType: "shell" | "mcp" | "read" | "write",
   actionValue: string
 ): Promise<PreviewResult | null> {
-  const client = new Client({ name: "goal-guardian-hook", version: "0.3.2" });
+  const client = new Client({ name: "goal-guardian-hook", version: "0.3.3" });
   const transport = new StdioClientTransport({
     command: "node",
     args: [mcpPath],

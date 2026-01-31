@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.3
+- Make Redux-based positioning explicit in the overview.
+
 ## 0.3.2
 - Fix action timeline layout so diff panel never overlaps.
 - Refresh Redux screenshot and publication assets.

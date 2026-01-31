@@ -2,7 +2,7 @@
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
   "description": "Goal-first Cursor: warns on drift, guides the agent, and only hard-blocks catastrophic actions.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
   "galleryBanner": {

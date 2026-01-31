@@ -137,7 +137,7 @@ async function autoPermitForLastAction(context: vscode.ExtensionContext): Promis
   const mcpCli = path.join(context.extensionPath, "bin", "goal-guardian-mcp.js");
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
-  const client = new Client({ name: "goal-guardian-extension", version: "0.3.2" });
+  const client = new Client({ name: "goal-guardian-extension", version: "0.3.3" });
   const transport = new StdioClientTransport({
     command: "node",
     args: [mcpCli],
