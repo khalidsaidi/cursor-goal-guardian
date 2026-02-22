@@ -18,6 +18,7 @@ The same five metrics as `scripts/evaluate-ab.js`:
 
 - `task_set_20.json`: 20 user-style React task prompts with explicit success criteria IDs.
 - `README.md`: run protocol and scoring rubric.
+- `../../scripts/record-panel-demo-20tasks.mjs`: panel replay generator used for user-facing demo artifacts.
 
 ## Roles
 

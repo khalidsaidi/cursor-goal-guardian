@@ -76,6 +76,42 @@ node scripts/unblind-live-ab.js --study /tmp/cgg-live-react-20 --evaluate
 
 See `examples/ab-live-react/README.md` for protocol and rubric.
 
+## Validation included (user-facing)
+
+These checks are included in the repo and were run as part of release validation:
+
+- Full automated test suite:
+  - `pnpm -r test`
+  - covers extension state store + cleanup, hook CLI/policy behavior, MCP preview behavior.
+- Full build verification:
+  - `pnpm -r build`
+- A/B evaluator (sample study):
+  - `pnpm eval:ab`
+- Live blinded A/B protocol assets:
+  - `examples/ab-live-react/task_set_20.json`
+  - `scripts/scaffold-live-react-env.js`, `scripts/init-live-ab.js`, `scripts/unblind-live-ab.js`
+- Panel replay demo from the real 20-task set:
+  - `pnpm panel:demo:20tasks`
+  - generates a long WebM in `artifacts/panel-demo/` (gitignored) and a docs GIF preview.
+
+### Panel demo (animated)
+
+This animation is generated from the real 20-task panel replay:
+
+![Goal Guardian panel demo (20-task replay)](docs/media/goal-guardian-panel-demo-20tasks.gif)
+
+To regenerate:
+
+```bash
+pnpm panel:demo:20tasks
+ffmpeg -y -ss 0 -t 24 -i artifacts/panel-demo/goal-guardian-panel-demo-20tasks.webm \
+  -vf "fps=8,scale=960:-1:flags=lanczos,palettegen=max_colors=96" /tmp/cgg-panel-palette.png
+ffmpeg -y -ss 0 -t 24 -i artifacts/panel-demo/goal-guardian-panel-demo-20tasks.webm \
+  -i /tmp/cgg-panel-palette.png \
+  -lavfi "fps=8,scale=960:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5" \
+  docs/media/goal-guardian-panel-demo-20tasks.gif
+```
+
 ## Wiring into a project
 
 1) Build this repo so the binaries are in `dist/`.

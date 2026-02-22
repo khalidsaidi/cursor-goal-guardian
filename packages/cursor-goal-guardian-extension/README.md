@@ -146,6 +146,24 @@ Manual smoke test:
 4) Run **Rebuild State From Actions**  
 5) Open Goal Panel → state and timeline stay in sync
 
+## Validation evidence (included)
+
+This repo also ships user-facing validation assets:
+
+- 20 real user-style React tasks: `examples/ab-live-react/task_set_20.json`
+- Blinded A/B workflow scripts:
+  - `scripts/scaffold-live-react-env.js`
+  - `scripts/init-live-ab.js`
+  - `scripts/unblind-live-ab.js`
+  - `scripts/evaluate-ab.js`
+- Long panel replay recorder:
+  - `scripts/record-panel-demo-20tasks.mjs`
+  - run with `pnpm panel:demo:20tasks`
+
+Animated preview of the panel running through the 20-task replay:
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/docs/media/goal-guardian-panel-demo-20tasks.gif" alt="Goal Guardian panel demo animation" width="960" />
+
 ## Redux state screenshot
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/redux-state.png?v=0.3.3" alt="Redux state view" width="900" />
