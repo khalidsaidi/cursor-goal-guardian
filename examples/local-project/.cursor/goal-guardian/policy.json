@@ -13,7 +13,7 @@
     "read": [".cursor/goal-guardian/**", ".cursor/hooks.json", ".cursor/mcp.json"]
   },
 
-  "alwaysDeny": {
+  "highRiskPatterns": {
     "shell": ["rm -rf /*", "rm -rf /", "*curl*|*sh*", "*wget*|*sh*"],
     "mcp": [],
     "read": [".ai/goal-guardian/**", ".git/**", "**/.env", "**/.env.*", "**/*.pem", "**/*.key"]

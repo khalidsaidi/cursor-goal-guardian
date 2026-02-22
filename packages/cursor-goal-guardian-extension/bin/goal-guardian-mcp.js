@@ -22635,7 +22635,7 @@ function defaultPolicy() {
       mcp: ["goal-guardian/*"],
       read: [".cursor/goal-guardian/**", ".cursor/hooks.json", ".cursor/mcp.json"]
     },
-    alwaysDeny: {
+    highRiskPatterns: {
       shell: ["rm -rf /*", "rm -rf /", "*curl*|*sh*", "*wget*|*sh*"],
       mcp: [],
       read: [".ai/goal-guardian/**", ".git/**", "**/.env", "**/.env.*", "**/*.pem", "**/*.key"]
@@ -22646,10 +22646,10 @@ function defaultPolicy() {
       showGoalReminder: true
     },
     shellRules: [
-      { pattern: "rm -rf /", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
-      { pattern: "rm -rf /*", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
-      { pattern: "*curl*|*sh*", severity: "HARD_BLOCK", reason: "Remote code execution" },
-      { pattern: "*wget*|*sh*", severity: "HARD_BLOCK", reason: "Remote code execution" },
+      { pattern: "rm -rf /", severity: "HIGH_RISK", reason: "Destructive filesystem command" },
+      { pattern: "rm -rf /*", severity: "HIGH_RISK", reason: "Destructive filesystem command" },
+      { pattern: "*curl*|*sh*", severity: "HIGH_RISK", reason: "Remote code execution pattern" },
+      { pattern: "*wget*|*sh*", severity: "HIGH_RISK", reason: "Remote code execution pattern" },
       { pattern: "rm -rf *", severity: "WARN", reason: "Recursive force delete" },
       { pattern: "*--force*", severity: "WARN", reason: "Force flag bypasses safety checks" },
       { pattern: "git reset --hard*", severity: "WARN", reason: "Destructive git operation" },
@@ -22662,8 +22662,8 @@ function defaultPolicy() {
     ],
     mcpRules: [{ pattern: "goal-guardian/*", severity: "ALLOWED", reason: "Goal Guardian MCP tools" }],
     readRules: [
-      { pattern: "**/.env", severity: "HARD_BLOCK", reason: "Environment secrets" },
-      { pattern: "**/.env.*", severity: "HARD_BLOCK", reason: "Environment secrets" },
+      { pattern: "**/.env", severity: "HIGH_RISK", reason: "Environment secrets" },
+      { pattern: "**/.env.*", severity: "HIGH_RISK", reason: "Environment secrets" },
       { pattern: ".cursor/goal-guardian/**", severity: "ALLOWED", reason: "Guardian configuration" }
     ]
   };
@@ -22679,10 +22679,10 @@ async function loadPolicy(pathsObj) {
       mcp: fromFile.alwaysAllow?.mcp ?? base.alwaysAllow.mcp,
       read: fromFile.alwaysAllow?.read ?? base.alwaysAllow.read
     },
-    alwaysDeny: {
-      shell: fromFile.alwaysDeny?.shell ?? base.alwaysDeny.shell,
-      mcp: fromFile.alwaysDeny?.mcp ?? base.alwaysDeny.mcp,
-      read: fromFile.alwaysDeny?.read ?? base.alwaysDeny.read
+    highRiskPatterns: {
+      shell: fromFile.highRiskPatterns?.shell ?? base.highRiskPatterns.shell,
+      mcp: fromFile.highRiskPatterns?.mcp ?? base.highRiskPatterns.mcp,
+      read: fromFile.highRiskPatterns?.read ?? base.highRiskPatterns.read
     },
     warningConfig: {
       ...base.warningConfig,
@@ -22791,7 +22791,7 @@ server.registerTool(
 server.registerTool(
   "guardian_issue_permit",
   {
-    description: "Issue a short-lived permit token tied to a step_id from guardian_check_step. The Cursor hook gate reads permits from .ai and blocks actions without a valid permit.",
+    description: "Issue a short-lived permit token tied to a step_id from guardian_check_step. The Cursor hook reads permits from .ai to assess alignment and provide advisory guidance.",
     inputSchema: {
       step_id: external_exports.string().min(1),
       ttl_seconds: external_exports.number().int().min(30).max(3600).default(600),
@@ -22905,11 +22905,11 @@ server.registerTool(
     let result;
     if (action_type === "shell") {
       const { severity, rule } = classifySeverity(policy.shellRules, action_value);
-      if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.shell, action_value)) {
+      if (severity === "HIGH_RISK" || globAny(policy.highRiskPatterns.shell, action_value)) {
         result = {
-          wouldSucceed: false,
-          severity: "HARD_BLOCK",
-          reason: rule?.reason ?? "Blocked by policy - cannot be permitted"
+          wouldSucceed: true,
+          severity: "HIGH_RISK",
+          reason: rule?.reason ?? "High-risk advisory pattern matched"
         };
       } else if (severity === "ALLOWED" || globAny(policy.alwaysAllow.shell, action_value)) {
         result = {
@@ -22977,11 +22977,11 @@ server.registerTool(
       }
     } else if (action_type === "mcp") {
       const { severity, rule } = classifySeverity(policy.mcpRules, action_value);
-      if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.mcp, action_value)) {
+      if (severity === "HIGH_RISK" || globAny(policy.highRiskPatterns.mcp, action_value)) {
         result = {
-          wouldSucceed: false,
-          severity: "HARD_BLOCK",
-          reason: rule?.reason ?? "Blocked by policy"
+          wouldSucceed: true,
+          severity: "HIGH_RISK",
+          reason: rule?.reason ?? "High-risk advisory pattern matched"
         };
       } else if (severity === "ALLOWED" || globAny(policy.alwaysAllow.mcp, action_value)) {
         result = {
@@ -23047,11 +23047,11 @@ server.registerTool(
       }
     } else {
       const { severity, rule } = classifySeverity(policy.readRules, action_value);
-      if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.read, action_value)) {
+      if (severity === "HIGH_RISK" || globAny(policy.highRiskPatterns.read, action_value)) {
         result = {
-          wouldSucceed: false,
-          severity: "HARD_BLOCK",
-          reason: rule?.reason ?? "Blocked by policy"
+          wouldSucceed: true,
+          severity: "HIGH_RISK",
+          reason: rule?.reason ?? "High-risk advisory pattern matched"
         };
       } else if (severity === "ALLOWED" || globAny(policy.alwaysAllow.read, action_value)) {
         result = {

@@ -102,7 +102,7 @@ Commands:
 - **Deterministic task flow** through actions + reducer
 - **Automatic task bootstrapping** from success criteria in `contract.json`
 - **Automatic active-task + context capture** during normal editing
-- **No hook-based hard blocking**
+- **No hook-based execution stopping (advisory-only)**
 
 ## How it works (short version)
 

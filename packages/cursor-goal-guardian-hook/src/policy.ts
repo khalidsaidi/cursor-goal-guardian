@@ -1,5 +1,11 @@
-export type PolicySeverity = "HARD_BLOCK" | "WARN" | "PERMIT_REQUIRED" | "ALLOWED";
+export type PolicySeverity = "HIGH_RISK" | "WARN" | "PERMIT_REQUIRED" | "ALLOWED";
 export type TaskScopeSensitivity = "strict" | "balanced" | "lenient";
+
+type PolicyPatternSet = {
+  shell: string[];
+  mcp: string[];
+  read: string[];
+};
 
 export type PolicyRule = {
   pattern: string;
@@ -8,9 +14,9 @@ export type PolicyRule = {
 };
 
 export type WarningConfig = {
-  maxWarningsBeforeBlock: number;  // default: 3
-  warningResetMinutes: number;     // default: 60
-  showGoalReminder: boolean;       // default: true
+  maxWarningsBeforeBlock: number;
+  warningResetMinutes: number;
+  showGoalReminder: boolean;
 };
 
 export type GoalGuardianPolicy = {
@@ -32,22 +38,15 @@ export type GoalGuardianPolicy = {
   // Optional: revert unauthorized edits via git (best-effort).
   autoRevertUnauthorizedEdits: boolean;
 
-  alwaysAllow: {
-    shell: string[]; // glob against full command string
-    mcp: string[];   // glob against "server/tool_name"
-    read: string[];  // glob against relative file path
-  };
+  alwaysAllow: PolicyPatternSet;
 
-  alwaysDeny: {
-    shell: string[];
-    mcp: string[];
-    read: string[];
-  };
+  // Preferred advisory naming for high-risk patterns.
+  highRiskPatterns: PolicyPatternSet;
 
-  // Warning behavior configuration
+  // Warning behavior configuration.
   warningConfig: WarningConfig;
 
-  // Severity-based rules (optional, extends alwaysAllow/alwaysDeny)
+  // Severity-based rules (optional, extends alwaysAllow/highRiskPatterns)
   shellRules?: PolicyRule[];
   mcpRules?: PolicyRule[];
   readRules?: PolicyRule[];
@@ -89,27 +88,27 @@ export function defaultPolicy(): GoalGuardianPolicy {
         "pwd",
         "node -v",
         "npm -v",
-        "pnpm -v"
+        "pnpm -v",
       ],
       mcp: [
         // Always allow the goal-guardian server itself so the agent can request permits.
-        "goal-guardian/*"
+        "goal-guardian/*",
       ],
       read: [
         // Allow the guardian contract itself to be read into context.
         ".cursor/goal-guardian/**",
         ".cursor/hooks.json",
-        ".cursor/mcp.json"
-      ]
+        ".cursor/mcp.json",
+      ],
     },
 
-    alwaysDeny: {
+    highRiskPatterns: {
       shell: [
         // Add your own high-risk patterns here (examples):
         "rm -rf /*",
         "rm -rf /",
         "*curl*|*sh*",
-        "*wget*|*sh*"
+        "*wget*|*sh*",
       ],
       mcp: [],
       read: [
@@ -119,28 +118,27 @@ export function defaultPolicy(): GoalGuardianPolicy {
         "**/.env",
         "**/.env.*",
         "**/*.pem",
-        "**/*.key"
-      ]
+        "**/*.key",
+      ],
     },
 
     warningConfig: defaultWarningConfig(),
 
-    // Severity-based rules for graduated response.
-    // HARD_BLOCK is treated as strongest warning class in advisory mode.
+    // Severity-based rules for graduated advisory response.
     shellRules: [
-      // HARD_BLOCK: Catastrophic commands - strongest warning class
-      { pattern: "rm -rf /", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
-      { pattern: "rm -rf /*", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
-      { pattern: "*:(){ :|:& };:*", severity: "HARD_BLOCK", reason: "Fork bomb detected" },
-      { pattern: "*> /dev/sda*", severity: "HARD_BLOCK", reason: "Direct disk write" },
-      { pattern: "*dd if=*of=/dev/*", severity: "HARD_BLOCK", reason: "Direct disk write" },
-      { pattern: "*mkfs.*", severity: "HARD_BLOCK", reason: "Filesystem format command" },
-      { pattern: "*curl*|*sh*", severity: "HARD_BLOCK", reason: "Remote code execution via curl" },
-      { pattern: "*wget*|*sh*", severity: "HARD_BLOCK", reason: "Remote code execution via wget" },
-      { pattern: "*curl*|*bash*", severity: "HARD_BLOCK", reason: "Remote code execution via curl" },
-      { pattern: "*wget*|*bash*", severity: "HARD_BLOCK", reason: "Remote code execution via wget" },
+      // HIGH_RISK: destructive or remote-exec command patterns
+      { pattern: "rm -rf /", severity: "HIGH_RISK", reason: "Destructive filesystem command" },
+      { pattern: "rm -rf /*", severity: "HIGH_RISK", reason: "Destructive filesystem command" },
+      { pattern: "*:(){ :|:& };:*", severity: "HIGH_RISK", reason: "Fork bomb pattern" },
+      { pattern: "*> /dev/sda*", severity: "HIGH_RISK", reason: "Direct disk write" },
+      { pattern: "*dd if=*of=/dev/*", severity: "HIGH_RISK", reason: "Direct disk write" },
+      { pattern: "*mkfs.*", severity: "HIGH_RISK", reason: "Filesystem format command" },
+      { pattern: "*curl*|*sh*", severity: "HIGH_RISK", reason: "Remote code execution pattern" },
+      { pattern: "*wget*|*sh*", severity: "HIGH_RISK", reason: "Remote code execution pattern" },
+      { pattern: "*curl*|*bash*", severity: "HIGH_RISK", reason: "Remote code execution pattern" },
+      { pattern: "*wget*|*bash*", severity: "HIGH_RISK", reason: "Remote code execution pattern" },
 
-      // WARN: Risky commands - warn first, block after max warnings
+      // WARN: Risky commands - warn first, escalate recommendation after max warnings.
       { pattern: "rm -rf *", severity: "WARN", reason: "Recursive force delete" },
       { pattern: "rm -r *", severity: "WARN", reason: "Recursive delete" },
       { pattern: "*--force*", severity: "WARN", reason: "Force flag bypasses safety checks" },
@@ -157,7 +155,7 @@ export function defaultPolicy(): GoalGuardianPolicy {
       { pattern: "docker rm -f*", severity: "WARN", reason: "Force remove container" },
       { pattern: "docker system prune*", severity: "WARN", reason: "Removes unused Docker resources" },
 
-      // ALLOWED: Safe read-only commands
+      // ALLOWED: Safe read-only commands.
       { pattern: "git status*", severity: "ALLOWED", reason: "Read-only git operation" },
       { pattern: "git diff*", severity: "ALLOWED", reason: "Read-only git operation" },
       { pattern: "git log*", severity: "ALLOWED", reason: "Read-only git operation" },
@@ -178,20 +176,20 @@ export function defaultPolicy(): GoalGuardianPolicy {
     ],
 
     mcpRules: [
-      // Always allow goal-guardian tools
+      // Always allow goal-guardian tools.
       { pattern: "goal-guardian/*", severity: "ALLOWED", reason: "Goal Guardian MCP tools" },
     ],
 
     readRules: [
-      // HARD_BLOCK: Sensitive files (strongest warning class)
-      { pattern: "**/.env", severity: "HARD_BLOCK", reason: "Environment secrets" },
-      { pattern: "**/.env.*", severity: "HARD_BLOCK", reason: "Environment secrets" },
-      { pattern: "**/*.pem", severity: "HARD_BLOCK", reason: "Private key file" },
-      { pattern: "**/*.key", severity: "HARD_BLOCK", reason: "Private key file" },
-      { pattern: ".git/**", severity: "HARD_BLOCK", reason: "Git internals" },
-      { pattern: ".ai/goal-guardian/**", severity: "HARD_BLOCK", reason: "Guardian runtime data" },
+      // HIGH_RISK: sensitive files.
+      { pattern: "**/.env", severity: "HIGH_RISK", reason: "Environment secrets" },
+      { pattern: "**/.env.*", severity: "HIGH_RISK", reason: "Environment secrets" },
+      { pattern: "**/*.pem", severity: "HIGH_RISK", reason: "Private key file" },
+      { pattern: "**/*.key", severity: "HIGH_RISK", reason: "Private key file" },
+      { pattern: ".git/**", severity: "HIGH_RISK", reason: "Git internals" },
+      { pattern: ".ai/goal-guardian/**", severity: "HIGH_RISK", reason: "Guardian runtime data" },
 
-      // ALLOWED: Guardian config files
+      // ALLOWED: Guardian config files.
       { pattern: ".cursor/goal-guardian/**", severity: "ALLOWED", reason: "Guardian configuration" },
       { pattern: ".cursor/hooks.json", severity: "ALLOWED", reason: "Hooks configuration" },
       { pattern: ".cursor/mcp.json", severity: "ALLOWED", reason: "MCP configuration" },

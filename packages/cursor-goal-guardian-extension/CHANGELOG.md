@@ -7,6 +7,7 @@
   - keep Action Timeline visually central with clearer legend
 - Add reproducible 20-task panel replay recorder (`scripts/record-panel-demo-20tasks.mjs`).
 - Add user-facing validation documentation and animated panel demo references.
+- Remove legacy policy compatibility paths (`alwaysDeny`, `HARD_BLOCK`); policy now uses `highRiskPatterns` and `HIGH_RISK` only.
 
 ## 0.3.5
 - Stop wiring Cursor hooks/MCP from the extension; extension is now state-driven anti-drift only.
@@ -14,7 +15,7 @@
 - Remove permit-oriented commands/UI actions from the extension surface.
 
 ## 0.3.4
-- Fix MCP-preview hook path so permit-required and warning-limit cases stay warning-first instead of hard blocking.
+- Fix MCP-preview hook path so permit-required and warning-limit cases stay warning-first and advisory-only.
 - Relax default workspace policy: `requirePermitForShell` and `requirePermitForMcp` now default to `false`.
 
 ## 0.3.3
@@ -39,10 +40,10 @@
 - Goal panel shows state summary and last action
 
 ## 0.2.0
-- **"Guardrail Not Gate" redesign**: Graduated severity system replaces binary allow/deny
-- **New severity levels**: HARD_BLOCK, WARN, PERMIT_REQUIRED, ALLOWED
-- **Warning accumulation**: Risky commands warn first, block after 3 warnings (configurable)
-- **Soft permits**: Permit-required actions warn and continue instead of hard-blocking
+- **"Guardrail Not Gate" redesign**: Graduated severity system replaces binary pass/fail behavior
+- **New severity levels**: HIGH_RISK, WARN, PERMIT_REQUIRED, ALLOWED
+- **Warning accumulation**: Risky commands warn first, then escalate permit recommendations after 3 warnings (configurable)
+- **Soft permits**: Permit-required actions warn and continue (advisory-only)
 - **Auto-Permit Last Action**: One-click permit issuance from the Goal Panel
 - **Goal Panel**: New sidebar panel showing goal, criteria, permits, and warnings
 - **Status Bar**: Shows goal state, permit count, and warning count

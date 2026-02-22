@@ -24,7 +24,7 @@ Why this works in practice:
 
 - `packages/cursor-goal-guardian-hook`
   - Cursor Hooks gatekeeper (stdio JSON in/out)
-  - blocks:
+  - hook events:
     - `beforeShellExecution`
     - `beforeMCPExecution`
     - `beforeReadFile`
@@ -104,9 +104,9 @@ To regenerate:
 
 ```bash
 pnpm panel:demo:20tasks
-ffmpeg -y -ss 0 -t 24 -i artifacts/panel-demo/goal-guardian-panel-demo-20tasks.webm \
+ffmpeg -y -ss 4 -t 24 -i artifacts/panel-demo/goal-guardian-panel-demo-20tasks.webm \
   -vf "fps=8,scale=960:-1:flags=lanczos,palettegen=max_colors=96" /tmp/cgg-panel-palette.png
-ffmpeg -y -ss 0 -t 24 -i artifacts/panel-demo/goal-guardian-panel-demo-20tasks.webm \
+ffmpeg -y -ss 4 -t 24 -i artifacts/panel-demo/goal-guardian-panel-demo-20tasks.webm \
   -i /tmp/cgg-panel-palette.png \
   -lavfi "fps=8,scale=960:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5" \
   docs/media/goal-guardian-panel-demo-20tasks.gif
@@ -118,7 +118,7 @@ ffmpeg -y -ss 0 -t 24 -i artifacts/panel-demo/goal-guardian-panel-demo-20tasks.w
 2) Copy the example configs from `examples/cursor-project/.cursor` into your target project.
 3) Edit:
    - `.cursor/goal-guardian/contract.json` (goal + criteria)
-   - `.cursor/goal-guardian/policy.json` (policy toggles + allow/deny patterns)
+   - `.cursor/goal-guardian/policy.json` (policy toggles + allow/high-risk patterns)
    - `.cursor/mcp.json` (absolute paths to the built MCP server and workspace root)
 
 ## Typical flow (agent)
@@ -132,10 +132,11 @@ ffmpeg -y -ss 0 -t 24 -i artifacts/panel-demo/goal-guardian-panel-demo-20tasks.w
 ## Notes
 
 - The MCP server writes runtime data to `.ai/` (gitignored) to avoid exposing permits to the model.
-- The hook defaults to **warning-first, never-deny** for shell/MCP/read (advisory-only).
+- The hook defaults to **warning-first, advisory-only** for shell/MCP/read.
 - The hook can enforce Redux control checks (`enforceReduxControl: true`) and task-scope alignment (`enforceTaskScope: true`) on every shell/MCP/read action.
 - Tune scope strictness with `taskScopeSensitivity`: `strict`, `balanced` (default), or `lenient`.
-- You can set `requirePermitForShell`, `requirePermitForMcp`, and `requirePermitForRead` to `true` in `policy.json` for stricter permit gating.
+- You can set `requirePermitForShell`, `requirePermitForMcp`, and `requirePermitForRead` to `true` in `policy.json` for stricter permit recommendations.
+- Policy schema is now explicit: use `highRiskPatterns` + `HIGH_RISK` (legacy `alwaysDeny` / `HARD_BLOCK` are not recognized).
 
 ## The Redux mental model for agents
 

@@ -65,12 +65,12 @@ function runHook(workspaceRoot: string, payload: Record<string, unknown>) {
 }
 
 describe("goal-guardian hook CLI", () => {
-  it("warns (allows) for catastrophic shell commands in advisory-only mode", async () => {
+  it("warns (allows) for high-risk shell commands in advisory-only mode", async () => {
     const root = await makeTempWorkspace();
     const res = runHook(root, { hook_event_name: "beforeShellExecution", command: "rm -rf /" });
     expect(res.permission).toBe("allow");
     expect(String(res.userMessage)).toMatch(/Warning:/i);
-    expect(String(res.userMessage)).toMatch(/Would block/i);
+    expect(String(res.agentMessage)).toMatch(/high-risk advisory policy pattern/i);
   });
 
   it("warns (allows) for risky commands and increments warning count", async () => {

@@ -38,6 +38,28 @@ async function runPreview(client: Client, action_type: "shell" | "mcp" | "read" 
 }
 
 describe("guardian_preview_action", () => {
+  it("treats high-risk actions as advisory in preview mode", async () => {
+    const workspaceRoot = await makeTempWorkspace();
+    const tsx = getTsxPath();
+    const entry = getMcpEntry();
+
+    const client = new Client({ name: "goal-guardian-test", version: "0.0.0" });
+    const transport = new StdioClientTransport({
+      command: tsx,
+      args: [entry],
+      env: { GOAL_GUARDIAN_WORKSPACE_ROOT: workspaceRoot },
+    });
+
+    await client.connect(transport);
+
+    const preview = await runPreview(client, "shell", "rm -rf /");
+    expect(preview.severity).toBe("HIGH_RISK");
+    expect(preview.wouldSucceed).toBe(true);
+    expect(String(preview.reason)).toMatch(/high-risk|destructive/i);
+
+    await client.close();
+  });
+
   it("records warnings via MCP and increments counts", async () => {
     const workspaceRoot = await makeTempWorkspace();
     const tsx = getTsxPath();

@@ -122,6 +122,7 @@ export class AuditOutputChannel {
     let details = "";
 
     switch (event) {
+      case "shellHighRisk":
       case "shellBlocked":
       case "shellWarning":
       case "shellDenied":
@@ -132,6 +133,7 @@ export class AuditOutputChannel {
           details += ` warnings=${entry.warningCount}/${entry.maxWarnings ?? 3}`;
         }
         break;
+      case "mcpHighRisk":
       case "mcpBlocked":
       case "mcpWarning":
       case "mcpDenied":
@@ -139,6 +141,7 @@ export class AuditOutputChannel {
       case "mcpPermitSuggested":
         details = `mcp="${entry.mcpKey ?? "?"}" severity=${entry.severity ?? "?"}`;
         break;
+      case "readHighRisk":
       case "readBlocked":
       case "readWarning":
       case "readDenied":
@@ -164,6 +167,7 @@ export class AuditOutputChannel {
   }
 
   private _getEventIcon(event: string): string {
+    if (event.includes("HighRisk")) return "[!]";
     if (event.includes("Blocked")) return "[X]";
     if (event.includes("Warning")) return "[!]";
     if (event.includes("Denied")) return "[-]";

@@ -53,7 +53,7 @@ type PermitsDoc = { permits: Permit[] };
 
 type PreviewResult = {
   wouldSucceed: boolean;
-  severity: "HARD_BLOCK" | "WARN" | "PERMIT_REQUIRED" | "ALLOWED";
+  severity: "HIGH_RISK" | "WARN" | "PERMIT_REQUIRED" | "ALLOWED";
   reason: string;
   warningCount?: number;
   maxWarnings?: number;
@@ -606,7 +606,7 @@ function blockOrWarn(
   agentMessage: string,
   suggestedAction: string
 ) {
-  const advisoryUserMessage = userMessage.replace(/^BLOCKED:\s*/i, "Would block: ");
+  const advisoryUserMessage = userMessage.replace(/^(BLOCKED|HIGH-RISK|ADVISORY):\s*/i, "");
   return cursorResponseWarn(
     `Warning: ${advisoryUserMessage}`,
     `${agentMessage}\nAction allowed (advisory-only policy).`,
@@ -701,11 +701,11 @@ function previewToResponse(
 
   const goalContext = goalContextFromContract(contract);
 
-  // Guardrail behavior for hard blocks: advisory warning only.
-  if (preview.severity === "HARD_BLOCK") {
+  // Guardrail behavior for high-risk actions: advisory warning only.
+  if (preview.severity === "HIGH_RISK") {
     const agentMsg = suggested
       ? buildRecoveryMessage(actionType, actionValue, contract, `${suggested.allow_field}: ["${suggested.allow_pattern}"]`)
-      : `Action blocked by MCP policy. ${actionValue}`;
+      : `High-risk action flagged by MCP policy. ${actionValue}`;
     return blockOrWarn(
       policy,
       contract,
@@ -782,10 +782,10 @@ async function loadPolicy(workspaceRoot: string): Promise<GoalGuardianPolicy> {
       mcp: fromFile.alwaysAllow?.mcp ?? base.alwaysAllow.mcp,
       read: fromFile.alwaysAllow?.read ?? base.alwaysAllow.read,
     },
-    alwaysDeny: {
-      shell: fromFile.alwaysDeny?.shell ?? base.alwaysDeny.shell,
-      mcp: fromFile.alwaysDeny?.mcp ?? base.alwaysDeny.mcp,
-      read: fromFile.alwaysDeny?.read ?? base.alwaysDeny.read,
+    highRiskPatterns: {
+      shell: fromFile.highRiskPatterns?.shell ?? base.highRiskPatterns.shell,
+      mcp: fromFile.highRiskPatterns?.mcp ?? base.highRiskPatterns.mcp,
+      read: fromFile.highRiskPatterns?.read ?? base.highRiskPatterns.read,
     },
     warningConfig: {
       ...defaultWarningConfig(),
@@ -873,7 +873,7 @@ async function main(): Promise<void> {
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: Redux control requires .cursor/goal-guardian/state.json",
+              "ADVISORY: Redux control requires .cursor/goal-guardian/state.json",
               "Initialize Goal Guardian state files, then retry.",
               "Create .cursor/goal-guardian/state.json (via extension install)."
             )
@@ -888,7 +888,7 @@ async function main(): Promise<void> {
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: No active Redux task.",
+              "ADVISORY: No active Redux task.",
               "Set success criteria in contract.json and let Goal Guardian auto-start a task, then retry.",
               "Ensure state.active_task is set to a task in doing status."
             )
@@ -903,7 +903,7 @@ async function main(): Promise<void> {
             blockOrWarn(
               policy,
               contract,
-              `BLOCKED: Active task ${activeTaskId} is not in doing state.`,
+              `ADVISORY: Active task ${activeTaskId} is not in doing state.`,
               "Ensure the active task is in progress before running commands.",
               "Mark the active task status as doing."
             )
@@ -942,13 +942,13 @@ async function main(): Promise<void> {
     // Check severity-based rules first
     const { severity, rule } = classifySeverity(policy.shellRules, cmd);
 
-    // HARD_BLOCK policy match: advisory warning only.
-    if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.shell, cmd)) {
-      const reason = rule?.reason ?? "Blocked by policy";
+    // HIGH_RISK policy match: advisory warning only.
+    if (severity === "HIGH_RISK" || globAny(policy.highRiskPatterns.shell, cmd)) {
+      const reason = rule?.reason ?? "High-risk command pattern";
       await appendAudit(workspaceRoot, {
-        event: "shellBlocked",
+        event: "shellHighRisk",
         command: cmd,
-        severity: "HARD_BLOCK",
+        severity: "HIGH_RISK",
         reason,
       });
       process.stdout.write(
@@ -956,8 +956,8 @@ async function main(): Promise<void> {
           blockOrWarn(
             policy,
             contract,
-            `BLOCKED: ${reason}`,
-            `Command "${cmd}" is classified as catastrophic by policy.`,
+            `HIGH-RISK: ${reason}`,
+            `Command "${cmd}" matches a high-risk advisory policy pattern.`,
             `Avoid command: ${cmd}`
           )
         )
@@ -1155,7 +1155,7 @@ async function main(): Promise<void> {
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: Redux control requires .cursor/goal-guardian/state.json",
+              "ADVISORY: Redux control requires .cursor/goal-guardian/state.json",
               "Initialize Goal Guardian state files, then retry.",
               "Create .cursor/goal-guardian/state.json (via extension install)."
             )
@@ -1170,7 +1170,7 @@ async function main(): Promise<void> {
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: No active Redux task.",
+              "ADVISORY: No active Redux task.",
               "Set success criteria in contract.json and let Goal Guardian auto-start a task, then retry.",
               "Ensure state.active_task is set to a task in doing status."
             )
@@ -1185,7 +1185,7 @@ async function main(): Promise<void> {
             blockOrWarn(
               policy,
               contract,
-              `BLOCKED: Active task ${activeTaskId} is not in doing state.`,
+              `ADVISORY: Active task ${activeTaskId} is not in doing state.`,
               "Ensure the active task is in progress before running MCP tools.",
               "Mark the active task status as doing."
             )
@@ -1224,13 +1224,13 @@ async function main(): Promise<void> {
     // Check severity-based rules first
     const { severity, rule } = classifySeverity(policy.mcpRules, key);
 
-    // HARD_BLOCK policy match: advisory warning only.
-    if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.mcp, key)) {
-      const reason = rule?.reason ?? "Blocked by policy";
+    // HIGH_RISK policy match: advisory warning only.
+    if (severity === "HIGH_RISK" || globAny(policy.highRiskPatterns.mcp, key)) {
+      const reason = rule?.reason ?? "High-risk MCP pattern";
       await appendAudit(workspaceRoot, {
-        event: "mcpBlocked",
+        event: "mcpHighRisk",
         mcpKey: key,
-        severity: "HARD_BLOCK",
+        severity: "HIGH_RISK",
         reason,
       });
       process.stdout.write(
@@ -1238,8 +1238,8 @@ async function main(): Promise<void> {
           blockOrWarn(
             policy,
             contract,
-            `BLOCKED: ${reason}`,
-            `MCP call "${key}" is classified as blocked by policy.`,
+            `HIGH-RISK: ${reason}`,
+            `MCP call "${key}" matches a high-risk advisory policy pattern.`,
             `Avoid MCP call: ${key}`
           )
         )
@@ -1430,7 +1430,7 @@ async function main(): Promise<void> {
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: Redux control requires .cursor/goal-guardian/state.json",
+              "ADVISORY: Redux control requires .cursor/goal-guardian/state.json",
               "Initialize Goal Guardian state files, then retry.",
               "Create .cursor/goal-guardian/state.json (via extension install)."
             )
@@ -1445,7 +1445,7 @@ async function main(): Promise<void> {
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: No active Redux task.",
+              "ADVISORY: No active Redux task.",
               "Set success criteria in contract.json and let Goal Guardian auto-start a task, then retry.",
               "Ensure state.active_task is set to a task in doing status."
             )
@@ -1460,7 +1460,7 @@ async function main(): Promise<void> {
             blockOrWarn(
               policy,
               contract,
-              `BLOCKED: Active task ${activeTaskId} is not in doing state.`,
+              `ADVISORY: Active task ${activeTaskId} is not in doing state.`,
               "Ensure the active task is in progress before reading workspace files.",
               "Mark the active task status as doing."
             )
@@ -1499,13 +1499,13 @@ async function main(): Promise<void> {
     // Check severity-based rules first
     const { severity, rule } = classifySeverity(policy.readRules, rel);
 
-    // HARD_BLOCK policy match: advisory warning only.
-    if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.read, rel)) {
-      const reason = rule?.reason ?? "Blocked by policy";
+    // HIGH_RISK policy match: advisory warning only.
+    if (severity === "HIGH_RISK" || globAny(policy.highRiskPatterns.read, rel)) {
+      const reason = rule?.reason ?? "High-risk file access pattern";
       await appendAudit(workspaceRoot, {
-        event: "readBlocked",
+        event: "readHighRisk",
         filePath: rel,
-        severity: "HARD_BLOCK",
+        severity: "HIGH_RISK",
         reason,
       });
       process.stdout.write(
@@ -1513,8 +1513,8 @@ async function main(): Promise<void> {
           blockOrWarn(
             policy,
             contract,
-            `BLOCKED: ${reason}`,
-            `Reading "${rel}" is classified as blocked for security.`,
+            `HIGH-RISK: ${reason}`,
+            `Reading "${rel}" matches a high-risk advisory policy pattern.`,
             `Avoid reading: ${rel}`
           )
         )
@@ -1694,7 +1694,7 @@ async function main(): Promise<void> {
   if (eventName === "afterFileEdit" || eventName === "afterTabFileEdit") {
     const rel = toPosixRel(String(payload?.file_path ?? "")).replace(/^\/+/, "");
     if (rel) {
-      const isDeniedReadArea = globAny(policy.alwaysDeny.read, rel);
+      const isHighRiskReadArea = globAny(policy.highRiskPatterns.read, rel);
       const writeAllowed = permit ? globAny(permit.allow.write ?? [], rel) : false;
 
       await appendAudit(workspaceRoot, {
@@ -1704,7 +1704,7 @@ async function main(): Promise<void> {
         write_allowed: writeAllowed,
       });
 
-      if (policy.autoRevertUnauthorizedEdits && (isDeniedReadArea || !writeAllowed)) {
+      if (policy.autoRevertUnauthorizedEdits && (isHighRiskReadArea || !writeAllowed)) {
         const reverted = await tryGitRevert(workspaceRoot, rel);
         await appendAudit(workspaceRoot, {
           event: "autoRevert",

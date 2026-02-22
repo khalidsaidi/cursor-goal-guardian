@@ -16238,7 +16238,7 @@ function defaultPolicy() {
         ".cursor/mcp.json"
       ]
     },
-    alwaysDeny: {
+    highRiskPatterns: {
       shell: [
         // Add your own high-risk patterns here (examples):
         "rm -rf /*",
@@ -16258,21 +16258,20 @@ function defaultPolicy() {
       ]
     },
     warningConfig: defaultWarningConfig(),
-    // Severity-based rules for graduated response.
-    // HARD_BLOCK is treated as strongest warning class in advisory mode.
+    // Severity-based rules for graduated advisory response.
     shellRules: [
-      // HARD_BLOCK: Catastrophic commands - strongest warning class
-      { pattern: "rm -rf /", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
-      { pattern: "rm -rf /*", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
-      { pattern: "*:(){ :|:& };:*", severity: "HARD_BLOCK", reason: "Fork bomb detected" },
-      { pattern: "*> /dev/sda*", severity: "HARD_BLOCK", reason: "Direct disk write" },
-      { pattern: "*dd if=*of=/dev/*", severity: "HARD_BLOCK", reason: "Direct disk write" },
-      { pattern: "*mkfs.*", severity: "HARD_BLOCK", reason: "Filesystem format command" },
-      { pattern: "*curl*|*sh*", severity: "HARD_BLOCK", reason: "Remote code execution via curl" },
-      { pattern: "*wget*|*sh*", severity: "HARD_BLOCK", reason: "Remote code execution via wget" },
-      { pattern: "*curl*|*bash*", severity: "HARD_BLOCK", reason: "Remote code execution via curl" },
-      { pattern: "*wget*|*bash*", severity: "HARD_BLOCK", reason: "Remote code execution via wget" },
-      // WARN: Risky commands - warn first, block after max warnings
+      // HIGH_RISK: destructive or remote-exec command patterns
+      { pattern: "rm -rf /", severity: "HIGH_RISK", reason: "Destructive filesystem command" },
+      { pattern: "rm -rf /*", severity: "HIGH_RISK", reason: "Destructive filesystem command" },
+      { pattern: "*:(){ :|:& };:*", severity: "HIGH_RISK", reason: "Fork bomb pattern" },
+      { pattern: "*> /dev/sda*", severity: "HIGH_RISK", reason: "Direct disk write" },
+      { pattern: "*dd if=*of=/dev/*", severity: "HIGH_RISK", reason: "Direct disk write" },
+      { pattern: "*mkfs.*", severity: "HIGH_RISK", reason: "Filesystem format command" },
+      { pattern: "*curl*|*sh*", severity: "HIGH_RISK", reason: "Remote code execution pattern" },
+      { pattern: "*wget*|*sh*", severity: "HIGH_RISK", reason: "Remote code execution pattern" },
+      { pattern: "*curl*|*bash*", severity: "HIGH_RISK", reason: "Remote code execution pattern" },
+      { pattern: "*wget*|*bash*", severity: "HIGH_RISK", reason: "Remote code execution pattern" },
+      // WARN: Risky commands - warn first, escalate recommendation after max warnings.
       { pattern: "rm -rf *", severity: "WARN", reason: "Recursive force delete" },
       { pattern: "rm -r *", severity: "WARN", reason: "Recursive delete" },
       { pattern: "*--force*", severity: "WARN", reason: "Force flag bypasses safety checks" },
@@ -16288,7 +16287,7 @@ function defaultPolicy() {
       { pattern: "*sudo *", severity: "WARN", reason: "Elevated privileges requested" },
       { pattern: "docker rm -f*", severity: "WARN", reason: "Force remove container" },
       { pattern: "docker system prune*", severity: "WARN", reason: "Removes unused Docker resources" },
-      // ALLOWED: Safe read-only commands
+      // ALLOWED: Safe read-only commands.
       { pattern: "git status*", severity: "ALLOWED", reason: "Read-only git operation" },
       { pattern: "git diff*", severity: "ALLOWED", reason: "Read-only git operation" },
       { pattern: "git log*", severity: "ALLOWED", reason: "Read-only git operation" },
@@ -16308,18 +16307,18 @@ function defaultPolicy() {
       { pattern: "type *", severity: "ALLOWED", reason: "Describe command" }
     ],
     mcpRules: [
-      // Always allow goal-guardian tools
+      // Always allow goal-guardian tools.
       { pattern: "goal-guardian/*", severity: "ALLOWED", reason: "Goal Guardian MCP tools" }
     ],
     readRules: [
-      // HARD_BLOCK: Sensitive files (strongest warning class)
-      { pattern: "**/.env", severity: "HARD_BLOCK", reason: "Environment secrets" },
-      { pattern: "**/.env.*", severity: "HARD_BLOCK", reason: "Environment secrets" },
-      { pattern: "**/*.pem", severity: "HARD_BLOCK", reason: "Private key file" },
-      { pattern: "**/*.key", severity: "HARD_BLOCK", reason: "Private key file" },
-      { pattern: ".git/**", severity: "HARD_BLOCK", reason: "Git internals" },
-      { pattern: ".ai/goal-guardian/**", severity: "HARD_BLOCK", reason: "Guardian runtime data" },
-      // ALLOWED: Guardian config files
+      // HIGH_RISK: sensitive files.
+      { pattern: "**/.env", severity: "HIGH_RISK", reason: "Environment secrets" },
+      { pattern: "**/.env.*", severity: "HIGH_RISK", reason: "Environment secrets" },
+      { pattern: "**/*.pem", severity: "HIGH_RISK", reason: "Private key file" },
+      { pattern: "**/*.key", severity: "HIGH_RISK", reason: "Private key file" },
+      { pattern: ".git/**", severity: "HIGH_RISK", reason: "Git internals" },
+      { pattern: ".ai/goal-guardian/**", severity: "HIGH_RISK", reason: "Guardian runtime data" },
+      // ALLOWED: Guardian config files.
       { pattern: ".cursor/goal-guardian/**", severity: "ALLOWED", reason: "Guardian configuration" },
       { pattern: ".cursor/hooks.json", severity: "ALLOWED", reason: "Hooks configuration" },
       { pattern: ".cursor/mcp.json", severity: "ALLOWED", reason: "MCP configuration" }
@@ -16785,7 +16784,7 @@ function goalContextFromContract(contract) {
   } : void 0;
 }
 function blockOrWarn(policy, contract, userMessage, agentMessage, suggestedAction) {
-  const advisoryUserMessage = userMessage.replace(/^BLOCKED:\s*/i, "Would block: ");
+  const advisoryUserMessage = userMessage.replace(/^(BLOCKED|HIGH-RISK|ADVISORY):\s*/i, "");
   return cursorResponseWarn(
     `Warning: ${advisoryUserMessage}`,
     `${agentMessage}
@@ -16847,8 +16846,8 @@ function previewToResponse(preview, actionType, actionValue, policy, contract) {
   const suggested = preview.suggestedPermitRequest;
   const suggestedAction = suggested ? `Request a permit with ${suggested.allow_field}: ["${suggested.allow_pattern}"]` : `Request a permit for ${actionType}`;
   const goalContext = goalContextFromContract(contract);
-  if (preview.severity === "HARD_BLOCK") {
-    const agentMsg = suggested ? buildRecoveryMessage(actionType, actionValue, contract, `${suggested.allow_field}: ["${suggested.allow_pattern}"]`) : `Action blocked by MCP policy. ${actionValue}`;
+  if (preview.severity === "HIGH_RISK") {
+    const agentMsg = suggested ? buildRecoveryMessage(actionType, actionValue, contract, `${suggested.allow_field}: ["${suggested.allow_pattern}"]`) : `High-risk action flagged by MCP policy. ${actionValue}`;
     return blockOrWarn(
       policy,
       contract,
@@ -16912,10 +16911,10 @@ async function loadPolicy(workspaceRoot) {
       mcp: fromFile.alwaysAllow?.mcp ?? base.alwaysAllow.mcp,
       read: fromFile.alwaysAllow?.read ?? base.alwaysAllow.read
     },
-    alwaysDeny: {
-      shell: fromFile.alwaysDeny?.shell ?? base.alwaysDeny.shell,
-      mcp: fromFile.alwaysDeny?.mcp ?? base.alwaysDeny.mcp,
-      read: fromFile.alwaysDeny?.read ?? base.alwaysDeny.read
+    highRiskPatterns: {
+      shell: fromFile.highRiskPatterns?.shell ?? base.highRiskPatterns.shell,
+      mcp: fromFile.highRiskPatterns?.mcp ?? base.highRiskPatterns.mcp,
+      read: fromFile.highRiskPatterns?.read ?? base.highRiskPatterns.read
     },
     warningConfig: {
       ...defaultWarningConfig(),
@@ -16988,7 +16987,7 @@ async function main() {
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: Redux control requires .cursor/goal-guardian/state.json",
+              "ADVISORY: Redux control requires .cursor/goal-guardian/state.json",
               "Initialize Goal Guardian state files, then retry.",
               "Create .cursor/goal-guardian/state.json (via extension install)."
             )
@@ -17003,7 +17002,7 @@ async function main() {
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: No active Redux task.",
+              "ADVISORY: No active Redux task.",
               "Set success criteria in contract.json and let Goal Guardian auto-start a task, then retry.",
               "Ensure state.active_task is set to a task in doing status."
             )
@@ -17018,7 +17017,7 @@ async function main() {
             blockOrWarn(
               policy,
               contract,
-              `BLOCKED: Active task ${activeTaskId} is not in doing state.`,
+              `ADVISORY: Active task ${activeTaskId} is not in doing state.`,
               "Ensure the active task is in progress before running commands.",
               "Mark the active task status as doing."
             )
@@ -17052,12 +17051,12 @@ async function main() {
       }
     }
     const { severity, rule } = classifySeverity(policy.shellRules, cmd);
-    if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.shell, cmd)) {
-      const reason = rule?.reason ?? "Blocked by policy";
+    if (severity === "HIGH_RISK" || globAny(policy.highRiskPatterns.shell, cmd)) {
+      const reason = rule?.reason ?? "High-risk command pattern";
       await appendAudit(workspaceRoot, {
-        event: "shellBlocked",
+        event: "shellHighRisk",
         command: cmd,
-        severity: "HARD_BLOCK",
+        severity: "HIGH_RISK",
         reason
       });
       process.stdout.write(
@@ -17065,8 +17064,8 @@ async function main() {
           blockOrWarn(
             policy,
             contract,
-            `BLOCKED: ${reason}`,
-            `Command "${cmd}" is classified as catastrophic by policy.`,
+            `HIGH-RISK: ${reason}`,
+            `Command "${cmd}" matches a high-risk advisory policy pattern.`,
             `Avoid command: ${cmd}`
           )
         )
@@ -17241,7 +17240,7 @@ ${recoveryMsg}`,
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: Redux control requires .cursor/goal-guardian/state.json",
+              "ADVISORY: Redux control requires .cursor/goal-guardian/state.json",
               "Initialize Goal Guardian state files, then retry.",
               "Create .cursor/goal-guardian/state.json (via extension install)."
             )
@@ -17256,7 +17255,7 @@ ${recoveryMsg}`,
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: No active Redux task.",
+              "ADVISORY: No active Redux task.",
               "Set success criteria in contract.json and let Goal Guardian auto-start a task, then retry.",
               "Ensure state.active_task is set to a task in doing status."
             )
@@ -17271,7 +17270,7 @@ ${recoveryMsg}`,
             blockOrWarn(
               policy,
               contract,
-              `BLOCKED: Active task ${activeTaskId} is not in doing state.`,
+              `ADVISORY: Active task ${activeTaskId} is not in doing state.`,
               "Ensure the active task is in progress before running MCP tools.",
               "Mark the active task status as doing."
             )
@@ -17305,12 +17304,12 @@ ${recoveryMsg}`,
       }
     }
     const { severity, rule } = classifySeverity(policy.mcpRules, key);
-    if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.mcp, key)) {
-      const reason = rule?.reason ?? "Blocked by policy";
+    if (severity === "HIGH_RISK" || globAny(policy.highRiskPatterns.mcp, key)) {
+      const reason = rule?.reason ?? "High-risk MCP pattern";
       await appendAudit(workspaceRoot, {
-        event: "mcpBlocked",
+        event: "mcpHighRisk",
         mcpKey: key,
-        severity: "HARD_BLOCK",
+        severity: "HIGH_RISK",
         reason
       });
       process.stdout.write(
@@ -17318,8 +17317,8 @@ ${recoveryMsg}`,
           blockOrWarn(
             policy,
             contract,
-            `BLOCKED: ${reason}`,
-            `MCP call "${key}" is classified as blocked by policy.`,
+            `HIGH-RISK: ${reason}`,
+            `MCP call "${key}" matches a high-risk advisory policy pattern.`,
             `Avoid MCP call: ${key}`
           )
         )
@@ -17491,7 +17490,7 @@ ${recoveryMsg}`,
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: Redux control requires .cursor/goal-guardian/state.json",
+              "ADVISORY: Redux control requires .cursor/goal-guardian/state.json",
               "Initialize Goal Guardian state files, then retry.",
               "Create .cursor/goal-guardian/state.json (via extension install)."
             )
@@ -17506,7 +17505,7 @@ ${recoveryMsg}`,
             blockOrWarn(
               policy,
               contract,
-              "BLOCKED: No active Redux task.",
+              "ADVISORY: No active Redux task.",
               "Set success criteria in contract.json and let Goal Guardian auto-start a task, then retry.",
               "Ensure state.active_task is set to a task in doing status."
             )
@@ -17521,7 +17520,7 @@ ${recoveryMsg}`,
             blockOrWarn(
               policy,
               contract,
-              `BLOCKED: Active task ${activeTaskId} is not in doing state.`,
+              `ADVISORY: Active task ${activeTaskId} is not in doing state.`,
               "Ensure the active task is in progress before reading workspace files.",
               "Mark the active task status as doing."
             )
@@ -17555,12 +17554,12 @@ ${recoveryMsg}`,
       }
     }
     const { severity, rule } = classifySeverity(policy.readRules, rel);
-    if (severity === "HARD_BLOCK" || globAny(policy.alwaysDeny.read, rel)) {
-      const reason = rule?.reason ?? "Blocked by policy";
+    if (severity === "HIGH_RISK" || globAny(policy.highRiskPatterns.read, rel)) {
+      const reason = rule?.reason ?? "High-risk file access pattern";
       await appendAudit(workspaceRoot, {
-        event: "readBlocked",
+        event: "readHighRisk",
         filePath: rel,
-        severity: "HARD_BLOCK",
+        severity: "HIGH_RISK",
         reason
       });
       process.stdout.write(
@@ -17568,8 +17567,8 @@ ${recoveryMsg}`,
           blockOrWarn(
             policy,
             contract,
-            `BLOCKED: ${reason}`,
-            `Reading "${rel}" is classified as blocked for security.`,
+            `HIGH-RISK: ${reason}`,
+            `Reading "${rel}" matches a high-risk advisory policy pattern.`,
             `Avoid reading: ${rel}`
           )
         )
@@ -17731,7 +17730,7 @@ ${recoveryMsg}`,
   if (eventName === "afterFileEdit" || eventName === "afterTabFileEdit") {
     const rel = toPosixRel(String(payload?.file_path ?? "")).replace(/^\/+/, "");
     if (rel) {
-      const isDeniedReadArea = globAny(policy.alwaysDeny.read, rel);
+      const isHighRiskReadArea = globAny(policy.highRiskPatterns.read, rel);
       const writeAllowed = permit ? globAny(permit.allow.write ?? [], rel) : false;
       await appendAudit(workspaceRoot, {
         event: eventName,
@@ -17739,7 +17738,7 @@ ${recoveryMsg}`,
         has_permit: Boolean(permit),
         write_allowed: writeAllowed
       });
-      if (policy.autoRevertUnauthorizedEdits && (isDeniedReadArea || !writeAllowed)) {
+      if (policy.autoRevertUnauthorizedEdits && (isHighRiskReadArea || !writeAllowed)) {
         const reverted = await tryGitRevert(workspaceRoot, rel);
         await appendAudit(workspaceRoot, {
           event: "autoRevert",
