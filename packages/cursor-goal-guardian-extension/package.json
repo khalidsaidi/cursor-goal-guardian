@@ -1,7 +1,7 @@
 {
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
-  "description": "Goal-first Cursor: warns on drift, guides the agent, and only hard-blocks catastrophic actions.",
+  "description": "Goal-first Cursor: a state-driven anti-drift workspace that does not install blocking hooks.",
   "version": "0.3.3",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
@@ -18,7 +18,7 @@
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
-  "keywords": ["cursor", "mcp", "hooks", "security", "workflow", "guardrail", "ai-safety"],
+  "keywords": ["cursor", "redux", "state-machine", "workflow", "guardrail", "ai-safety"],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -36,7 +36,7 @@
     "commands": [
       {
         "command": "goalGuardian.install",
-        "title": "Goal Guardian: Install/Configure in Workspace"
+        "title": "Goal Guardian: Install/Configure State Files"
       },
       {
         "command": "goalGuardian.openContract",
@@ -49,18 +49,6 @@
       {
         "command": "goalGuardian.showPanel",
         "title": "Goal Guardian: Show Goal Panel"
-      },
-      {
-        "command": "goalGuardian.showAudit",
-        "title": "Goal Guardian: Show Audit Log"
-      },
-      {
-        "command": "goalGuardian.requestPermit",
-        "title": "Goal Guardian: Request Permit"
-      },
-      {
-        "command": "goalGuardian.autoPermitLastAction",
-        "title": "Goal Guardian: Auto-Permit Last Action"
       },
       {
         "command": "goalGuardian.refresh",
@@ -85,6 +73,14 @@
       {
         "command": "goalGuardian.dispatchAction",
         "title": "Goal Guardian: Dispatch Action"
+      },
+      {
+        "command": "goalGuardian.startNextTask",
+        "title": "Goal Guardian: Start Next Task"
+      },
+      {
+        "command": "goalGuardian.completeActiveTask",
+        "title": "Goal Guardian: Complete Active Task"
       },
       {
         "command": "goalGuardian.rebuildState",

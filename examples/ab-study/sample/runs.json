@@ -1,0 +1,93 @@
+[
+  {
+    "run_id": "with-T1",
+    "task_id": "T1",
+    "variant": "with_cgg",
+    "started_at": "2026-02-18T09:00:00Z",
+    "ended_at": "2026-02-18T11:05:00Z",
+    "completed_success_criteria_ids": ["SC1", "SC2", "SC3"],
+    "events": [
+      { "ts": "2026-02-18T09:40:00Z", "type": "task_switch", "from_task": "impl", "to_task": "tests", "planned": true },
+      { "ts": "2026-02-18T10:00:00Z", "type": "context_switch_start", "switch_id": "cx1" },
+      { "ts": "2026-02-18T10:18:00Z", "type": "context_switch_resume", "switch_id": "cx1" },
+      { "ts": "2026-02-18T10:30:00Z", "type": "rework", "cause": "misunderstanding", "minutes": 10 }
+    ]
+  },
+  {
+    "run_id": "without-T1",
+    "task_id": "T1",
+    "variant": "without_cgg",
+    "started_at": "2026-02-18T12:00:00Z",
+    "ended_at": "2026-02-18T15:20:00Z",
+    "completed_success_criteria_ids": ["SC1", "SC2"],
+    "events": [
+      { "ts": "2026-02-18T12:30:00Z", "type": "scope_drift", "note": "Started unrelated formatting work" },
+      { "ts": "2026-02-18T12:45:00Z", "type": "task_switch", "from_task": "impl", "to_task": "lint", "planned": false },
+      { "ts": "2026-02-18T13:10:00Z", "type": "task_switch", "from_task": "lint", "to_task": "impl", "planned": false },
+      { "ts": "2026-02-18T13:20:00Z", "type": "context_switch_start", "switch_id": "cx1" },
+      { "ts": "2026-02-18T14:15:00Z", "type": "context_switch_resume", "switch_id": "cx1" },
+      { "ts": "2026-02-18T14:30:00Z", "type": "rework", "cause": "misunderstanding", "minutes": 50 }
+    ]
+  },
+  {
+    "run_id": "with-T2",
+    "task_id": "T2",
+    "variant": "with_cgg",
+    "started_at": "2026-02-19T09:00:00Z",
+    "ended_at": "2026-02-19T11:10:00Z",
+    "completed_success_criteria_ids": ["SC1", "SC2", "SC3"],
+    "events": [
+      { "ts": "2026-02-19T09:35:00Z", "type": "task_switch", "from_task": "investigate", "to_task": "fix", "planned": true },
+      { "ts": "2026-02-19T10:10:00Z", "type": "context_switch_start", "switch_id": "cx1" },
+      { "ts": "2026-02-19T10:26:00Z", "type": "context_switch_resume", "switch_id": "cx1" },
+      { "ts": "2026-02-19T10:45:00Z", "type": "rework", "cause": "misunderstanding", "minutes": 15 }
+    ]
+  },
+  {
+    "run_id": "without-T2",
+    "task_id": "T2",
+    "variant": "without_cgg",
+    "started_at": "2026-02-19T12:00:00Z",
+    "ended_at": "2026-02-19T16:40:00Z",
+    "completed_success_criteria_ids": ["SC1", "SC2"],
+    "events": [
+      { "ts": "2026-02-19T12:40:00Z", "type": "scope_drift", "note": "Pivoted to unrelated alerting task" },
+      { "ts": "2026-02-19T13:15:00Z", "type": "scope_drift", "note": "Reworked logging framework mid-task" },
+      { "ts": "2026-02-19T13:20:00Z", "type": "task_switch", "from_task": "investigate", "to_task": "alerts", "planned": false },
+      { "ts": "2026-02-19T13:55:00Z", "type": "task_switch", "from_task": "alerts", "to_task": "logging", "planned": false },
+      { "ts": "2026-02-19T14:35:00Z", "type": "task_switch", "from_task": "logging", "to_task": "fix", "planned": false },
+      { "ts": "2026-02-19T14:40:00Z", "type": "context_switch_start", "switch_id": "cx1" },
+      { "ts": "2026-02-19T15:45:00Z", "type": "context_switch_resume", "switch_id": "cx1" },
+      { "ts": "2026-02-19T16:00:00Z", "type": "rework", "cause": "misunderstanding", "minutes": 90 }
+    ]
+  },
+  {
+    "run_id": "with-T3",
+    "task_id": "T3",
+    "variant": "with_cgg",
+    "started_at": "2026-02-20T09:00:00Z",
+    "ended_at": "2026-02-20T10:40:00Z",
+    "completed_success_criteria_ids": ["SC1", "SC2", "SC3"],
+    "events": [
+      { "ts": "2026-02-20T09:30:00Z", "type": "task_switch", "from_task": "refactor", "to_task": "verify", "planned": true },
+      { "ts": "2026-02-20T09:50:00Z", "type": "context_switch_start", "switch_id": "cx1" },
+      { "ts": "2026-02-20T10:02:00Z", "type": "context_switch_resume", "switch_id": "cx1" }
+    ]
+  },
+  {
+    "run_id": "without-T3",
+    "task_id": "T3",
+    "variant": "without_cgg",
+    "started_at": "2026-02-20T11:00:00Z",
+    "ended_at": "2026-02-20T13:50:00Z",
+    "completed_success_criteria_ids": ["SC1", "SC2"],
+    "events": [
+      { "ts": "2026-02-20T11:35:00Z", "type": "scope_drift", "note": "Switched to style overhaul" },
+      { "ts": "2026-02-20T11:50:00Z", "type": "task_switch", "from_task": "refactor", "to_task": "style", "planned": false },
+      { "ts": "2026-02-20T12:10:00Z", "type": "context_switch_start", "switch_id": "cx1" },
+      { "ts": "2026-02-20T12:58:00Z", "type": "context_switch_resume", "switch_id": "cx1" },
+      { "ts": "2026-02-20T13:20:00Z", "type": "rework", "cause": "misunderstanding", "minutes": 40 }
+    ]
+  }
+]
+

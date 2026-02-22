@@ -3,12 +3,13 @@
 This repo implements **anti-goal-drift** enforcement for Cursor by combining:
 
 - an **MCP server** that acts as a **goal authority** (the “contract” lives outside the model)
-- a **Cursor Hooks gatekeeper** that blocks shell/MCP/file-read actions unless a **short-lived permit** exists
+- a **Cursor Hooks guardrail** that warns on risky/off-goal actions (advisory-only by default)
 
 Why this works in practice:
-- The model can talk off-goal, but it **cannot do off-goal actions** if hooks block them.
+- The model gets **runtime guidance** when it drifts without interrupting flow.
 - The goal contract is **external and canonical** (stored on disk).
-- The agent must: **check step → get permit → perform action → commit result**.
+- The agent can use permits when needed: **check step → get permit → perform action → commit result**.
+- Execution can be tied to Redux state: missing/invalid active task produces warnings.
 
 ## Repo contents
 
@@ -45,6 +46,36 @@ pnpm -r build
 pnpm -r test
 ```
 
+## A/B value evaluation
+
+Use the built-in evaluator to compare `with_cgg` vs `without_cgg` on the same task set:
+
+```bash
+pnpm eval:ab
+```
+
+This computes:
+- scope drift incidents per task
+- rework caused by misunderstanding
+- time to resume after context switch
+- task completion vs original success criteria
+- unplanned task switches
+
+See `examples/ab-study/README.md` for the input format.
+
+For real-run evidence (blinded operator/judge workflow), use:
+
+```bash
+node scripts/scaffold-live-react-env.js \
+  --env /tmp/cgg-live-react-env \
+  --study /tmp/cgg-live-react-20 \
+  --tasks examples/ab-live-react/task_set_20.json
+# ... run both arms and fill runs.blinded.json ...
+node scripts/unblind-live-ab.js --study /tmp/cgg-live-react-20 --evaluate
+```
+
+See `examples/ab-live-react/README.md` for protocol and rubric.
+
 ## Wiring into a project
 
 1) Build this repo so the binaries are in `dist/`.
@@ -65,8 +96,10 @@ pnpm -r test
 ## Notes
 
 - The MCP server writes runtime data to `.ai/` (gitignored) to avoid exposing permits to the model.
-- The hook defaults to **permit-required** for shell and MCP calls, and optional for reads.
-- You can set `requirePermitForRead` to `true` in `policy.json` for a stricter mode.
+- The hook defaults to **warning-first, never-deny** for shell/MCP/read (advisory-only).
+- The hook can enforce Redux control checks (`enforceReduxControl: true`) and task-scope alignment (`enforceTaskScope: true`) on every shell/MCP/read action.
+- Tune scope strictness with `taskScopeSensitivity`: `strict`, `balanced` (default), or `lenient`.
+- You can set `requirePermitForShell`, `requirePermitForMcp`, and `requirePermitForRead` to `true` in `policy.json` for stricter permit gating.
 
 ## The Redux mental model for agents
 

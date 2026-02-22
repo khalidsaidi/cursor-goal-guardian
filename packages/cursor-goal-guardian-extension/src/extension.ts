@@ -3,22 +3,35 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { GoalPanelProvider } from "./goalPanel.js";
 import { StatusBarManager } from "./statusBar.js";
-import { AuditOutputChannel } from "./outputChannel.js";
 import {
   ensureStateStoreFiles,
   dispatchAction,
   rebuildState,
   getStatePaths,
-  loadRules,
   loadState,
 } from "./stateStore.js";
 
 const EXT_NAME = "Goal Guardian";
+type GoalGuardianContract = {
+  goal?: string;
+  success_criteria?: unknown;
+  constraints?: unknown;
+};
 
 function getWorkspaceRoot(): string | null {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders || folders.length === 0) return null;
   return folders[0]?.uri.fsPath ?? null;
+}
+
+function toWorkspaceRelativePath(workspaceRoot: string, absolutePath: string): string | null {
+  const rel = path.relative(workspaceRoot, absolutePath);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
+  return rel.split(path.sep).join("/");
+}
+
+function isGuardianInternalPath(relPath: string): boolean {
+  return relPath.startsWith(".cursor/goal-guardian/");
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -34,25 +47,9 @@ async function ensureDir(dirPath: string): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
 }
 
-async function backupIfExists(filePath: string): Promise<void> {
-  if (!(await fileExists(filePath))) return;
-  const backupPath = `${filePath}.bak-${Date.now()}`;
-  await fs.copyFile(filePath, backupPath);
-}
-
-async function readJson<T>(filePath: string, fallbackValue: T): Promise<T> {
-  try {
-    const raw = await fs.readFile(filePath, "utf8");
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallbackValue;
-  }
-}
-
-async function writeJson(filePath: string, data: unknown): Promise<boolean> {
+async function writeJson(filePath: string, data: unknown): Promise<void> {
   await ensureDir(path.dirname(filePath));
   await fs.writeFile(filePath, JSON.stringify(data, null, 2), "utf8");
-  return true;
 }
 
 async function openFileInEditor(filePath: string): Promise<void> {
@@ -64,118 +61,134 @@ async function openFileInEditor(filePath: string): Promise<void> {
   }
 }
 
-type AuditEntry = {
-  ts?: string;
-  event?: string;
-  actionType?: "shell" | "mcp" | "read" | "write";
-  actionValue?: string;
-  suggestedAllow?: string;
-};
-
-async function loadLastAction(workspaceRoot: string): Promise<AuditEntry | null> {
-  const auditPath = path.join(workspaceRoot, ".ai", "goal-guardian", "audit.log");
-  try {
-    const raw = await fs.readFile(auditPath, "utf8");
-    const lines = raw.trim().split("\n").reverse();
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const entry = JSON.parse(line) as AuditEntry;
-      if (entry.actionType && entry.actionValue) return entry;
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string") {
+      const text = item.trim();
+      if (text) out.push(text);
+      continue;
     }
-    return null;
-  } catch {
-    return null;
+    if (item && typeof item === "object" && "text" in item) {
+      const text = String((item as { text?: unknown }).text ?? "").trim();
+      if (text) out.push(text);
+    }
   }
+  return out;
 }
 
-async function getCriteriaIds(workspaceRoot: string): Promise<string[]> {
-  const contractPath = path.join(workspaceRoot, ".cursor", "goal-guardian", "contract.json");
+function sameStringList(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function getNextTodoTaskId(state: Awaited<ReturnType<typeof loadState>>): string | null {
+  const queueCandidate = state.queue.find((id) => state.tasks.some((t) => t.id === id && t.status === "todo"));
+  if (queueCandidate) return queueCandidate;
+  const fallback = state.tasks.find((t) => t.status === "todo");
+  return fallback?.id ?? null;
+}
+
+function buildTasksFromCriteria(criteria: string[]): Array<{ id: string; title: string }> {
+  return criteria.map((text, idx) => {
+    const id = `sc_${idx + 1}`;
+    return { id, title: `SC${idx + 1}: ${text}` };
+  });
+}
+
+async function loadContract(workspaceRoot: string): Promise<GoalGuardianContract | null> {
+  const contractPath = getStatePaths(workspaceRoot).contract;
   try {
     const raw = await fs.readFile(contractPath, "utf8");
-    const parsed = JSON.parse(raw) as { success_criteria?: string[] };
-    const list = parsed.success_criteria ?? [];
-    return list.map((_, i) => `SC${i + 1}`);
+    const parsed = JSON.parse(raw) as GoalGuardianContract;
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
   } catch {
-    return [];
+    return null;
   }
 }
 
-async function autoPermitForLastAction(context: vscode.ExtensionContext): Promise<void> {
-  const workspaceRoot = getWorkspaceRoot();
-  if (!workspaceRoot) {
-    vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
-    return;
-  }
-
-  const last = await loadLastAction(workspaceRoot);
-  if (!last) {
-    vscode.window.showInformationMessage(`${EXT_NAME}: No recent actions found to permit.`);
-    return;
-  }
-
-  const criteriaIds = await getCriteriaIds(workspaceRoot);
-  if (criteriaIds.length === 0) {
-    vscode.window.showErrorMessage(`${EXT_NAME}: No success criteria found. Define them in contract.json first.`);
-    return;
-  }
-
-  const picked = await vscode.window.showQuickPick(criteriaIds, {
-    canPickMany: true,
-    placeHolder: "Select success criteria IDs that justify this action",
+async function ensureActiveTask(workspaceRoot: string): Promise<boolean> {
+  const state = await loadState(workspaceRoot);
+  if (state.active_task) return false;
+  const nextTaskId = getNextTodoTaskId(state);
+  if (!nextTaskId) return false;
+  await dispatchAction(workspaceRoot, {
+    actor: "agent",
+    type: "START_TASK",
+    payload: { taskId: nextTaskId },
   });
-  if (!picked || picked.length === 0) return;
+  return true;
+}
 
-  const actionValue = last.actionValue ?? "";
-  const actionType = last.actionType ?? "shell";
-  const allowField =
-    actionType === "shell" ? "allow_shell" :
-    actionType === "mcp" ? "allow_mcp" :
-    actionType === "read" ? "allow_read" : "allow_write";
+async function autoSyncStateFromContract(workspaceRoot: string): Promise<boolean> {
+  await ensureStateStoreFiles(workspaceRoot);
+  const contract = await loadContract(workspaceRoot);
+  if (!contract) return false;
 
-  const stepText = `Permit ${actionType}: ${actionValue}`;
+  let changed = false;
+  let state = await loadState(workspaceRoot);
 
-  const mcpCli = path.join(context.extensionPath, "bin", "goal-guardian-mcp.js");
-  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
-  const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
-  const client = new Client({ name: "goal-guardian-extension", version: "0.3.3" });
-  const transport = new StdioClientTransport({
-    command: "node",
-    args: [mcpCli],
-    env: { GOAL_GUARDIAN_WORKSPACE_ROOT: workspaceRoot },
-  });
+  const goal = String(contract.goal ?? "");
+  const definitionOfDone = normalizeStringList(contract.success_criteria);
+  const constraints = normalizeStringList(contract.constraints);
 
-  try {
-    await client.connect(transport);
-    const check = await client.callTool({
-      name: "guardian_check_step",
-      arguments: {
-        step: stepText,
-        expected_output: `Allowed action: ${actionValue}`,
-        maps_to: picked,
+  const needsGoalSync =
+    state.goal !== goal ||
+    !sameStringList(state.definition_of_done, definitionOfDone) ||
+    !sameStringList(state.constraints, constraints);
+
+  if (needsGoalSync) {
+    await dispatchAction(workspaceRoot, {
+      actor: "agent",
+      type: "SET_GOAL",
+      payload: {
+        goal,
+        definition_of_done: definitionOfDone,
+        constraints,
       },
     });
-
-    const checkText = (check as any)?.content?.[0]?.text ?? "{}";
-    const record = JSON.parse(checkText);
-    await client.callTool({
-      name: "guardian_issue_permit",
-      arguments: {
-        step_id: record.step_id,
-        ttl_seconds: 600,
-        [allowField]: [last.suggestedAllow ?? actionValue],
-      },
-    });
-
-    vscode.window.showInformationMessage(`${EXT_NAME}: Permit issued for ${actionType}.`);
-  } catch (err) {
-    vscode.window.showErrorMessage(`${EXT_NAME}: Failed to issue permit. ${String(err)}`);
-  } finally {
-    try {
-      await client.close();
-    } catch {
-      // ignore
-    }
+    changed = true;
+    state = await loadState(workspaceRoot);
   }
+
+  if (state.tasks.length === 0 && definitionOfDone.length > 0) {
+    await dispatchAction(workspaceRoot, {
+      actor: "agent",
+      type: "ADD_TASKS",
+      payload: { tasks: buildTasksFromCriteria(definitionOfDone) },
+    });
+    changed = true;
+    state = await loadState(workspaceRoot);
+  }
+
+  if (!state.active_task) {
+    const started = await ensureActiveTask(workspaceRoot);
+    changed = changed || started;
+  }
+
+  return changed;
+}
+
+async function autoPinEditedFile(workspaceRoot: string, absolutePath: string): Promise<boolean> {
+  const relPath = toWorkspaceRelativePath(workspaceRoot, absolutePath);
+  if (!relPath) return false;
+  if (isGuardianInternalPath(relPath)) return false;
+
+  const state = await loadState(workspaceRoot);
+  if (!state.active_task) return false;
+  if (state.pinned_context.includes(relPath)) return false;
+
+  await dispatchAction(workspaceRoot, {
+    actor: "agent",
+    type: "PIN_CONTEXT",
+    payload: { path: relPath },
+  });
+  return true;
 }
 
 async function dispatchActionInteractive(workspaceRoot: string): Promise<void> {
@@ -281,109 +294,17 @@ function defaultContract() {
   return {
     goal: "Replace this with a short, unambiguous goal statement.",
     success_criteria: [
-      "Replace this with a concrete success criterion."
+      "Replace this with a concrete success criterion.",
     ],
     constraints: [
       "No silent scope expansion: every step must map to explicit success criteria IDs.",
-      "Prefer deterministic enforcement via hooks over prompt-only guidance.",
-      "Never log to stdout inside the MCP server except JSON-RPC."
-    ]
+      "Keep updates in the state store instead of chat-only planning.",
+      "Prefer small, testable tasks with explicit completion criteria.",
+    ],
   };
 }
 
-function defaultPolicy() {
-  return {
-    requirePermitForShell: true,
-    requirePermitForMcp: true,
-    requirePermitForRead: false,
-    autoRevertUnauthorizedEdits: false,
-    alwaysAllow: {
-      shell: ["git status*", "git diff*", "ls*", "pwd"],
-      mcp: ["goal-guardian/*"],
-      read: [".cursor/goal-guardian/**", ".cursor/hooks.json", ".cursor/mcp.json"]
-    },
-    alwaysDeny: {
-      shell: ["rm -rf /*", "rm -rf /", "*curl*|*sh*", "*wget*|*sh*"],
-      mcp: [],
-      read: [".ai/goal-guardian/**", ".git/**", "**/.env", "**/.env.*", "**/*.pem", "**/*.key"]
-    },
-    warningConfig: {
-      maxWarningsBeforeBlock: 3,
-      warningResetMinutes: 60,
-      showGoalReminder: true
-    },
-    // Severity-based rules for graduated guardrails
-    // HARD_BLOCK: Immediate denial, no recovery possible
-    // WARN: Allow with warning, block after maxWarningsBeforeBlock
-    // PERMIT_REQUIRED: Standard permit check
-    // ALLOWED: Pass through immediately
-    shellRules: [
-      // HARD_BLOCK: Catastrophic commands
-      { pattern: "rm -rf /", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
-      { pattern: "rm -rf /*", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
-      { pattern: "*curl*|*sh*", severity: "HARD_BLOCK", reason: "Remote code execution" },
-      { pattern: "*wget*|*sh*", severity: "HARD_BLOCK", reason: "Remote code execution" },
-      { pattern: "*curl*|*bash*", severity: "HARD_BLOCK", reason: "Remote code execution" },
-      { pattern: "*wget*|*bash*", severity: "HARD_BLOCK", reason: "Remote code execution" },
-      // WARN: Risky but recoverable
-      { pattern: "rm -rf *", severity: "WARN", reason: "Recursive force delete" },
-      { pattern: "*--force*", severity: "WARN", reason: "Force flag bypasses safety checks" },
-      { pattern: "git reset --hard*", severity: "WARN", reason: "Destructive git operation" },
-      { pattern: "git push --force*", severity: "WARN", reason: "Force push can overwrite history" },
-      { pattern: "git push -f*", severity: "WARN", reason: "Force push can overwrite history" },
-      { pattern: "npm publish*", severity: "WARN", reason: "Publishing to npm registry" },
-      { pattern: "*sudo *", severity: "WARN", reason: "Elevated privileges requested" },
-      // ALLOWED: Safe read-only commands
-      { pattern: "git status*", severity: "ALLOWED", reason: "Read-only git operation" },
-      { pattern: "git diff*", severity: "ALLOWED", reason: "Read-only git operation" },
-      { pattern: "git log*", severity: "ALLOWED", reason: "Read-only git operation" },
-      { pattern: "ls*", severity: "ALLOWED", reason: "List directory contents" },
-      { pattern: "pwd", severity: "ALLOWED", reason: "Print working directory" },
-      { pattern: "cat *", severity: "ALLOWED", reason: "Read file contents" },
-      { pattern: "node -v", severity: "ALLOWED", reason: "Version check" },
-      { pattern: "npm -v", severity: "ALLOWED", reason: "Version check" }
-    ],
-    mcpRules: [
-      { pattern: "goal-guardian/*", severity: "ALLOWED", reason: "Goal Guardian MCP tools" }
-    ],
-    readRules: [
-      { pattern: "**/.env", severity: "HARD_BLOCK", reason: "Environment secrets" },
-      { pattern: "**/.env.*", severity: "HARD_BLOCK", reason: "Environment secrets" },
-      { pattern: "**/*.pem", severity: "HARD_BLOCK", reason: "Private key file" },
-      { pattern: "**/*.key", severity: "HARD_BLOCK", reason: "Private key file" },
-      { pattern: ".git/**", severity: "HARD_BLOCK", reason: "Git internals" },
-      { pattern: ".cursor/goal-guardian/**", severity: "ALLOWED", reason: "Guardian configuration" }
-    ]
-  };
-}
-
-function hookCommand(hookPath: string, mcpPath: string): string {
-  const hookQuoted = hookPath.includes(" ") ? `"${hookPath}"` : hookPath;
-  const mcpQuoted = mcpPath.includes(" ") ? `"${mcpPath}"` : mcpPath;
-  return `node ${hookQuoted} --mcp ${mcpQuoted}`;
-}
-
-function mergeHookCommand(existing: any, hookName: string, command: string, hookPath: string): boolean {
-  if (!existing.hooks) existing.hooks = {};
-  if (!Array.isArray(existing.hooks[hookName])) existing.hooks[hookName] = [];
-  const arr = existing.hooks[hookName] as Array<{ command?: string }>;
-  const hookQuoted = hookPath.includes(" ") ? `"${hookPath}"` : hookPath;
-  const legacyPrefix = `node ${hookQuoted}`;
-  const legacyEntries = arr.filter(
-    (h) => typeof h?.command === "string" && h.command.startsWith(legacyPrefix) && !h.command.includes("--mcp")
-  );
-  if (legacyEntries.length > 0) {
-    existing.hooks[hookName] = arr.filter((h) => !legacyEntries.includes(h));
-  }
-  const arrAfter = existing.hooks[hookName] as Array<{ command?: string }>;
-  if (!arrAfter.some((h) => h?.command === command)) {
-    arrAfter.push({ command });
-    return true;
-  }
-  return legacyEntries.length > 0;
-}
-
-async function installFiles(context: vscode.ExtensionContext): Promise<void> {
+async function installFiles(): Promise<void> {
   const workspaceRoot = getWorkspaceRoot();
   if (!workspaceRoot) {
     vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
@@ -392,37 +313,7 @@ async function installFiles(context: vscode.ExtensionContext): Promise<void> {
 
   const cursorDir = path.join(workspaceRoot, ".cursor");
   const guardianDir = path.join(cursorDir, "goal-guardian");
-
-  const hookCli = path.join(context.extensionPath, "bin", "goal-guardian-hook.js");
-  const mcpCli = path.join(context.extensionPath, "bin", "goal-guardian-mcp.js");
-
-  const hooksJson = {
-    version: 1,
-    hooks: {
-      beforeShellExecution: [{ command: hookCommand(hookCli, mcpCli) }],
-      beforeMCPExecution: [{ command: hookCommand(hookCli, mcpCli) }],
-      beforeReadFile: [{ command: hookCommand(hookCli, mcpCli) }],
-      afterFileEdit: [{ command: hookCommand(hookCli, mcpCli) }],
-      stop: [{ command: hookCommand(hookCli, mcpCli) }]
-    }
-  };
-
-  const mcpJson = {
-    mcpServers: {
-      "goal-guardian": {
-        command: "node",
-        args: [mcpCli],
-        env: {
-          GOAL_GUARDIAN_WORKSPACE_ROOT: workspaceRoot
-        }
-      }
-    }
-  };
-
   const contractPath = path.join(guardianDir, "contract.json");
-  const policyPath = path.join(guardianDir, "policy.json");
-  const hooksPath = path.join(cursorDir, "hooks.json");
-  const mcpPath = path.join(cursorDir, "mcp.json");
 
   await ensureDir(guardianDir);
 
@@ -433,46 +324,7 @@ async function installFiles(context: vscode.ExtensionContext): Promise<void> {
     changed.push("contract.json");
   }
 
-  if (!(await fileExists(policyPath))) {
-    await writeJson(policyPath, defaultPolicy());
-    changed.push("policy.json");
-  }
-
-  // State store files are on by default (Redux-style loop).
   await ensureStateStoreFiles(workspaceRoot);
-
-  if (!(await fileExists(hooksPath))) {
-    await writeJson(hooksPath, hooksJson);
-    changed.push("hooks.json");
-  } else {
-    const existing = await readJson<any>(hooksPath, { version: 1, hooks: {} });
-    const cmd = hookCommand(hookCli, mcpCli);
-    let modified = false;
-    modified = mergeHookCommand(existing, "beforeShellExecution", cmd, hookCli) || modified;
-    modified = mergeHookCommand(existing, "beforeMCPExecution", cmd, hookCli) || modified;
-    modified = mergeHookCommand(existing, "beforeReadFile", cmd, hookCli) || modified;
-    modified = mergeHookCommand(existing, "afterFileEdit", cmd, hookCli) || modified;
-    modified = mergeHookCommand(existing, "stop", cmd, hookCli) || modified;
-    if (modified) {
-      await backupIfExists(hooksPath);
-      await writeJson(hooksPath, { version: existing.version ?? 1, hooks: existing.hooks });
-      changed.push("hooks.json (merged)");
-    }
-  }
-
-  if (!(await fileExists(mcpPath))) {
-    await writeJson(mcpPath, mcpJson);
-    changed.push("mcp.json");
-  } else {
-    const existing = await readJson<any>(mcpPath, { mcpServers: {} });
-    if (!existing.mcpServers) existing.mcpServers = {};
-    if (!existing.mcpServers["goal-guardian"]) {
-      existing.mcpServers["goal-guardian"] = mcpJson.mcpServers["goal-guardian"];
-      await backupIfExists(mcpPath);
-      await writeJson(mcpPath, existing);
-      changed.push("mcp.json (merged)");
-    }
-  }
 
   if (changed.length === 0) {
     vscode.window.showInformationMessage(`${EXT_NAME}: Files already exist. Nothing changed.`);
@@ -490,84 +342,55 @@ async function uninstallFiles(): Promise<void> {
 
   const cursorDir = path.join(workspaceRoot, ".cursor");
   const guardianDir = path.join(cursorDir, "goal-guardian");
-  const hooksPath = path.join(cursorDir, "hooks.json");
-  const mcpPath = path.join(cursorDir, "mcp.json");
 
-  const targets = [hooksPath, mcpPath, guardianDir];
-  for (const t of targets) {
-    try {
-      await fs.rm(t, { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+  try {
+    await fs.rm(guardianDir, { recursive: true, force: true });
+  } catch {
+    // ignore
   }
 
-  vscode.window.showInformationMessage(`${EXT_NAME}: Removed .cursor/goal-guardian and hooks/mcp configs (if present).`);
+  vscode.window.showInformationMessage(`${EXT_NAME}: Removed .cursor/goal-guardian.`);
 }
 
-async function migrateHookCommands(context: vscode.ExtensionContext): Promise<void> {
-  const workspaceRoot = getWorkspaceRoot();
-  if (!workspaceRoot) return;
-
-  const cursorDir = path.join(workspaceRoot, ".cursor");
-  const hooksPath = path.join(cursorDir, "hooks.json");
-  if (!(await fileExists(hooksPath))) return;
-
-  const hookCli = path.join(context.extensionPath, "bin", "goal-guardian-hook.js");
-  const mcpCli = path.join(context.extensionPath, "bin", "goal-guardian-mcp.js");
-  const cmd = hookCommand(hookCli, mcpCli);
-
-  const existing = await readJson<any>(hooksPath, { version: 1, hooks: {} });
-  let modified = false;
-  modified = mergeHookCommand(existing, "beforeShellExecution", cmd, hookCli) || modified;
-  modified = mergeHookCommand(existing, "beforeMCPExecution", cmd, hookCli) || modified;
-  modified = mergeHookCommand(existing, "beforeReadFile", cmd, hookCli) || modified;
-  modified = mergeHookCommand(existing, "afterFileEdit", cmd, hookCli) || modified;
-  modified = mergeHookCommand(existing, "stop", cmd, hookCli) || modified;
-
-  if (modified) {
-    await backupIfExists(hooksPath);
-    await writeJson(hooksPath, { version: existing.version ?? 1, hooks: existing.hooks });
-  }
-}
-
-export function activate(context: vscode.ExtensionContext): void {
+export function activate(_context: vscode.ExtensionContext): void {
   const workspaceRoot = getWorkspaceRoot();
   if (workspaceRoot) {
     ensureStateStoreFiles(workspaceRoot).catch(() => {
       // ignore; user can run Install/Configure to repair
     });
   }
-  migrateHookCommands(context).catch(() => {
-    // ignore; migration is best-effort
-  });
-  // Create UI components
-  const goalPanelProvider = new GoalPanelProvider(context.extensionUri);
-  const statusBarManager = new StatusBarManager();
-  const auditOutputChannel = new AuditOutputChannel();
 
-  // Register webview provider for the Goal Panel in Explorer sidebar
+  const goalPanelProvider = new GoalPanelProvider(_context.extensionUri);
+  const statusBarManager = new StatusBarManager();
+
   const panelRegistration = vscode.window.registerWebviewViewProvider(
     GoalPanelProvider.viewType,
-    goalPanelProvider
+    goalPanelProvider,
   );
 
-  // Register commands
   const installCmd = vscode.commands.registerCommand("goalGuardian.install", async () => {
-    await installFiles(context);
+    await installFiles();
+    const root = getWorkspaceRoot();
+    if (root) {
+      try {
+        await autoSyncStateFromContract(root);
+      } catch {
+        // Best-effort sync.
+      }
+    }
     goalPanelProvider.refresh();
     statusBarManager.refresh();
   });
 
   const openContract = vscode.commands.registerCommand("goalGuardian.openContract", async () => {
-    const workspaceRoot = getWorkspaceRoot();
-    if (!workspaceRoot) {
+    const root = getWorkspaceRoot();
+    if (!root) {
       vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
       return;
     }
-    const contractPath = path.join(workspaceRoot, ".cursor", "goal-guardian", "contract.json");
+    const contractPath = path.join(root, ".cursor", "goal-guardian", "contract.json");
     if (!(await fileExists(contractPath))) {
-      await installFiles(context);
+      await installFiles();
     }
     const doc = await vscode.workspace.openTextDocument(contractPath);
     await vscode.window.showTextDocument(doc, { preview: false });
@@ -575,10 +398,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const uninstallCmd = vscode.commands.registerCommand("goalGuardian.uninstall", async () => {
     const confirm = await vscode.window.showWarningMessage(
-      `${EXT_NAME}: Remove .cursor/goal-guardian and hooks/mcp configs?`,
+      `${EXT_NAME}: Remove .cursor/goal-guardian state files?`,
       { modal: true },
       "Remove",
-      "Cancel"
+      "Cancel",
     );
     if (confirm !== "Remove") return;
     await uninstallFiles();
@@ -587,125 +410,51 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   const showPanelCmd = vscode.commands.registerCommand("goalGuardian.showPanel", async () => {
-    // Focus on the Goal Guardian panel in the sidebar
     await vscode.commands.executeCommand("goalGuardian.goalPanel.focus");
-  });
-
-  const showAuditCmd = vscode.commands.registerCommand("goalGuardian.showAudit", async () => {
-    auditOutputChannel.show();
   });
 
   const refreshCmd = vscode.commands.registerCommand("goalGuardian.refresh", async () => {
     goalPanelProvider.refresh();
     statusBarManager.refresh();
-    auditOutputChannel.refresh();
     vscode.window.showInformationMessage(`${EXT_NAME}: Refreshed.`);
   });
 
-  const requestPermitCmd = vscode.commands.registerCommand("goalGuardian.requestPermit", async () => {
-    const workspaceRoot = getWorkspaceRoot();
-    if (!workspaceRoot) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
-      return;
-    }
-
-    // Show an input box to guide permit request
-    const step = await vscode.window.showInputBox({
-      title: "Request Permit - Step Description",
-      prompt: "Describe what step you want to accomplish",
-      placeHolder: "e.g., Run tests to verify authentication implementation",
-    });
-
-    if (!step) return;
-
-    const mapsToInput = await vscode.window.showInputBox({
-      title: "Request Permit - Success Criteria",
-      prompt: "Which success criteria IDs does this map to? (comma-separated)",
-      placeHolder: "e.g., SC1, SC2",
-    });
-
-    if (!mapsToInput) return;
-
-    const shellPattern = await vscode.window.showInputBox({
-      title: "Request Permit - Shell Patterns",
-      prompt: "Shell command patterns to allow (comma-separated, leave empty for none)",
-      placeHolder: "e.g., npm test*, npm run*",
-    });
-
-    // Build guidance message
-    const mapsTo = mapsToInput.split(",").map((s) => s.trim()).filter(Boolean);
-    const shellPatterns = shellPattern ? shellPattern.split(",").map((s) => s.trim()).filter(Boolean) : [];
-
-    const guidance = `To request a permit, use the MCP tools in order:
-
-1. guardian_check_step:
-   - step: "${step}"
-   - expected_output: "[describe what will be produced]"
-   - maps_to: ${JSON.stringify(mapsTo)}
-
-2. If approved, guardian_issue_permit:
-   - step_id: [from check_step result]
-   - allow_shell: ${JSON.stringify(shellPatterns)}
-
-The AI agent can execute these commands via the goal-guardian MCP server.`;
-
-    const action = await vscode.window.showInformationMessage(
-      `${EXT_NAME}: Permit request guidance ready`,
-      { modal: false },
-      "Copy to Clipboard",
-      "Open Contract"
-    );
-
-    if (action === "Copy to Clipboard") {
-      await vscode.env.clipboard.writeText(guidance);
-      vscode.window.showInformationMessage(`${EXT_NAME}: Guidance copied to clipboard.`);
-    } else if (action === "Open Contract") {
-      await vscode.commands.executeCommand("goalGuardian.openContract");
-    }
-  });
-
-  const autoPermitCmd = vscode.commands.registerCommand("goalGuardian.autoPermitLastAction", async () => {
-    await autoPermitForLastAction(context);
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-  });
-
   const openStateCmd = vscode.commands.registerCommand("goalGuardian.openState", async () => {
-    const workspaceRoot = getWorkspaceRoot();
-    if (!workspaceRoot) return;
-    const p = getStatePaths(workspaceRoot);
+    const root = getWorkspaceRoot();
+    if (!root) return;
+    const p = getStatePaths(root);
     await openFileInEditor(p.state);
   });
 
   const openActionsCmd = vscode.commands.registerCommand("goalGuardian.openActions", async () => {
-    const workspaceRoot = getWorkspaceRoot();
-    if (!workspaceRoot) return;
-    const p = getStatePaths(workspaceRoot);
+    const root = getWorkspaceRoot();
+    if (!root) return;
+    const p = getStatePaths(root);
     await openFileInEditor(p.actions);
   });
 
   const openReducerCmd = vscode.commands.registerCommand("goalGuardian.openReducer", async () => {
-    const workspaceRoot = getWorkspaceRoot();
-    if (!workspaceRoot) return;
-    const p = getStatePaths(workspaceRoot);
+    const root = getWorkspaceRoot();
+    if (!root) return;
+    const p = getStatePaths(root);
     await openFileInEditor(p.reducer);
   });
 
   const openRulesCmd = vscode.commands.registerCommand("goalGuardian.openRules", async () => {
-    const workspaceRoot = getWorkspaceRoot();
-    if (!workspaceRoot) return;
-    const p = getStatePaths(workspaceRoot);
+    const root = getWorkspaceRoot();
+    if (!root) return;
+    const p = getStatePaths(root);
     await openFileInEditor(p.rules);
   });
 
   const dispatchActionCmd = vscode.commands.registerCommand("goalGuardian.dispatchAction", async () => {
-    const workspaceRoot = getWorkspaceRoot();
-    if (!workspaceRoot) {
+    const root = getWorkspaceRoot();
+    if (!root) {
       vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
       return;
     }
     try {
-      await dispatchActionInteractive(workspaceRoot);
+      await dispatchActionInteractive(root);
       goalPanelProvider.refresh();
       statusBarManager.refresh();
     } catch (err) {
@@ -713,14 +462,71 @@ The AI agent can execute these commands via the goal-guardian MCP server.`;
     }
   });
 
-  const rebuildStateCmd = vscode.commands.registerCommand("goalGuardian.rebuildState", async () => {
-    const workspaceRoot = getWorkspaceRoot();
-    if (!workspaceRoot) {
+  const startNextTaskCmd = vscode.commands.registerCommand("goalGuardian.startNextTask", async () => {
+    const root = getWorkspaceRoot();
+    if (!root) {
       vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
       return;
     }
     try {
-      await rebuildState(workspaceRoot);
+      await ensureStateStoreFiles(root);
+      const before = await loadState(root);
+      if (before.active_task) {
+        vscode.window.showInformationMessage(`${EXT_NAME}: Active task already in progress (${before.active_task}).`);
+        return;
+      }
+      const started = await ensureActiveTask(root);
+      if (!started) {
+        vscode.window.showInformationMessage(`${EXT_NAME}: No todo task available to start.`);
+        return;
+      }
+      const after = await loadState(root);
+
+      goalPanelProvider.refresh();
+      statusBarManager.refresh();
+      vscode.window.showInformationMessage(`${EXT_NAME}: Started task ${after.active_task ?? "(unknown)"}.`);
+    } catch (err) {
+      vscode.window.showErrorMessage(`${EXT_NAME}: ${String(err)}`);
+    }
+  });
+
+  const completeActiveTaskCmd = vscode.commands.registerCommand("goalGuardian.completeActiveTask", async () => {
+    const root = getWorkspaceRoot();
+    if (!root) {
+      vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
+      return;
+    }
+    try {
+      await ensureStateStoreFiles(root);
+      const state = await loadState(root);
+      if (!state.active_task) {
+        vscode.window.showInformationMessage(`${EXT_NAME}: No active task to complete.`);
+        return;
+      }
+
+      const taskId = state.active_task;
+      await dispatchAction(root, {
+        actor: "human",
+        type: "COMPLETE_TASK",
+        payload: { taskId },
+      });
+
+      goalPanelProvider.refresh();
+      statusBarManager.refresh();
+      vscode.window.showInformationMessage(`${EXT_NAME}: Completed task ${taskId}.`);
+    } catch (err) {
+      vscode.window.showErrorMessage(`${EXT_NAME}: ${String(err)}`);
+    }
+  });
+
+  const rebuildStateCmd = vscode.commands.registerCommand("goalGuardian.rebuildState", async () => {
+    const root = getWorkspaceRoot();
+    if (!root) {
+      vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
+      return;
+    }
+    try {
+      await rebuildState(root);
       goalPanelProvider.refresh();
       statusBarManager.refresh();
       vscode.window.showInformationMessage(`${EXT_NAME}: State rebuilt from actions.`);
@@ -729,26 +535,28 @@ The AI agent can execute these commands via the goal-guardian MCP server.`;
     }
   });
 
-  // Watch for contract file changes to auto-refresh
-  const contractWatcher = vscode.workspace.createFileSystemWatcher(
-    "**/goal-guardian/contract.json"
-  );
-  contractWatcher.onDidChange(() => {
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-  });
-  contractWatcher.onDidCreate(() => {
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-  });
+  const contractWatcher = vscode.workspace.createFileSystemWatcher("**/goal-guardian/contract.json");
+  const syncFromContract = () => {
+    const root = getWorkspaceRoot();
+    if (!root) return;
+    autoSyncStateFromContract(root)
+      .then(() => {
+        goalPanelProvider.refresh();
+        statusBarManager.refresh();
+      })
+      .catch(() => {
+        goalPanelProvider.refresh();
+        statusBarManager.refresh();
+      });
+  };
+  contractWatcher.onDidChange(syncFromContract);
+  contractWatcher.onDidCreate(syncFromContract);
   contractWatcher.onDidDelete(() => {
     goalPanelProvider.refresh();
     statusBarManager.refresh();
   });
 
-  const stateWatcher = vscode.workspace.createFileSystemWatcher(
-    "**/goal-guardian/state.json"
-  );
+  const stateWatcher = vscode.workspace.createFileSystemWatcher("**/goal-guardian/state.json");
   stateWatcher.onDidChange(() => {
     goalPanelProvider.refresh();
     statusBarManager.refresh();
@@ -762,9 +570,7 @@ The AI agent can execute these commands via the goal-guardian MCP server.`;
     statusBarManager.refresh();
   });
 
-  const actionsWatcher = vscode.workspace.createFileSystemWatcher(
-    "**/goal-guardian/actions.jsonl"
-  );
+  const actionsWatcher = vscode.workspace.createFileSystemWatcher("**/goal-guardian/actions.jsonl");
   actionsWatcher.onDidChange(() => {
     goalPanelProvider.refresh();
     statusBarManager.refresh();
@@ -774,30 +580,62 @@ The AI agent can execute these commands via the goal-guardian MCP server.`;
     statusBarManager.refresh();
   });
 
-  context.subscriptions.push(
+  const autoPinOnSave = vscode.workspace.onDidSaveTextDocument(async (doc) => {
+    if (doc.isUntitled || doc.uri.scheme !== "file") return;
+
+    const root = getWorkspaceRoot();
+    if (!root) return;
+    try {
+      const relPath = toWorkspaceRelativePath(root, doc.uri.fsPath);
+      if (!relPath || isGuardianInternalPath(relPath)) return;
+
+      const started = await ensureActiveTask(root);
+      const pinned = await autoPinEditedFile(root, doc.uri.fsPath);
+      if (started || pinned) {
+        goalPanelProvider.refresh();
+        statusBarManager.refresh();
+      }
+    } catch {
+      // Best-effort, no user interruption.
+    }
+  });
+
+  if (workspaceRoot) {
+    autoSyncStateFromContract(workspaceRoot)
+      .then((changed) => {
+        if (changed) {
+          goalPanelProvider.refresh();
+          statusBarManager.refresh();
+        }
+      })
+      .catch(() => {
+        // Best-effort bootstrap only.
+      });
+  }
+
+  _context.subscriptions.push(
     panelRegistration,
     statusBarManager,
-    auditOutputChannel,
     installCmd,
     openContract,
     uninstallCmd,
     showPanelCmd,
-    showAuditCmd,
     refreshCmd,
-    requestPermitCmd,
-    autoPermitCmd,
     openStateCmd,
     openActionsCmd,
     openReducerCmd,
     openRulesCmd,
     dispatchActionCmd,
+    startNextTaskCmd,
+    completeActiveTaskCmd,
     rebuildStateCmd,
     contractWatcher,
     stateWatcher,
-    actionsWatcher
+    actionsWatcher,
+    autoPinOnSave,
   );
 }
 
 export function deactivate(): void {
-  // Components will be disposed via subscriptions
+  // Components are disposed via subscriptions.
 }

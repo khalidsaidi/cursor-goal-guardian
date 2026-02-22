@@ -60,9 +60,54 @@ describe("guardian_preview_action", () => {
     expect(second.severity).toBe("WARN");
     expect(second.warningCount).toBe(2);
 
+    const third = await runPreview(client, "shell", "git reset --hard");
+    expect(third.severity).toBe("WARN");
+    expect(third.warningCount).toBe(3);
+
+    const fourth = await runPreview(client, "shell", "git reset --hard");
+    expect(fourth.severity).toBe("WARN");
+    expect(fourth.wouldSucceed).toBe(true);
+    expect(String(fourth.reason)).toMatch(/allowed/i);
+
     const violationsPath = path.join(workspaceRoot, ".ai", "goal-guardian", "violations.json");
     const violations = JSON.parse(await fs.readFile(violationsPath, "utf8"));
-    expect(violations.warningCounts["git reset --hard*"]).toBe(2);
+    expect(violations.warningCounts["git reset --hard*"]).toBe(3);
+
+    await client.close();
+  });
+
+  it("keeps permit-required actions non-blocking in preview mode", async () => {
+    const workspaceRoot = await makeTempWorkspace();
+    const tsx = getTsxPath();
+    const entry = getMcpEntry();
+    const policyPath = path.join(workspaceRoot, ".cursor", "goal-guardian", "policy.json");
+    await fs.writeFile(
+      policyPath,
+      JSON.stringify(
+        {
+          requirePermitForShell: true,
+          requirePermitForMcp: true,
+          requirePermitForRead: false,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const client = new Client({ name: "goal-guardian-test", version: "0.0.0" });
+    const transport = new StdioClientTransport({
+      command: tsx,
+      args: [entry],
+      env: { GOAL_GUARDIAN_WORKSPACE_ROOT: workspaceRoot },
+    });
+
+    await client.connect(transport);
+
+    const preview = await runPreview(client, "shell", "pnpm test");
+    expect(preview.severity).toBe("PERMIT_REQUIRED");
+    expect(preview.wouldSucceed).toBe(true);
+    expect(String(preview.reason)).toMatch(/allowed/i);
 
     await client.close();
   });

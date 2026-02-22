@@ -1,4 +1,5 @@
 export type PolicySeverity = "HARD_BLOCK" | "WARN" | "PERMIT_REQUIRED" | "ALLOWED";
+export type TaskScopeSensitivity = "strict" | "balanced" | "lenient";
 
 export type PolicyRule = {
   pattern: string;
@@ -13,6 +14,17 @@ export type WarningConfig = {
 };
 
 export type GoalGuardianPolicy = {
+  // When true, execution requires a valid Redux-style active task in state.json.
+  enforceReduxControl: boolean;
+  // When true, action keywords are compared to the active task scope and out-of-scope
+  // actions are warned (advisory-only).
+  enforceTaskScope: boolean;
+  // Controls how aggressively out-of-scope warnings are emitted.
+  // strict: warn on weak mismatch signals
+  // balanced: default, warn on medium confidence mismatch
+  // lenient: warn only on strong mismatch signals
+  taskScopeSensitivity: TaskScopeSensitivity;
+
   requirePermitForShell: boolean;
   requirePermitForMcp: boolean;
   requirePermitForRead: boolean;
@@ -51,8 +63,17 @@ export function defaultWarningConfig(): WarningConfig {
 
 export function defaultPolicy(): GoalGuardianPolicy {
   return {
-    requirePermitForShell: true,
-    requirePermitForMcp: true,
+    // Strict by default: agent actions require an active Redux task.
+    enforceReduxControl: true,
+    // Default on: compare each action against active task scope keywords.
+    enforceTaskScope: true,
+    // Good default for everyday use.
+    taskScopeSensitivity: "balanced",
+
+    // Soft anti-drift by default: guide with warnings, don't gate normal flow.
+    // Teams that want strict permit gating can set these to true in policy.json.
+    requirePermitForShell: false,
+    requirePermitForMcp: false,
 
     // You can flip this to true in your project policy.json for stricter anti-drift.
     requirePermitForRead: false,
@@ -84,7 +105,7 @@ export function defaultPolicy(): GoalGuardianPolicy {
 
     alwaysDeny: {
       shell: [
-        // Add your own hard-deny patterns here (examples):
+        // Add your own high-risk patterns here (examples):
         "rm -rf /*",
         "rm -rf /",
         "*curl*|*sh*",
@@ -104,9 +125,10 @@ export function defaultPolicy(): GoalGuardianPolicy {
 
     warningConfig: defaultWarningConfig(),
 
-    // Severity-based rules for graduated response
+    // Severity-based rules for graduated response.
+    // HARD_BLOCK is treated as strongest warning class in advisory mode.
     shellRules: [
-      // HARD_BLOCK: Catastrophic commands - immediate block, no recovery
+      // HARD_BLOCK: Catastrophic commands - strongest warning class
       { pattern: "rm -rf /", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
       { pattern: "rm -rf /*", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
       { pattern: "*:(){ :|:& };:*", severity: "HARD_BLOCK", reason: "Fork bomb detected" },
@@ -161,7 +183,7 @@ export function defaultPolicy(): GoalGuardianPolicy {
     ],
 
     readRules: [
-      // HARD_BLOCK: Sensitive files
+      // HARD_BLOCK: Sensitive files (strongest warning class)
       { pattern: "**/.env", severity: "HARD_BLOCK", reason: "Environment secrets" },
       { pattern: "**/.env.*", severity: "HARD_BLOCK", reason: "Environment secrets" },
       { pattern: "**/*.pem", severity: "HARD_BLOCK", reason: "Private key file" },

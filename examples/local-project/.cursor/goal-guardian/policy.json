@@ -1,6 +1,9 @@
 {
-  "requirePermitForShell": true,
-  "requirePermitForMcp": true,
+  "enforceReduxControl": true,
+  "enforceTaskScope": true,
+  "taskScopeSensitivity": "balanced",
+  "requirePermitForShell": false,
+  "requirePermitForMcp": false,
   "requirePermitForRead": false,
   "autoRevertUnauthorizedEdits": false,
 

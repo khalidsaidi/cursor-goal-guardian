@@ -4,7 +4,7 @@ import os from "node:os";
 import fs from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 
-async function makeTempWorkspace(): Promise<string> {
+async function makeTempWorkspace(taskTitle = "Task 1"): Promise<string> {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "gg-hook-"));
   await fs.mkdir(path.join(dir, ".cursor", "goal-guardian"), { recursive: true });
   const contract = {
@@ -15,6 +15,29 @@ async function makeTempWorkspace(): Promise<string> {
   await fs.writeFile(
     path.join(dir, ".cursor", "goal-guardian", "contract.json"),
     JSON.stringify(contract, null, 2),
+    "utf8",
+  );
+  const state = {
+    schemaVersion: 1,
+    goal: contract.goal,
+    definition_of_done: contract.success_criteria,
+    constraints: contract.constraints,
+    active_task: "t1",
+    tasks: [{ id: "t1", title: taskTitle, status: "doing" }],
+    queue: [],
+    open_questions: [],
+    decisions: [],
+    pinned_context: [],
+    _meta: {
+      lastActionId: null,
+      lastUpdated: new Date().toISOString(),
+      actionCount: 0,
+      hash: "test",
+    },
+  };
+  await fs.writeFile(
+    path.join(dir, ".cursor", "goal-guardian", "state.json"),
+    JSON.stringify(state, null, 2),
     "utf8",
   );
   return dir;
@@ -42,11 +65,12 @@ function runHook(workspaceRoot: string, payload: Record<string, unknown>) {
 }
 
 describe("goal-guardian hook CLI", () => {
-  it("hard-blocks catastrophic shell commands", async () => {
+  it("warns (allows) for catastrophic shell commands in advisory-only mode", async () => {
     const root = await makeTempWorkspace();
     const res = runHook(root, { hook_event_name: "beforeShellExecution", command: "rm -rf /" });
-    expect(res.permission).toBe("deny");
-    expect(String(res.userMessage)).toMatch(/BLOCKED/i);
+    expect(res.permission).toBe("allow");
+    expect(String(res.userMessage)).toMatch(/Warning:/i);
+    expect(String(res.userMessage)).toMatch(/Would block/i);
   });
 
   it("warns (allows) for risky commands and increments warning count", async () => {
@@ -66,14 +90,106 @@ describe("goal-guardian hook CLI", () => {
 
   it("recommends permits for non-whitelisted commands", async () => {
     const root = await makeTempWorkspace();
+    await fs.writeFile(
+      path.join(root, ".cursor", "goal-guardian", "policy.json"),
+      JSON.stringify(
+        {
+          requirePermitForShell: true,
+          requirePermitForMcp: false,
+          requirePermitForRead: false,
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
     const res = runHook(root, { hook_event_name: "beforeShellExecution", command: "pnpm test" });
     expect(res.permission).toBe("allow");
     expect(String(res.userMessage)).toMatch(/Permit recommended/i);
   });
 
-  it("blocks sensitive file reads", async () => {
+  it("warns (allows) sensitive file reads in advisory-only mode", async () => {
     const root = await makeTempWorkspace();
     const res = runHook(root, { hook_event_name: "beforeReadFile", file_path: ".env" });
-    expect(res.permission).toBe("deny");
+    expect(res.permission).toBe("allow");
+    expect(String(res.userMessage)).toMatch(/Warning:/i);
+  });
+
+  it("warns (allows) execution when no active redux task exists", async () => {
+    const root = await makeTempWorkspace();
+    const statePath = path.join(root, ".cursor", "goal-guardian", "state.json");
+    const state = JSON.parse(await fs.readFile(statePath, "utf8"));
+    state.active_task = null;
+    await fs.writeFile(statePath, JSON.stringify(state, null, 2), "utf8");
+
+    const res = runHook(root, { hook_event_name: "beforeShellExecution", command: "pnpm test" });
+    expect(res.permission).toBe("allow");
+    expect(String(res.userMessage)).toMatch(/No active Redux task/i);
+  });
+
+  it("warns (allows) when a shell action appears out of active task scope", async () => {
+    const root = await makeTempWorkspace("Expense tracker");
+    const res = runHook(root, {
+      hook_event_name: "beforeShellExecution",
+      command: "touch src/kanban-board.tsx",
+    });
+    expect(res.permission).toBe("allow");
+    expect(String(res.userMessage)).toMatch(/Scope warning/i);
+    expect(String(res.agentMessage)).toMatch(/Active task: t1 \(Expense tracker\)/i);
+  });
+
+  it("allows in-scope reads without scope warnings", async () => {
+    const root = await makeTempWorkspace("Expense tracker");
+    const res = runHook(root, {
+      hook_event_name: "beforeReadFile",
+      file_path: "src/expense-form.tsx",
+    });
+    expect(res.permission).toBe("allow");
+    expect(String(res.userMessage ?? "")).not.toMatch(/Scope warning/i);
+  });
+
+  it("supports lenient scope mode to reduce noise on weak mismatch signals", async () => {
+    const root = await makeTempWorkspace("Expense tracker");
+    await fs.writeFile(
+      path.join(root, ".cursor", "goal-guardian", "policy.json"),
+      JSON.stringify(
+        {
+          enforceTaskScope: true,
+          taskScopeSensitivity: "lenient",
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    const res = runHook(root, {
+      hook_event_name: "beforeShellExecution",
+      command: "mkdir kanban",
+    });
+    expect(res.permission).toBe("allow");
+    expect(String(res.userMessage ?? "")).not.toMatch(/Scope warning/i);
+  });
+
+  it("supports strict scope mode to warn on minimal mismatches", async () => {
+    const root = await makeTempWorkspace("Expense tracker");
+    await fs.writeFile(
+      path.join(root, ".cursor", "goal-guardian", "policy.json"),
+      JSON.stringify(
+        {
+          enforceTaskScope: true,
+          taskScopeSensitivity: "strict",
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+    const res = runHook(root, {
+      hook_event_name: "beforeShellExecution",
+      command: "mkdir kanban",
+    });
+    expect(res.permission).toBe("allow");
+    expect(String(res.userMessage)).toMatch(/Scope warning/i);
+    expect(String(res.agentMessage)).toMatch(/Scope mode: strict/i);
   });
 });

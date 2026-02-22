@@ -16203,8 +16203,10 @@ function defaultWarningConfig() {
 }
 function defaultPolicy() {
   return {
-    requirePermitForShell: true,
-    requirePermitForMcp: true,
+    // Soft anti-drift by default: guide with warnings, don't gate normal flow.
+    // Teams that want strict permit gating can set these to true in policy.json.
+    requirePermitForShell: false,
+    requirePermitForMcp: false,
     // You can flip this to true in your project policy.json for stricter anti-drift.
     requirePermitForRead: false,
     autoRevertUnauthorizedEdits: false,
@@ -16515,16 +16517,30 @@ function previewToResponse(preview, actionType, actionValue, policy, contract) {
     goal: contract.goal,
     relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`)
   } : void 0;
-  if (!preview.wouldSucceed) {
+  if (preview.severity === "HARD_BLOCK") {
     const agentMsg = suggested ? buildRecoveryMessage(actionType, actionValue, contract, `${suggested.allow_field}: ["${suggested.allow_pattern}"]`) : `Action blocked by MCP policy. ${actionValue}`;
     return cursorResponseDeny(preview.reason, agentMsg);
   }
   if (preview.severity === "WARN") {
+    const warnMessage = preview.wouldSucceed ? `Allowed with warning. ${Math.max(0, maxWarnings - warningCount)} warnings remaining before block.` : "Warning limit reached. Action allowed, but a permit is strongly recommended.";
     return cursorResponseWarn(
       preview.reason,
-      `Allowed with warning. ${maxWarnings - warningCount} warnings remaining before block.`,
+      warnMessage,
       {
         warningCount,
+        maxWarnings,
+        suggestedAction,
+        goalContext
+      }
+    );
+  }
+  if (preview.severity === "PERMIT_REQUIRED" && !preview.wouldSucceed) {
+    const agentMsg = suggested ? buildRecoveryMessage(actionType, actionValue, contract, `${suggested.allow_field}: ["${suggested.allow_pattern}"]`) : `Permit recommended for ${actionType}: ${actionValue}`;
+    return cursorResponseWarn(
+      preview.reason,
+      agentMsg,
+      {
+        warningCount: 0,
         maxWarnings,
         suggestedAction,
         goalContext

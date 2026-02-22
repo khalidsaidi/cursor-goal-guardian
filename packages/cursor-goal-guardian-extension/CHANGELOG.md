@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.5
+- Stop wiring Cursor hooks/MCP from the extension; extension is now state-driven anti-drift only.
+- On activation/install, remove legacy Goal Guardian hook entries from `.cursor/hooks.json` and legacy `goal-guardian` from `.cursor/mcp.json` (with backups).
+- Remove permit-oriented commands/UI actions from the extension surface.
+
+## 0.3.4
+- Fix MCP-preview hook path so permit-required and warning-limit cases stay warning-first instead of hard blocking.
+- Relax default workspace policy: `requirePermitForShell` and `requirePermitForMcp` now default to `false`.
+
 ## 0.3.3
 - Make Redux-based positioning explicit in the overview.
 

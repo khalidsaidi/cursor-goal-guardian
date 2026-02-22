@@ -1,0 +1,246 @@
+{
+  "task_set_id": "react-live-user-like-20",
+  "description": "Twenty first-time-user style React prompts for blinded A/B comparison.",
+  "tasks": [
+    {
+      "task_id": "T01",
+      "title": "Personal Kanban board",
+      "user_prompt": "Build me a tiny personal kanban board in React with three columns (Todo, Doing, Done) and cards I can move between columns.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add cards to Todo with validation for empty input." },
+        { "id": "SC2", "text": "User can move cards between columns with clear controls." },
+        { "id": "SC3", "text": "Board state persists across page reload using localStorage." },
+        { "id": "SC4", "text": "Shows per-column card counts and total cards." },
+        { "id": "SC5", "text": "Keyboard navigation and button labels are accessible." }
+      ]
+    },
+    {
+      "task_id": "T02",
+      "title": "Expense tracker",
+      "user_prompt": "Create a simple expense tracker with category, amount, and date. I want to see totals and recent entries.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can create and delete expense entries with field validation." },
+        { "id": "SC2", "text": "Displays total spend and category totals." },
+        { "id": "SC3", "text": "Entries can be sorted by date and amount." },
+        { "id": "SC4", "text": "Data persists across reloads." },
+        { "id": "SC5", "text": "Form errors and empty states are clearly shown." }
+      ]
+    },
+    {
+      "task_id": "T03",
+      "title": "Recipe finder",
+      "user_prompt": "Make a recipe finder where I can search by name, mark favorites, and quickly see prep time.",
+      "success_criteria": [
+        { "id": "SC1", "text": "Search filters recipes by name in real time." },
+        { "id": "SC2", "text": "User can toggle favorites per recipe." },
+        { "id": "SC3", "text": "Favorites are persisted to localStorage." },
+        { "id": "SC4", "text": "Recipe cards show prep time and difficulty." },
+        { "id": "SC5", "text": "Has a visible no-results state for search misses." }
+      ]
+    },
+    {
+      "task_id": "T04",
+      "title": "Habit streak dashboard",
+      "user_prompt": "Build a habit streak dashboard where I can add habits and mark them done each day.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/remove habits with name validation." },
+        { "id": "SC2", "text": "User can mark habit completion for today." },
+        { "id": "SC3", "text": "Current streak and longest streak are computed." },
+        { "id": "SC4", "text": "Habit data is persisted across reloads." },
+        { "id": "SC5", "text": "Dashboard includes completion summary widgets." }
+      ]
+    },
+    {
+      "task_id": "T05",
+      "title": "Contact manager",
+      "user_prompt": "Create a contact manager with add/edit/delete, search, and favorite contacts.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/edit/delete contacts with required field validation." },
+        { "id": "SC2", "text": "Search filters contacts by name or email." },
+        { "id": "SC3", "text": "User can mark contacts as favorites and filter favorites." },
+        { "id": "SC4", "text": "Contact list persists across reloads." },
+        { "id": "SC5", "text": "Empty-state guidance is shown when no contacts exist." }
+      ]
+    },
+    {
+      "task_id": "T06",
+      "title": "Book reading queue",
+      "user_prompt": "Build a reading queue app where I can add books and track statuses: To Read, Reading, Completed.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/delete books with basic validation." },
+        { "id": "SC2", "text": "Book status can be changed between queue stages." },
+        { "id": "SC3", "text": "Status summary counts are visible." },
+        { "id": "SC4", "text": "Queue persists across reloads." },
+        { "id": "SC5", "text": "Books can be filtered by status." }
+      ]
+    },
+    {
+      "task_id": "T07",
+      "title": "Workout planner",
+      "user_prompt": "Make a workout planner with workout name, duration, and day-of-week, plus a weekly summary.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add and remove workouts with validation." },
+        { "id": "SC2", "text": "Workouts can be filtered by day-of-week." },
+        { "id": "SC3", "text": "Weekly total duration is computed and displayed." },
+        { "id": "SC4", "text": "Data persists across reloads." },
+        { "id": "SC5", "text": "UI has clear feedback when plan is empty." }
+      ]
+    },
+    {
+      "task_id": "T08",
+      "title": "Travel packing checklist",
+      "user_prompt": "Build a packing checklist app where I can add items, check packed status, and filter packed vs unpacked.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/delete checklist items with validation." },
+        { "id": "SC2", "text": "User can toggle packed status per item." },
+        { "id": "SC3", "text": "User can filter packed and unpacked items." },
+        { "id": "SC4", "text": "Progress summary shows packed/total counts." },
+        { "id": "SC5", "text": "List state persists across reloads." }
+      ]
+    },
+    {
+      "task_id": "T09",
+      "title": "Study session tracker",
+      "user_prompt": "Create a study session tracker with subject, minutes, and date, then show stats for the week.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can log and delete study sessions." },
+        { "id": "SC2", "text": "Weekly total minutes and sessions are displayed." },
+        { "id": "SC3", "text": "User can filter sessions by subject." },
+        { "id": "SC4", "text": "Sessions persist across reloads." },
+        { "id": "SC5", "text": "Form input validation and errors are shown." }
+      ]
+    },
+    {
+      "task_id": "T10",
+      "title": "Movie watchlist",
+      "user_prompt": "Build a movie watchlist where I can add movies, rate watched ones, and filter by watched status.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/delete movies with title validation." },
+        { "id": "SC2", "text": "User can mark watched and provide a rating." },
+        { "id": "SC3", "text": "Filter supports all/watched/unwatched." },
+        { "id": "SC4", "text": "Average rating of watched movies is displayed." },
+        { "id": "SC5", "text": "Watchlist persists across reloads." }
+      ]
+    },
+    {
+      "task_id": "T11",
+      "title": "Meal planner",
+      "user_prompt": "Make a weekly meal planner with day, meal type, and dish name. I also want quick counts per day.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add and remove meal entries with validation." },
+        { "id": "SC2", "text": "Entries can be filtered by day and meal type." },
+        { "id": "SC3", "text": "Daily meal counts are displayed." },
+        { "id": "SC4", "text": "Plan persists across reloads." },
+        { "id": "SC5", "text": "Empty-state guidance appears when no meals are planned." }
+      ]
+    },
+    {
+      "task_id": "T12",
+      "title": "Job application tracker",
+      "user_prompt": "Create a job application tracker with company, role, status, and follow-up date.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/edit/delete applications." },
+        { "id": "SC2", "text": "Applications can be filtered by status." },
+        { "id": "SC3", "text": "Overdue follow-up items are highlighted." },
+        { "id": "SC4", "text": "Data persists across reloads." },
+        { "id": "SC5", "text": "Status summary counts are visible." }
+      ]
+    },
+    {
+      "task_id": "T13",
+      "title": "Subscription tracker",
+      "user_prompt": "Build a subscription tracker with service name, cost, billing cycle, and next billing date.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add and delete subscriptions." },
+        { "id": "SC2", "text": "Monthly equivalent total cost is shown." },
+        { "id": "SC3", "text": "User can sort by cost and next billing date." },
+        { "id": "SC4", "text": "Data persists across reloads." },
+        { "id": "SC5", "text": "Past-due billing dates are visually flagged." }
+      ]
+    },
+    {
+      "task_id": "T14",
+      "title": "Pet care scheduler",
+      "user_prompt": "Make a pet care scheduler where I track tasks like feeding, walking, and meds with due times.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/delete pet care tasks with validation." },
+        { "id": "SC2", "text": "Tasks can be marked done and filtered by done status." },
+        { "id": "SC3", "text": "Upcoming vs overdue tasks are distinguished." },
+        { "id": "SC4", "text": "Schedule persists across reloads." },
+        { "id": "SC5", "text": "Summary counts for done/pending are displayed." }
+      ]
+    },
+    {
+      "task_id": "T15",
+      "title": "Event RSVP planner",
+      "user_prompt": "Create an RSVP planner where I can add guests, track RSVP status, and meal preferences.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/edit/delete guest entries." },
+        { "id": "SC2", "text": "Guest list can be filtered by RSVP status." },
+        { "id": "SC3", "text": "Meal preference counts are summarized." },
+        { "id": "SC4", "text": "Data persists across reloads." },
+        { "id": "SC5", "text": "Validation is enforced for required guest fields." }
+      ]
+    },
+    {
+      "task_id": "T16",
+      "title": "Bug triage board",
+      "user_prompt": "Build a bug triage board with severity, status, and assignee, plus quick metrics.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/edit/delete bug entries." },
+        { "id": "SC2", "text": "Entries can be filtered by severity and status." },
+        { "id": "SC3", "text": "Counts by severity and status are displayed." },
+        { "id": "SC4", "text": "Data persists across reloads." },
+        { "id": "SC5", "text": "Sorting by priority or creation order is available." }
+      ]
+    },
+    {
+      "task_id": "T17",
+      "title": "Home inventory list",
+      "user_prompt": "Make a home inventory app to track item name, room, quantity, and replacement priority.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/edit/delete inventory items." },
+        { "id": "SC2", "text": "Inventory can be filtered by room." },
+        { "id": "SC3", "text": "Low-quantity items are highlighted." },
+        { "id": "SC4", "text": "Data persists across reloads." },
+        { "id": "SC5", "text": "Priority sorting is supported." }
+      ]
+    },
+    {
+      "task_id": "T18",
+      "title": "Volunteer shift board",
+      "user_prompt": "Create a volunteer shift board with volunteer names, shift times, and attendance check.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/delete shift assignments." },
+        { "id": "SC2", "text": "Attendance can be toggled per assignment." },
+        { "id": "SC3", "text": "Shifts can be filtered by day/time block." },
+        { "id": "SC4", "text": "Data persists across reloads." },
+        { "id": "SC5", "text": "Attendance summary is visible." }
+      ]
+    },
+    {
+      "task_id": "T19",
+      "title": "Invoice draft manager",
+      "user_prompt": "Build a draft invoice manager with client, amount, due date, and paid status.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/edit/delete invoices." },
+        { "id": "SC2", "text": "Invoices can be filtered by paid/unpaid." },
+        { "id": "SC3", "text": "Overdue unpaid invoices are highlighted." },
+        { "id": "SC4", "text": "Totals for paid and unpaid amounts are shown." },
+        { "id": "SC5", "text": "Data persists across reloads." }
+      ]
+    },
+    {
+      "task_id": "T20",
+      "title": "Simple CRM follow-up list",
+      "user_prompt": "Create a lightweight CRM follow-up list with lead name, stage, owner, and next action date.",
+      "success_criteria": [
+        { "id": "SC1", "text": "User can add/edit/delete leads." },
+        { "id": "SC2", "text": "Leads can be filtered by stage and owner." },
+        { "id": "SC3", "text": "Upcoming and overdue follow-ups are visible." },
+        { "id": "SC4", "text": "Data persists across reloads." },
+        { "id": "SC5", "text": "Stage distribution summary is displayed." }
+      ]
+    }
+  ]
+}

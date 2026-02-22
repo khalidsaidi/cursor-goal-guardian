@@ -8,12 +8,18 @@
     "test": "pnpm -r test",
     "dev:mcp": "pnpm --filter cursor-goal-guardian-mcp dev",
     "dev:hook": "pnpm --filter cursor-goal-guardian-hook dev",
+    "eval:ab": "node scripts/evaluate-ab.js --study examples/ab-study/sample",
+    "eval:ab:live:init:help": "node scripts/init-live-ab.js --help",
+    "eval:ab:live:scaffold:help": "node scripts/scaffold-live-react-env.js --help",
+    "eval:ab:live:unblind:help": "node scripts/unblind-live-ab.js --help",
+    "panel:demo:20tasks": "node scripts/record-panel-demo-20tasks.mjs",
     "package:vsix": "node scripts/package-extension.js",
     "publish:ovsx": "node scripts/publish-extension.js"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "esbuild": "^0.25.9",
+    "playwright": "1.58.2",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
     "vitest": "^2.0.0"

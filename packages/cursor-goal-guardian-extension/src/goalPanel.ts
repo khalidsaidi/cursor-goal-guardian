@@ -17,32 +17,6 @@ type GoalContract = {
   constraints: string[];
 };
 
-type Permit = {
-  token: string;
-  step_id: string;
-  issued_at: string;
-  expires_at: string;
-  allow: {
-    shell: string[];
-    mcp: string[];
-    read: string[];
-    write: string[];
-  };
-};
-
-type ViolationTracker = {
-  warningCounts: Record<string, number>;
-  lastReset: string;
-};
-
-type AuditEntry = {
-  ts?: string;
-  event?: string;
-  actionType?: "shell" | "mcp" | "read" | "write";
-  actionValue?: string;
-  suggestedAllow?: string;
-};
-
 type SnapshotDoc = {
   lastActionIndex: number;
   state: AgentState;
@@ -58,6 +32,31 @@ type DiffRow = {
   label: string;
   before: string;
   after: string;
+};
+
+type AuditRecord = {
+  ts?: string;
+  event?: string;
+  actionType?: string;
+  actionValue?: string;
+  activeTaskId?: string;
+  activeTaskTitle?: string;
+};
+
+type DriftFeedItem = {
+  kind: "drift" | "realign";
+  ts: string;
+  label: string;
+  detail: string;
+  tone: "warning" | "recovered" | "neutral";
+};
+
+type DriftTelemetry = {
+  drift24h: number;
+  realign24h: number;
+  unresolved: number;
+  health: "stable" | "recovering" | "drifting";
+  feed: DriftFeedItem[];
 };
 
 export class GoalPanelProvider implements vscode.WebviewViewProvider {
@@ -101,12 +100,6 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
         case "refresh":
           this._updateContent();
           break;
-        case "requestPermit":
-          vscode.commands.executeCommand("goalGuardian.requestPermit");
-          break;
-        case "autoPermit":
-          vscode.commands.executeCommand("goalGuardian.autoPermitLastAction");
-          break;
         case "dispatchAction":
           vscode.commands.executeCommand("goalGuardian.dispatchAction");
           break;
@@ -140,28 +133,22 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
     }
 
     const contract = await this._loadContract(workspaceRoot);
-    const permits = await this._loadPermits(workspaceRoot);
-    const violations = await this._loadViolations(workspaceRoot);
-    const lastAction = await this._loadLastAction(workspaceRoot);
     const state = await this._loadState(workspaceRoot);
     const lastReduxAction = await this._loadLastReduxAction(workspaceRoot);
     const recentReduxActions = await this._loadRecentReduxActions(workspaceRoot, 12);
     const timelineActions = await this._loadRecentReduxActions(workspaceRoot, 30);
     const stateDiff = await this._loadStateDiff(workspaceRoot);
-    const mcpStatus = await this._loadMcpStatus(workspaceRoot);
+    const driftTelemetry = await this._loadDriftTelemetry(workspaceRoot);
 
     this._view.webview.html = this._getHtml(
       this._view.webview,
       contract,
-      permits,
-      violations,
-      lastAction,
       state,
       lastReduxAction,
       recentReduxActions,
       timelineActions,
       stateDiff,
-      mcpStatus
+      driftTelemetry
     );
   }
 
@@ -181,28 +168,6 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async _loadPermits(workspaceRoot: string): Promise<Permit[]> {
-    const permitsPath = path.join(workspaceRoot, ".ai", "goal-guardian", "permits.json");
-    try {
-      const raw = await fs.readFile(permitsPath, "utf8");
-      const doc = JSON.parse(raw) as { permits: Permit[] };
-      const now = Date.now();
-      return (doc.permits ?? []).filter((p) => Date.parse(p.expires_at) > now);
-    } catch {
-      return [];
-    }
-  }
-
-  private async _loadViolations(workspaceRoot: string): Promise<ViolationTracker | null> {
-    const violationsPath = path.join(workspaceRoot, ".ai", "goal-guardian", "violations.json");
-    try {
-      const raw = await fs.readFile(violationsPath, "utf8");
-      return JSON.parse(raw) as ViolationTracker;
-    } catch {
-      return null;
-    }
-  }
-
   private async _loadState(workspaceRoot: string): Promise<AgentState | null> {
     try {
       const state = await loadState(workspaceRoot);
@@ -210,35 +175,6 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
     } catch {
       return null;
     }
-  }
-
-  private async _loadMcpStatus(workspaceRoot: string): Promise<{ mcpConfigured: boolean; hooksUseMcp: boolean }> {
-    const hooksPath = path.join(workspaceRoot, ".cursor", "hooks.json");
-    const mcpPath = path.join(workspaceRoot, ".cursor", "mcp.json");
-    let mcpConfigured = false;
-    let hooksUseMcp = false;
-
-    try {
-      const raw = await fs.readFile(mcpPath, "utf8");
-      const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
-      mcpConfigured = Boolean(parsed?.mcpServers && (parsed.mcpServers as any)["goal-guardian"]);
-    } catch {
-      mcpConfigured = false;
-    }
-
-    try {
-      const raw = await fs.readFile(hooksPath, "utf8");
-      const parsed = JSON.parse(raw) as { hooks?: Record<string, Array<{ command?: string }>> };
-      const hooks = parsed.hooks ?? {};
-      const commands = Object.values(hooks)
-        .flat()
-        .map((h) => h?.command ?? "");
-      hooksUseMcp = commands.some((cmd) => cmd.includes("goal-guardian-hook") && cmd.includes("--mcp"));
-    } catch {
-      hooksUseMcp = false;
-    }
-
-    return { mcpConfigured, hooksUseMcp };
   }
 
   private async _loadLastReduxAction(workspaceRoot: string): Promise<AgentAction | null> {
@@ -322,23 +258,6 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async _loadLastAction(workspaceRoot: string): Promise<AuditEntry | null> {
-    const auditPath = path.join(workspaceRoot, ".ai", "goal-guardian", "audit.log");
-    try {
-      const raw = await fs.readFile(auditPath, "utf8");
-      const lines = raw.trim().split("\n").reverse();
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const entry = JSON.parse(line) as AuditEntry;
-        if (entry.actionType && entry.actionValue) {
-          return entry;
-        }
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
 
   private _getNoWorkspaceHtml(): string {
     return `
@@ -360,28 +279,13 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
   private _getHtml(
     webview: vscode.Webview,
     contract: GoalContract | null,
-    permits: Permit[],
-    violations: ViolationTracker | null,
-    lastAction: AuditEntry | null,
     state: AgentState | null,
     lastReduxAction: AgentAction | null,
     recentReduxActions: AgentAction[],
     timelineActions: AgentAction[],
     stateDiff: StateDiff | null,
-    mcpStatus: { mcpConfigured: boolean; hooksUseMcp: boolean }
+    driftTelemetry: DriftTelemetry
   ): string {
-    const hasGoal = contract?.goal && contract.goal.trim().length > 0;
-    const totalWarnings = violations
-      ? Object.values(violations.warningCounts).reduce((sum, c) => sum + c, 0)
-      : 0;
-
-    const warningEntries = violations
-      ? Object.entries(violations.warningCounts)
-          .filter(([_, count]) => count > 0)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, 5)
-      : [];
-
     const effectiveGoal = contract?.goal?.trim().length ? contract.goal : state?.goal ?? "";
     const hasEffectiveGoal = effectiveGoal.trim().length > 0;
     const constraints = state?.constraints?.length ? state.constraints : contract?.constraints ?? [];
@@ -394,6 +298,11 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
     const doingTasks = tasks.filter((t) => t.status === "doing");
     const doneTasks = tasks.filter((t) => t.status === "done");
     const activeTask = state?.active_task ? tasks.find((t) => t.id === state.active_task) : null;
+    const totalTasks = tasks.length;
+    const completedTasks = doneTasks.length;
+    const completionRatio = totalTasks > 0 ? completedTasks / totalTasks : 0;
+    const completionPercent = Math.round(completionRatio * 100);
+    const openQuestionCount = state?.open_questions.filter((q) => q.status === "open").length ?? 0;
 
     const stateLastUpdated = state?._meta?.lastUpdated ?? "";
     const stateAge = this._formatAgo(stateLastUpdated);
@@ -429,6 +338,15 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
         .map((item) => `<span class="chip">${this._escapeHtml(item)}</span>`)
         .join("");
     };
+
+    const renderTimelineLegend = () => `
+      <div class="timeline-legend">
+        <span class="legend-item"><span class="legend-dot goal"></span>Goal / Scope</span>
+        <span class="legend-item"><span class="legend-dot task"></span>Task Progress</span>
+        <span class="legend-item"><span class="legend-dot question"></span>Questions</span>
+        <span class="legend-item"><span class="legend-dot decision"></span>Realignment</span>
+      </div>
+    `;
 
     const renderTimelineList = (items: AgentAction[]) => {
       if (!items.length) return `<div class="empty">No actions yet</div>`;
@@ -529,42 +447,6 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
         .join("");
     };
 
-    const renderPermits = () => {
-      if (permits.length === 0) return `<div class="empty">No active permits</div>`;
-      return permits
-        .map(
-          (p) => `
-            <div class="permit-card">
-              <div class="permit-header">
-                <span class="permit-token">${p.token.substring(0, 16)}...</span>
-                <span class="permit-expires">${this._formatTime(p.expires_at)}</span>
-              </div>
-              <div class="permit-patterns">
-                ${p.allow.shell.length > 0 ? `Shell: ${p.allow.shell.length}` : ""}
-                ${p.allow.mcp.length > 0 ? ` | MCP: ${p.allow.mcp.length}` : ""}
-                ${p.allow.read.length > 0 ? ` | Read: ${p.allow.read.length}` : ""}
-                ${p.allow.write.length > 0 ? ` | Write: ${p.allow.write.length}` : ""}
-              </div>
-            </div>
-          `
-        )
-        .join("");
-    };
-
-    const renderWarnings = () => {
-      if (warningEntries.length === 0) return `<div class="empty">No warnings</div>`;
-      return warningEntries
-        .map(
-          ([pattern, count]) => `
-            <div class="warning-row">
-              <div class="warning-pattern" title="${this._escapeHtml(pattern)}">${this._escapeHtml(pattern)}</div>
-              <vscode-badge>${count}/3</vscode-badge>
-            </div>
-          `
-        )
-        .join("");
-    };
-
     const renderCriteria = () => {
       if (!contract?.success_criteria?.length) return `<div class="empty">No success criteria yet</div>`;
       return contract.success_criteria
@@ -579,8 +461,53 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
         .join("");
     };
 
+    const renderDriftFeed = (telemetry: DriftTelemetry) => {
+      if (!telemetry.feed.length) return `<div class="empty">No drift telemetry yet</div>`;
+      return telemetry.feed
+        .map((item) => `
+          <div class="drift-item ${item.tone}">
+            <div class="drift-topline">
+              <span class="drift-label">${this._escapeHtml(item.label)}</span>
+              <span class="drift-time">${this._escapeHtml(this._formatAgo(item.ts))}</span>
+            </div>
+            <div class="drift-detail">${this._escapeHtml(item.detail)}</div>
+          </div>
+        `)
+        .join("");
+    };
+
+    const healthLabel =
+      driftTelemetry.health === "stable"
+        ? "Stable"
+        : driftTelemetry.health === "recovering"
+          ? "Recovering"
+          : "Drifting";
+    const healthClass =
+      driftTelemetry.health === "drifting"
+        ? "warning"
+        : driftTelemetry.health === "recovering"
+          ? "recovered"
+          : "state";
+    const nextAction =
+      !hasEffectiveGoal
+        ? "Open Contract and define one clear goal."
+        : definitionOfDone.length === 0
+          ? "Add concrete Definition of Done criteria before coding."
+          : totalTasks === 0
+            ? "Create tasks mapped to each success criterion."
+            : !activeTask && todoTasks.length > 0
+              ? `Start next task: ${todoTasks[0]!.id} (${todoTasks[0]!.title}).`
+              : driftTelemetry.unresolved > 0
+                ? "Realign now: add a decision and switch back to the intended active task."
+                : openQuestionCount > 0
+                  ? "Close remaining open questions that block completion."
+                  : totalTasks > 0 && completedTasks === totalTasks
+                    ? "Validate all success criteria, then finalize this run."
+                    : activeTask
+                      ? `Continue active task ${activeTask.id} and complete it when the criterion is met.`
+                      : "Dispatch the next state action.";
+
     const bannerSubtitle = hasEffectiveGoal ? "Anti‑drift state engine" : "Define a goal to begin";
-    const mcpLabel = mcpStatus.mcpConfigured && mcpStatus.hooksUseMcp ? "MCP‑controlled" : "MCP not wired";
 
     return `
       <!DOCTYPE html>
@@ -655,6 +582,12 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
             gap: 14px;
           }
 
+          .top-grid {
+            display: grid;
+            gap: 14px;
+            grid-template-columns: minmax(0, 1fr);
+          }
+
           .card {
             background: var(--gg-card);
             border-radius: 16px;
@@ -680,6 +613,112 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
           .pill {
             font-size: 11px;
             color: var(--gg-muted);
+          }
+
+          .guide-list {
+            display: grid;
+            gap: 8px;
+          }
+
+          .guide-item {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 8px;
+            font-size: 12px;
+            line-height: 1.4;
+            color: var(--vscode-foreground);
+            padding: 8px 10px;
+            border-radius: 10px;
+            background: rgba(15, 23, 42, 0.08);
+            border: 1px solid rgba(148, 163, 184, 0.14);
+          }
+
+          .guide-item strong {
+            color: var(--gg-accent-strong);
+            font-size: 11px;
+            letter-spacing: 0.03em;
+          }
+
+          .pulse-grid {
+            display: grid;
+            gap: 8px;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            margin-bottom: 10px;
+          }
+
+          .pulse-item {
+            border-radius: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            background: rgba(15, 23, 42, 0.1);
+            padding: 8px 10px;
+          }
+
+          .pulse-item .k {
+            display: block;
+            color: var(--gg-muted);
+            font-size: 10px;
+            margin-bottom: 2px;
+          }
+
+          .pulse-item .v {
+            font-size: 14px;
+            font-weight: 700;
+          }
+
+          .pulse-item.warning .v {
+            color: #fbbf24;
+          }
+
+          .pulse-item.recovered .v {
+            color: #34d399;
+          }
+
+          .pulse-item.state .v {
+            color: var(--gg-accent-strong);
+          }
+
+          .progress-wrap {
+            margin: 10px 0 12px;
+          }
+
+          .progress-label {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 11px;
+            color: var(--gg-muted);
+            margin-bottom: 6px;
+          }
+
+          .progress-track {
+            height: 8px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: rgba(148, 163, 184, 0.2);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+          }
+
+          .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #22d3ee, #34d399);
+            transition: width 0.2s ease;
+          }
+
+          .next-action {
+            border-radius: 12px;
+            border: 1px solid rgba(34, 211, 238, 0.28);
+            background: rgba(34, 211, 238, 0.08);
+            padding: 10px 12px;
+            font-size: 12px;
+            line-height: 1.4;
+          }
+
+          .next-action .label {
+            color: var(--gg-muted);
+            font-size: 10px;
+            margin-bottom: 2px;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
           }
 
           .goal-text {
@@ -833,14 +872,57 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
             border: 1px solid rgba(148, 163, 184, 0.14);
           }
 
+          .timeline-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 4px;
+          }
+
+          .legend-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10px;
+            color: var(--gg-muted);
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            background: rgba(15, 23, 42, 0.08);
+            border-radius: 999px;
+            padding: 3px 8px;
+          }
+
+          .legend-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+          }
+
+          .legend-dot.goal {
+            background: #38bdf8;
+          }
+
+          .legend-dot.task {
+            background: #34d399;
+          }
+
+          .legend-dot.question {
+            background: #fbbf24;
+          }
+
+          .legend-dot.decision {
+            background: #f472b6;
+          }
+
           @media (min-width: 980px) {
+            .top-grid {
+              grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+            }
             .timeline-grid {
               grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.9fr);
             }
           }
 
-          .criteria-row,
-          .warning-row {
+          .criteria-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -853,14 +935,6 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
             font-weight: 700;
             color: var(--gg-accent);
             margin-right: 8px;
-          }
-
-          .warning-pattern {
-            font-family: monospace;
-            max-width: 220px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
           }
 
           .diff-row {
@@ -899,35 +973,6 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
             color: var(--gg-accent);
           }
 
-          .permit-card {
-            background: rgba(15, 23, 42, 0.12);
-            border-radius: 14px;
-            padding: 10px;
-            border: 1px solid rgba(148, 163, 184, 0.16);
-            margin-bottom: 10px;
-          }
-
-          .permit-header {
-            display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: var(--gg-muted);
-          }
-
-          .permit-token {
-            font-family: monospace;
-            color: var(--gg-accent);
-          }
-
-          .permit-expires {
-            color: var(--vscode-charts-yellow);
-          }
-
-          .permit-patterns {
-            margin-top: 4px;
-            font-size: 11px;
-          }
-
           .action-bar {
             display: flex;
             flex-wrap: wrap;
@@ -939,11 +984,99 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
             flex: 1 1 auto;
           }
 
+          .drift-summary {
+            display: grid;
+            gap: 8px;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            margin-bottom: 10px;
+          }
+
+          .drift-pill {
+            border-radius: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            background: rgba(15, 23, 42, 0.1);
+            padding: 8px 10px;
+          }
+
+          .drift-pill .k {
+            display: block;
+            color: var(--gg-muted);
+            font-size: 10px;
+            margin-bottom: 2px;
+          }
+
+          .drift-pill .v {
+            font-size: 15px;
+            font-weight: 700;
+          }
+
+          .drift-pill.warning .v {
+            color: #fbbf24;
+          }
+
+          .drift-pill.recovered .v {
+            color: #34d399;
+          }
+
+          .drift-pill.state .v {
+            color: var(--gg-accent-strong);
+          }
+
+          .drift-feed {
+            display: grid;
+            gap: 8px;
+          }
+
+          .drift-item {
+            border-radius: 10px;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            background: rgba(15, 23, 42, 0.08);
+            padding: 10px;
+          }
+
+          .drift-item.warning {
+            border-color: rgba(251, 191, 36, 0.35);
+          }
+
+          .drift-item.recovered {
+            border-color: rgba(52, 211, 153, 0.35);
+          }
+
+          .drift-topline {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 4px;
+            font-size: 12px;
+          }
+
+          .drift-label {
+            font-weight: 600;
+          }
+
+          .drift-time {
+            color: var(--gg-muted);
+            font-size: 11px;
+            white-space: nowrap;
+          }
+
+          .drift-detail {
+            color: var(--gg-muted);
+            font-size: 11px;
+            line-height: 1.35;
+          }
+
           .nav-row {
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
             margin-top: 8px;
+          }
+
+          @media (max-width: 680px) {
+            .pulse-grid {
+              grid-template-columns: 1fr;
+            }
           }
 
           @media (max-width: 520px) {
@@ -982,17 +1115,98 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
           </div>
           <div class="status-badges">
             <vscode-badge>${hasEffectiveGoal ? "Goal Set" : "No Goal"}</vscode-badge>
-            <vscode-badge>${mcpLabel}</vscode-badge>
-            ${permits.length > 0 ? `<vscode-badge>${permits.length} Permit(s)</vscode-badge>` : ""}
-            ${totalWarnings > 0 ? `<vscode-badge>${totalWarnings} Warning(s)</vscode-badge>` : ""}
+            <vscode-badge>State‑driven</vscode-badge>
           </div>
         </section>
 
         <div class="grid">
+          <div class="top-grid">
+            <section class="card">
+              <div class="card-header">
+                <div class="card-title">🗺️ How To Read This Panel</div>
+                <span class="pill">Quick onboarding</span>
+              </div>
+              <div class="guide-list">
+                <div class="guide-item">
+                  <strong>1.</strong>
+                  <span>Start with <b>Goal & Constraints</b> to confirm what must be done and what must not change.</span>
+                </div>
+                <div class="guide-item">
+                  <strong>2.</strong>
+                  <span>Use <b>Action Timeline</b> to see exactly what the agent did and what changed in state.</span>
+                </div>
+                <div class="guide-item">
+                  <strong>3.</strong>
+                  <span>Check <b>Drift & Realignment</b>: warning means scope drift, recovered means agent came back.</span>
+                </div>
+                <div class="guide-item">
+                  <strong>4.</strong>
+                  <span>Follow <b>Next Best Action</b> and keep each action mapped to success criteria.</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-header">
+                <div class="card-title">📊 Session Pulse</div>
+                <span class="pill">State updated ${stateAge}</span>
+              </div>
+              <div class="pulse-grid">
+                <div class="pulse-item">
+                  <span class="k">Tasks Completed</span>
+                  <span class="v">${completedTasks}/${totalTasks || 0}</span>
+                </div>
+                <div class="pulse-item ${healthClass}">
+                  <span class="k">Drift Health</span>
+                  <span class="v">${healthLabel}</span>
+                </div>
+                <div class="pulse-item">
+                  <span class="k">Active Task</span>
+                  <span class="v">${activeTask ? this._escapeHtml(activeTask.id) : "None"}</span>
+                </div>
+                <div class="pulse-item">
+                  <span class="k">Open Questions</span>
+                  <span class="v">${openQuestionCount}</span>
+                </div>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-label">
+                  <span>Definition of Done Progress</span>
+                  <span>${completionPercent}%</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" style="width: ${completionPercent}%"></div>
+                </div>
+              </div>
+              <div class="next-action">
+                <div class="label">Next Best Action</div>
+                <div>${this._escapeHtml(nextAction)}</div>
+              </div>
+            </section>
+          </div>
+
+          <section class="card">
+            <div class="card-header">
+              <div class="card-title">🧭 Action Timeline</div>
+              <span class="pill">${recentReduxActions.length} recent</span>
+            </div>
+            <div class="timeline-card">
+              ${renderTimelineLegend()}
+              ${renderTimelineGraph(timelineActions)}
+              <div class="timeline-grid">
+                <div class="timeline">${renderTimelineList(recentReduxActions)}</div>
+                <div class="diff-section">
+                  <div class="card-title">Latest Diff</div>
+                  ${renderDiffRows(stateDiff)}
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section class="card">
             <div class="card-header">
               <div class="card-title">🎯 Goal & Constraints</div>
-              <span class="pill">State updated ${stateAge}</span>
+              <span class="pill">${definitionOfDone.length} criteria</span>
             </div>
             ${
               hasEffectiveGoal
@@ -1022,7 +1236,7 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
               </div>
               <div class="state-item">
                 <div class="label">Open Questions</div>
-                <div class="value">${state?.open_questions.filter((q) => q.status === "open").length ?? 0}</div>
+                <div class="value">${openQuestionCount}</div>
               </div>
               <div class="state-item">
                 <div class="label">Decisions</div>
@@ -1051,18 +1265,25 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
 
           <section class="card">
             <div class="card-header">
-              <div class="card-title">🧭 Action Timeline</div>
-              <span class="pill">${recentReduxActions.length} recent</span>
+              <div class="card-title">🛟 Drift & Realignment</div>
+              <span class="pill">${healthLabel}</span>
             </div>
-            <div class="timeline-card">
-              ${renderTimelineGraph(timelineActions)}
-              <div class="timeline-grid">
-                <div class="timeline">${renderTimelineList(recentReduxActions)}</div>
-                <div class="diff-section">
-                  <div class="card-title">Latest Diff</div>
-                  ${renderDiffRows(stateDiff)}
-                </div>
+            <div class="drift-summary">
+              <div class="drift-pill warning">
+                <span class="k">Drift (24h)</span>
+                <span class="v">${driftTelemetry.drift24h}</span>
               </div>
+              <div class="drift-pill recovered">
+                <span class="k">Realigned (24h)</span>
+                <span class="v">${driftTelemetry.realign24h}</span>
+              </div>
+              <div class="drift-pill state">
+                <span class="k">Open Drift</span>
+                <span class="v">${driftTelemetry.unresolved}</span>
+              </div>
+            </div>
+            <div class="drift-feed">
+              ${renderDriftFeed(driftTelemetry)}
             </div>
           </section>
 
@@ -1074,34 +1295,17 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
             ${renderCriteria()}
           </section>
 
-          <section class="card">
-            <div class="card-header">
-              <div class="card-title">⚠️ Drift Warnings</div>
-              <span class="pill">${totalWarnings} active</span>
-            </div>
-            ${renderWarnings()}
-          </section>
-
-          <section class="card">
-            <div class="card-header">
-              <div class="card-title">🔒 Active Permits</div>
-              <span class="pill">${permits.length} active</span>
-            </div>
-            ${renderPermits()}
-          </section>
         </div>
 
         <div class="action-bar">
           <vscode-button appearance="primary" onclick="openContract()">Edit Contract</vscode-button>
           <vscode-button appearance="secondary" onclick="dispatchAction()">Dispatch Action</vscode-button>
-          ${lastAction ? `<vscode-button appearance="secondary" onclick="autoPermit()">Auto-Permit Last Action</vscode-button>` : ""}
           <vscode-button appearance="secondary" onclick="refresh()">Refresh</vscode-button>
         </div>
 
         <script nonce="${nonce}">
           const vscode = acquireVsCodeApi();
           function openContract() { vscode.postMessage({ command: 'openContract' }); }
-          function autoPermit() { vscode.postMessage({ command: 'autoPermit' }); }
           function dispatchAction() { vscode.postMessage({ command: 'dispatchAction' }); }
           function refresh() { vscode.postMessage({ command: 'refresh' }); }
           function openState() { vscode.postMessage({ command: 'openState' }); }
@@ -1132,15 +1336,174 @@ export class GoalPanelProvider implements vscode.WebviewViewProvider {
     return value;
   }
 
-  private _formatTime(isoString: string): string {
-    const date = new Date(isoString);
-    const now = new Date();
-    const diffMs = date.getTime() - now.getTime();
-    const diffMins = Math.round(diffMs / 60000);
+  private async _loadDriftTelemetry(workspaceRoot: string): Promise<DriftTelemetry> {
+    const empty: DriftTelemetry = {
+      drift24h: 0,
+      realign24h: 0,
+      unresolved: 0,
+      health: "stable",
+      feed: [],
+    };
 
-    if (diffMins < 0) return "Expired";
-    if (diffMins < 60) return `${diffMins}m`;
-    return `${Math.round(diffMins / 60)}h ${diffMins % 60}m`;
+    const records = await this._readAuditRecords(workspaceRoot);
+    if (!records.length) return empty;
+
+    const drifts = records
+      .map((record, index) => ({
+        id: index,
+        ts: String(record.ts ?? ""),
+        tsMs: this._parseTs(record.ts),
+        event: String(record.event ?? ""),
+        actionType: String(record.actionType ?? ""),
+        actionValue: String(record.actionValue ?? ""),
+        activeTaskId: String(record.activeTaskId ?? ""),
+        activeTaskTitle: String(record.activeTaskTitle ?? ""),
+      }))
+      .filter((row) => row.event === "scopeDriftWarning" && row.tsMs > 0)
+      .sort((a, b) => a.tsMs - b.tsMs);
+
+    if (!drifts.length) return empty;
+
+    const actions = await loadActions(workspaceRoot).catch(() => [] as AgentAction[]);
+    const realignActions = actions
+      .map((action) => ({
+        ts: String(action.ts ?? ""),
+        tsMs: this._parseTs(action.ts),
+        type: String(action.type ?? ""),
+        payload: action.payload ?? {},
+      }))
+      .filter((action) => action.tsMs > 0 && this._isRealignmentAction(action.type))
+      .sort((a, b) => a.tsMs - b.tsMs);
+
+    const now = Date.now();
+    const horizonMs = now - 24 * 60 * 60 * 1000;
+    const matchWindowMs = 15 * 60 * 1000;
+
+    const realignByDrift = new Map<number, { ts: string; tsMs: number; type: string; detail: string }>();
+    let realign24h = 0;
+    let unresolved = 0;
+
+    for (const drift of drifts) {
+      const match = realignActions.find((action) => action.tsMs >= drift.tsMs && action.tsMs <= drift.tsMs + matchWindowMs);
+      if (match) {
+        realignByDrift.set(drift.id, {
+          ts: match.ts,
+          tsMs: match.tsMs,
+          type: match.type,
+          detail: this._summarizeRealignAction(match.type, match.payload),
+        });
+        if (match.tsMs >= horizonMs) realign24h += 1;
+      } else if (drift.tsMs >= horizonMs) {
+        unresolved += 1;
+      }
+    }
+
+    const drift24h = drifts.filter((drift) => drift.tsMs >= horizonMs).length;
+    const health: DriftTelemetry["health"] =
+      drift24h === 0
+        ? "stable"
+        : unresolved === 0
+          ? "recovering"
+          : "drifting";
+
+    const feed: DriftFeedItem[] = [];
+    for (const drift of drifts.slice(-10).reverse()) {
+      const pair = realignByDrift.get(drift.id);
+      feed.push({
+        kind: "drift",
+        ts: drift.ts,
+        label: pair ? "Drift detected (realigned)" : "Drift detected",
+        detail: this._summarizeDriftAction(
+          drift.actionType,
+          drift.actionValue,
+          drift.activeTaskTitle,
+          drift.activeTaskId
+        ),
+        tone: pair ? "neutral" : "warning",
+      });
+      if (pair) {
+        feed.push({
+          kind: "realign",
+          ts: pair.ts,
+          label: `Realignment: ${pair.type}`,
+          detail: pair.detail,
+          tone: "recovered",
+        });
+      }
+    }
+    feed.sort((a, b) => this._parseTs(b.ts) - this._parseTs(a.ts));
+
+    return {
+      drift24h,
+      realign24h,
+      unresolved,
+      health,
+      feed: feed.slice(0, 12),
+    };
+  }
+
+  private async _readAuditRecords(workspaceRoot: string): Promise<AuditRecord[]> {
+    const auditPath = path.join(workspaceRoot, ".ai", "goal-guardian", "audit.log");
+    try {
+      const raw = await fs.readFile(auditPath, "utf8");
+      const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+      const out: AuditRecord[] = [];
+      for (const line of lines.slice(-500)) {
+        try {
+          const parsed = JSON.parse(line) as AuditRecord;
+          if (parsed && typeof parsed === "object") out.push(parsed);
+        } catch {
+          // skip malformed log lines
+        }
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  private _parseTs(value: unknown): number {
+    const text = String(value ?? "").trim();
+    if (!text) return 0;
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private _isRealignmentAction(type: string): boolean {
+    return type === "START_TASK" || type === "ADD_DECISION" || type === "PIN_CONTEXT";
+  }
+
+  private _summarizeDriftAction(
+    actionType: string,
+    actionValue: string,
+    activeTaskTitle: string,
+    activeTaskId: string
+  ): string {
+    const taskLabel = activeTaskTitle || activeTaskId || "unknown task";
+    const kind = actionType || "action";
+    const value = this._shorten(actionValue || "(missing action value)", 92);
+    return `${kind}: ${value} | task: ${taskLabel}`;
+  }
+
+  private _summarizeRealignAction(type: string, payload: Record<string, unknown>): string {
+    if (type === "START_TASK") {
+      const taskId = String(payload.taskId ?? "").trim();
+      return taskId ? `Switched active task to ${taskId}.` : "Switched active task.";
+    }
+    if (type === "ADD_DECISION") {
+      const decision = this._shorten(String(payload.text ?? "Decision logged"), 84);
+      return `Decision recorded: ${decision}`;
+    }
+    if (type === "PIN_CONTEXT") {
+      const filePath = String(payload.path ?? "").trim();
+      return filePath ? `Pinned context: ${filePath}` : "Pinned additional context.";
+    }
+    return "Realignment action recorded.";
+  }
+
+  private _shorten(value: string, max = 96): string {
+    if (value.length <= max) return value;
+    return `${value.slice(0, Math.max(0, max - 3))}...`;
   }
 
   private _formatAgo(isoString?: string | null): string {

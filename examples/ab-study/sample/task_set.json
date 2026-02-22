@@ -1,0 +1,33 @@
+{
+  "task_set_id": "cgg-value-sample-v1",
+  "tasks": [
+    {
+      "task_id": "T1",
+      "title": "Implement authenticated endpoint",
+      "success_criteria": [
+        { "id": "SC1", "text": "Endpoint validates auth token" },
+        { "id": "SC2", "text": "Tests cover happy and failure paths" },
+        { "id": "SC3", "text": "Error response contract is documented" }
+      ]
+    },
+    {
+      "task_id": "T2",
+      "title": "Fix flaky background job",
+      "success_criteria": [
+        { "id": "SC1", "text": "Root cause identified and fixed" },
+        { "id": "SC2", "text": "Regression test added" },
+        { "id": "SC3", "text": "Metrics dashboard confirms stability" }
+      ]
+    },
+    {
+      "task_id": "T3",
+      "title": "Refactor module for readability",
+      "success_criteria": [
+        { "id": "SC1", "text": "Behavior unchanged" },
+        { "id": "SC2", "text": "Code complexity reduced" },
+        { "id": "SC3", "text": "Refactor rationale captured" }
+      ]
+    }
+  ]
+}
+

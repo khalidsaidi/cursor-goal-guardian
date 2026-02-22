@@ -9,24 +9,6 @@ type GoalContract = {
   constraints: string[];
 };
 
-type Permit = {
-  token: string;
-  step_id: string;
-  issued_at: string;
-  expires_at: string;
-  allow: {
-    shell: string[];
-    mcp: string[];
-    read: string[];
-    write: string[];
-  };
-};
-
-type ViolationTracker = {
-  warningCounts: Record<string, number>;
-  lastReset: string;
-};
-
 export class StatusBarManager {
   private _statusBarItem: vscode.StatusBarItem;
   private _refreshInterval?: NodeJS.Timeout;
@@ -71,15 +53,9 @@ export class StatusBarManager {
     }
 
     const contract = await this._loadContract(workspaceRoot);
-    const permits = await this._loadPermits(workspaceRoot);
-    const violations = await this._loadViolations(workspaceRoot);
     const state = await loadState(workspaceRoot).catch(() => null);
 
     const hasGoal = contract?.goal && contract.goal.trim().length > 0;
-    const permitCount = permits.length;
-    const totalWarnings = violations
-      ? Object.values(violations.warningCounts).reduce((sum, c) => sum + c, 0)
-      : 0;
 
     // Build status bar text
     let text = "";
@@ -87,20 +63,10 @@ export class StatusBarManager {
 
     if (!hasGoal) {
       text = "$(shield) No Goal";
-      tooltip = "No goal set. Click to open Goal Guardian panel.";
+      tooltip = "No goal set. Click to open Goal Guardian panel in Explorer.";
     } else {
       text = "$(shield-check) Goal Active";
       tooltip = `Goal: ${contract!.goal}`;
-
-      if (permitCount > 0) {
-        text += ` $(key) ${permitCount}`;
-        tooltip += `\n${permitCount} active permit(s)`;
-      }
-
-      if (totalWarnings > 0) {
-        text += ` $(warning) ${totalWarnings}`;
-        tooltip += `\n${totalWarnings} warning(s)`;
-      }
     }
 
     if (state?.active_task) {
@@ -109,14 +75,9 @@ export class StatusBarManager {
     }
 
     this._statusBarItem.text = text;
-    this._statusBarItem.tooltip = tooltip;
+    this._statusBarItem.tooltip = `${tooltip}\nClick to open Goal Guardian panel (Explorer sidebar).`;
 
-    // Set background color based on warning state
-    if (totalWarnings >= 3) {
-      this._statusBarItem.backgroundColor = new vscode.ThemeColor(
-        "statusBarItem.warningBackground"
-      );
-    } else if (!hasGoal) {
+    if (!hasGoal) {
       this._statusBarItem.backgroundColor = new vscode.ThemeColor(
         "statusBarItem.errorBackground"
       );
@@ -141,25 +102,4 @@ export class StatusBarManager {
     }
   }
 
-  private async _loadPermits(workspaceRoot: string): Promise<Permit[]> {
-    const permitsPath = path.join(workspaceRoot, ".ai", "goal-guardian", "permits.json");
-    try {
-      const raw = await fs.readFile(permitsPath, "utf8");
-      const doc = JSON.parse(raw) as { permits: Permit[] };
-      const now = Date.now();
-      return (doc.permits ?? []).filter((p) => Date.parse(p.expires_at) > now);
-    } catch {
-      return [];
-    }
-  }
-
-  private async _loadViolations(workspaceRoot: string): Promise<ViolationTracker | null> {
-    const violationsPath = path.join(workspaceRoot, ".ai", "goal-guardian", "violations.json");
-    try {
-      const raw = await fs.readFile(violationsPath, "utf8");
-      return JSON.parse(raw) as ViolationTracker;
-    } catch {
-      return null;
-    }
-  }
 }
