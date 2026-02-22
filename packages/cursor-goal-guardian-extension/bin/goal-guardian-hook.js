@@ -16203,6 +16203,12 @@ function defaultWarningConfig() {
 }
 function defaultPolicy() {
   return {
+    // Strict by default: agent actions require an active Redux task.
+    enforceReduxControl: true,
+    // Default on: compare each action against active task scope keywords.
+    enforceTaskScope: true,
+    // Good default for everyday use.
+    taskScopeSensitivity: "balanced",
     // Soft anti-drift by default: guide with warnings, don't gate normal flow.
     // Teams that want strict permit gating can set these to true in policy.json.
     requirePermitForShell: false,
@@ -16234,7 +16240,7 @@ function defaultPolicy() {
     },
     alwaysDeny: {
       shell: [
-        // Add your own hard-deny patterns here (examples):
+        // Add your own high-risk patterns here (examples):
         "rm -rf /*",
         "rm -rf /",
         "*curl*|*sh*",
@@ -16252,9 +16258,10 @@ function defaultPolicy() {
       ]
     },
     warningConfig: defaultWarningConfig(),
-    // Severity-based rules for graduated response
+    // Severity-based rules for graduated response.
+    // HARD_BLOCK is treated as strongest warning class in advisory mode.
     shellRules: [
-      // HARD_BLOCK: Catastrophic commands - immediate block, no recovery
+      // HARD_BLOCK: Catastrophic commands - strongest warning class
       { pattern: "rm -rf /", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
       { pattern: "rm -rf /*", severity: "HARD_BLOCK", reason: "Catastrophic filesystem deletion" },
       { pattern: "*:(){ :|:& };:*", severity: "HARD_BLOCK", reason: "Fork bomb detected" },
@@ -16305,7 +16312,7 @@ function defaultPolicy() {
       { pattern: "goal-guardian/*", severity: "ALLOWED", reason: "Goal Guardian MCP tools" }
     ],
     readRules: [
-      // HARD_BLOCK: Sensitive files
+      // HARD_BLOCK: Sensitive files (strongest warning class)
       { pattern: "**/.env", severity: "HARD_BLOCK", reason: "Environment secrets" },
       { pattern: "**/.env.*", severity: "HARD_BLOCK", reason: "Environment secrets" },
       { pattern: "**/*.pem", severity: "HARD_BLOCK", reason: "Private key file" },
@@ -16454,11 +16461,6 @@ function cursorResponseAllow(agentMessage) {
   if (agentMessage) res.agentMessage = agentMessage;
   return res;
 }
-function cursorResponseDeny(userMessage, agentMessage) {
-  const res = { continue: false, permission: "deny", userMessage };
-  if (agentMessage) res.agentMessage = agentMessage;
-  return res;
-}
 function cursorResponseWarn(userMessage, agentMessage, context) {
   return {
     continue: true,
@@ -16484,6 +16486,337 @@ async function loadContract(workspaceRoot) {
   } catch {
     return null;
   }
+}
+async function loadReduxState(workspaceRoot) {
+  const statePath = import_node_path2.default.join(workspaceRoot, ".cursor", "goal-guardian", "state.json");
+  try {
+    const raw = await import_promises2.default.readFile(statePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function isBootstrapReadPath(rel) {
+  return rel.startsWith(".cursor/goal-guardian/") || rel === ".cursor/hooks.json" || rel === ".cursor/mcp.json";
+}
+function activeTaskStatus(state, activeTaskId) {
+  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+  const task = tasks.find((t) => String(t?.id ?? "") === activeTaskId);
+  if (!task) return null;
+  return typeof task.status === "string" ? task.status : null;
+}
+function activeTask(state, activeTaskId) {
+  const tasks = Array.isArray(state.tasks) ? state.tasks : [];
+  const task = tasks.find((t) => String(t?.id ?? "") === activeTaskId);
+  return task ?? null;
+}
+function criterionTextForTask(state, taskId) {
+  const criteria = Array.isArray(state.definition_of_done) ? state.definition_of_done : [];
+  if (criteria.length === 0) return null;
+  const match2 = taskId.match(/^sc[_-]?(\d+)$/i) ?? taskId.match(/^task[_-]?(\d+)$/i);
+  if (!match2) return null;
+  const idx = Number.parseInt(match2[1] ?? "", 10) - 1;
+  if (!Number.isFinite(idx) || idx < 0 || idx >= criteria.length) return null;
+  const text = String(criteria[idx] ?? "").trim();
+  return text.length > 0 ? text : null;
+}
+var scopeStopWords = /* @__PURE__ */ new Set([
+  "about",
+  "again",
+  "all",
+  "also",
+  "and",
+  "are",
+  "been",
+  "being",
+  "but",
+  "can",
+  "for",
+  "from",
+  "have",
+  "into",
+  "its",
+  "just",
+  "not",
+  "off",
+  "that",
+  "the",
+  "their",
+  "then",
+  "this",
+  "those",
+  "through",
+  "with",
+  "your"
+]);
+var genericTaskTerms = /* @__PURE__ */ new Set([
+  "add",
+  "app",
+  "application",
+  "build",
+  "change",
+  "component",
+  "create",
+  "feature",
+  "fix",
+  "implement",
+  "module",
+  "page",
+  "project",
+  "refactor",
+  "simple",
+  "support",
+  "task",
+  "tasks",
+  "update",
+  "work"
+]);
+var genericActionTerms = /* @__PURE__ */ new Set([
+  "add",
+  "awk",
+  "bash",
+  "cat",
+  "cd",
+  "check",
+  "cmd",
+  "command",
+  "cp",
+  "css",
+  "curl",
+  "delete",
+  "dev",
+  "diff",
+  "docker",
+  "echo",
+  "file",
+  "find",
+  "git",
+  "grep",
+  "head",
+  "install",
+  "jest",
+  "json",
+  "js",
+  "jsx",
+  "lint",
+  "log",
+  "ls",
+  "mcp",
+  "mkdir",
+  "move",
+  "mv",
+  "node",
+  "npm",
+  "npx",
+  "package",
+  "path",
+  "pnpm",
+  "pwd",
+  "py",
+  "python",
+  "read",
+  "remove",
+  "rg",
+  "run",
+  "script",
+  "sed",
+  "sh",
+  "shell",
+  "src",
+  "tail",
+  "test",
+  "tool",
+  "touch",
+  "ts",
+  "tsx",
+  "txt",
+  "typecheck",
+  "update",
+  "vite",
+  "write",
+  "yarn"
+]);
+function tokenizeScope(text) {
+  const parts = text.toLowerCase().replace(/[`"'()[\]{}:,;=]+/g, " ").split(/[\s/\\|._:-]+/).map((token) => token.trim()).filter(Boolean);
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const token of parts) {
+    if (token.length < 3) continue;
+    if (/^\d+$/.test(token)) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+function taskScopeTerms(parts) {
+  const terms = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const part of parts) {
+    for (const token of tokenizeScope(part)) {
+      if (scopeStopWords.has(token)) continue;
+      if (genericTaskTerms.has(token)) continue;
+      if (seen.has(token)) continue;
+      seen.add(token);
+      terms.push(token);
+    }
+  }
+  return terms;
+}
+function actionScopeTerms(actionValue) {
+  const terms = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const token of tokenizeScope(actionValue)) {
+    if (scopeStopWords.has(token)) continue;
+    if (genericActionTerms.has(token)) continue;
+    if (seen.has(token)) continue;
+    seen.add(token);
+    terms.push(token);
+  }
+  return terms;
+}
+function isNeutralShellCommand(cmd) {
+  const c = cmd.trim().toLowerCase();
+  if (!c) return true;
+  if (/^(git)\s+(status|diff|log|show|branch|rev-parse|fetch|pull)\b/.test(c)) return true;
+  if (/^(ls|pwd|echo|cat|head|tail|which|type)\b/.test(c)) return true;
+  if (/^(node|npm|pnpm|yarn)\s+-v\b/.test(c)) return true;
+  if (/^(npm|pnpm|yarn)\s+(install|add|remove|uninstall|up|update)\b/.test(c)) return true;
+  if (/^(npm|pnpm|yarn)\s+((run)\s+)?(test|build|lint|typecheck|dev|start|check)\b/.test(c)) return true;
+  return false;
+}
+function isNeutralReadPath(rel) {
+  const p = rel.trim().toLowerCase();
+  if (!p) return true;
+  const base = import_node_path2.default.posix.basename(p);
+  if (base === "package.json" || base === "package-lock.json" || base === "pnpm-lock.yaml" || base === "yarn.lock" || base === "readme.md") {
+    return true;
+  }
+  if (base === "tsconfig.json" || /^tsconfig\..*\.json$/.test(base)) return true;
+  if (/^vite\.config\./.test(base)) return true;
+  return false;
+}
+function matchesPinnedContext(state, actionType, actionValue) {
+  const pinned = Array.isArray(state.pinned_context) ? state.pinned_context : [];
+  if (pinned.length === 0) return false;
+  const value = actionValue.toLowerCase();
+  if (actionType === "read") {
+    return pinned.some((ctx) => {
+      const norm = String(ctx ?? "").trim().toLowerCase().replace(/^\/+/, "");
+      return norm.length > 0 && (value === norm || value.startsWith(`${norm}/`));
+    });
+  }
+  if (actionType === "shell") {
+    return pinned.some((ctx) => {
+      const norm = String(ctx ?? "").trim().toLowerCase();
+      return norm.length > 0 && value.includes(norm);
+    });
+  }
+  return false;
+}
+function resolveTaskScopeSensitivity(policy) {
+  const mode = String(policy.taskScopeSensitivity ?? "balanced");
+  if (mode === "strict" || mode === "lenient" || mode === "balanced") return mode;
+  return "balanced";
+}
+function normalizeScopeToken(token) {
+  if (token.endsWith("ies") && token.length > 4) return `${token.slice(0, -3)}y`;
+  if (token.endsWith("es") && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith("s") && token.length > 4) return token.slice(0, -1);
+  return token;
+}
+function hasScopeOverlap(taskTerms, actionTerms) {
+  const taskSet = new Set(taskTerms);
+  const normalizedTask = taskTerms.map(normalizeScopeToken);
+  for (const actionToken of actionTerms) {
+    if (taskSet.has(actionToken)) return true;
+    const normAction = normalizeScopeToken(actionToken);
+    for (let i = 0; i < taskTerms.length; i += 1) {
+      const t = taskTerms[i];
+      const nt = normalizedTask[i];
+      if (normAction === nt) return true;
+      if (normAction.length >= 5 && nt.length >= 5) {
+        if (normAction.startsWith(nt) || nt.startsWith(normAction)) return true;
+      }
+      if (actionToken.length >= 6 && t.length >= 6) {
+        if (actionToken.startsWith(t) || t.startsWith(actionToken)) return true;
+      }
+    }
+  }
+  return false;
+}
+function evaluateTaskScopeDrift(policy, state, actionType, actionValue) {
+  if (!state) return null;
+  const activeTaskId = String(state.active_task ?? "").trim();
+  if (!activeTaskId) return null;
+  if (actionType === "shell" && isNeutralShellCommand(actionValue)) return null;
+  if (actionType === "read" && isNeutralReadPath(actionValue)) return null;
+  if (actionType === "mcp" && actionValue.toLowerCase().startsWith("goal-guardian/")) return null;
+  if (matchesPinnedContext(state, actionType, actionValue)) return null;
+  const task = activeTask(state, activeTaskId);
+  const title = String(task?.title ?? activeTaskId).trim();
+  if (!title) return null;
+  const criterion = criterionTextForTask(state, activeTaskId);
+  const taskTextParts = [title];
+  if (criterion) taskTextParts.push(criterion);
+  if (typeof state.goal === "string" && state.goal.trim()) taskTextParts.push(state.goal);
+  const taskTerms = taskScopeTerms(taskTextParts);
+  const actionTerms = actionScopeTerms(actionValue);
+  const sensitivity = resolveTaskScopeSensitivity(policy);
+  const minTaskTerms = sensitivity === "strict" ? 1 : 2;
+  const minActionTerms = sensitivity === "strict" ? 1 : sensitivity === "balanced" ? 2 : 3;
+  if (taskTerms.length < minTaskTerms) return null;
+  if (actionTerms.length < minActionTerms) return null;
+  if (hasScopeOverlap(taskTerms, actionTerms)) return null;
+  return {
+    activeTaskId,
+    activeTaskTitle: title,
+    sensitivity,
+    confidence: actionTerms.length >= 4 ? "high" : actionTerms.length === 3 ? "medium" : "low",
+    taskTerms: taskTerms.slice(0, 6),
+    actionTerms: actionTerms.slice(0, 6)
+  };
+}
+function goalContextFromContract(contract) {
+  return contract ? {
+    goal: contract.goal,
+    relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`)
+  } : void 0;
+}
+function blockOrWarn(policy, contract, userMessage, agentMessage, suggestedAction) {
+  const advisoryUserMessage = userMessage.replace(/^BLOCKED:\s*/i, "Would block: ");
+  return cursorResponseWarn(
+    `Warning: ${advisoryUserMessage}`,
+    `${agentMessage}
+Action allowed (advisory-only policy).`,
+    {
+      warningCount: 0,
+      maxWarnings: policy.warningConfig.maxWarningsBeforeBlock,
+      suggestedAction,
+      goalContext: goalContextFromContract(contract)
+    }
+  );
+}
+function scopeWarn(policy, contract, actionType, actionValue, drift) {
+  const actionLabel = actionType === "mcp" ? "MCP call" : actionType === "read" ? "file read" : "command";
+  return cursorResponseWarn(
+    `Scope warning: ${actionLabel} may be outside active task "${drift.activeTaskTitle}".`,
+    [
+      `Active task: ${drift.activeTaskId} (${drift.activeTaskTitle})`,
+      `Scope mode: ${drift.sensitivity} (${drift.confidence} confidence mismatch)`,
+      `Task keywords: ${drift.taskTerms.join(", ") || "n/a"}`,
+      `${actionLabel} keywords: ${drift.actionTerms.join(", ") || "n/a"}`,
+      `Action seen: ${actionValue}`,
+      "If intentional, switch active task first or record a decision for the switch."
+    ].join("\n"),
+    {
+      warningCount: 0,
+      maxWarnings: policy.warningConfig.maxWarningsBeforeBlock,
+      suggestedAction: `Switch state.active_task before running ${actionLabel}.`,
+      goalContext: goalContextFromContract(contract)
+    }
+  );
 }
 function classifySeverity(rules, value) {
   if (!rules || rules.length === 0) {
@@ -16513,16 +16846,19 @@ function previewToResponse(preview, actionType, actionValue, policy, contract) {
   const warningCount = preview.warningCount ?? 0;
   const suggested = preview.suggestedPermitRequest;
   const suggestedAction = suggested ? `Request a permit with ${suggested.allow_field}: ["${suggested.allow_pattern}"]` : `Request a permit for ${actionType}`;
-  const goalContext = contract ? {
-    goal: contract.goal,
-    relevantCriteria: contract.success_criteria.map((c, i) => `SC${i + 1}: ${c}`)
-  } : void 0;
+  const goalContext = goalContextFromContract(contract);
   if (preview.severity === "HARD_BLOCK") {
     const agentMsg = suggested ? buildRecoveryMessage(actionType, actionValue, contract, `${suggested.allow_field}: ["${suggested.allow_pattern}"]`) : `Action blocked by MCP policy. ${actionValue}`;
-    return cursorResponseDeny(preview.reason, agentMsg);
+    return blockOrWarn(
+      policy,
+      contract,
+      preview.reason,
+      agentMsg,
+      suggestedAction
+    );
   }
   if (preview.severity === "WARN") {
-    const warnMessage = preview.wouldSucceed ? `Allowed with warning. ${Math.max(0, maxWarnings - warningCount)} warnings remaining before block.` : "Warning limit reached. Action allowed, but a permit is strongly recommended.";
+    const warnMessage = preview.wouldSucceed ? `Allowed with warning. ${Math.max(0, maxWarnings - warningCount)} warnings remaining before escalation reminder.` : "Warning limit reached. Action allowed, but a permit is strongly recommended.";
     return cursorResponseWarn(
       preview.reason,
       warnMessage,
@@ -16627,6 +16963,7 @@ async function main() {
   const policy = await loadPolicy(workspaceRoot);
   const permit = await loadActivePermit(workspaceRoot);
   const mcpPath = resolveMcpPath();
+  const reduxState = await loadReduxState(workspaceRoot);
   await appendAudit(workspaceRoot, {
     event: eventName,
     conversation_id: payload?.conversation_id,
@@ -16643,6 +16980,68 @@ async function main() {
     if (cmd.length === 0) {
       process.stdout.write(JSON.stringify(cursorResponseAllow()));
       return;
+    }
+    if (policy.enforceReduxControl) {
+      if (!reduxState) {
+        process.stdout.write(
+          JSON.stringify(
+            blockOrWarn(
+              policy,
+              contract,
+              "BLOCKED: Redux control requires .cursor/goal-guardian/state.json",
+              "Initialize Goal Guardian state files, then retry.",
+              "Create .cursor/goal-guardian/state.json (via extension install)."
+            )
+          )
+        );
+        return;
+      }
+      const activeTaskId = String(reduxState.active_task ?? "").trim();
+      if (!activeTaskId) {
+        process.stdout.write(
+          JSON.stringify(
+            blockOrWarn(
+              policy,
+              contract,
+              "BLOCKED: No active Redux task.",
+              "Set success criteria in contract.json and let Goal Guardian auto-start a task, then retry.",
+              "Ensure state.active_task is set to a task in doing status."
+            )
+          )
+        );
+        return;
+      }
+      const status = activeTaskStatus(reduxState, activeTaskId);
+      if (status && status !== "doing") {
+        process.stdout.write(
+          JSON.stringify(
+            blockOrWarn(
+              policy,
+              contract,
+              `BLOCKED: Active task ${activeTaskId} is not in doing state.`,
+              "Ensure the active task is in progress before running commands.",
+              "Mark the active task status as doing."
+            )
+          )
+        );
+        return;
+      }
+    }
+    if (policy.enforceTaskScope) {
+      const drift = evaluateTaskScopeDrift(policy, reduxState, "shell", cmd);
+      if (drift) {
+        await appendAudit(workspaceRoot, {
+          event: "scopeDriftWarning",
+          actionType: "shell",
+          actionValue: cmd,
+          activeTaskId: drift.activeTaskId,
+          activeTaskTitle: drift.activeTaskTitle,
+          taskTerms: drift.taskTerms,
+          actionTerms: drift.actionTerms
+        });
+        process.stdout.write(JSON.stringify(scopeWarn(policy, contract, "shell", cmd, drift)));
+        return;
+      }
     }
     if (mcpPath) {
       const preview = await previewViaMcp(mcpPath, workspaceRoot, "shell", cmd);
@@ -16663,9 +17062,12 @@ async function main() {
       });
       process.stdout.write(
         JSON.stringify(
-          cursorResponseDeny(
+          blockOrWarn(
+            policy,
+            contract,
             `BLOCKED: ${reason}`,
-            `Command "${cmd}" is permanently blocked. This action cannot be permitted.`
+            `Command "${cmd}" is classified as catastrophic by policy.`,
+            `Avoid command: ${cmd}`
           )
         )
       );
@@ -16734,7 +17136,7 @@ Goal: "${contract.goal}"` : `Warning (${newCount}/${maxWarnings}): ${rule?.reaso
         JSON.stringify(
           cursorResponseWarn(
             warnMsg,
-            `Command allowed with warning. ${maxWarnings - newCount} warnings remaining before block.`,
+            `Command allowed with warning. ${maxWarnings - newCount} warnings remaining before escalation reminder.`,
             {
               warningCount: newCount,
               maxWarnings,
@@ -16832,6 +17234,68 @@ ${recoveryMsg}`,
     const server = String(payload?.server ?? "").trim() || "unknown";
     const tool = String(payload?.tool_name ?? "").trim() || "unknown";
     const key = `${server}/${tool}`;
+    if (policy.enforceReduxControl) {
+      if (!reduxState) {
+        process.stdout.write(
+          JSON.stringify(
+            blockOrWarn(
+              policy,
+              contract,
+              "BLOCKED: Redux control requires .cursor/goal-guardian/state.json",
+              "Initialize Goal Guardian state files, then retry.",
+              "Create .cursor/goal-guardian/state.json (via extension install)."
+            )
+          )
+        );
+        return;
+      }
+      const activeTaskId = String(reduxState.active_task ?? "").trim();
+      if (!activeTaskId) {
+        process.stdout.write(
+          JSON.stringify(
+            blockOrWarn(
+              policy,
+              contract,
+              "BLOCKED: No active Redux task.",
+              "Set success criteria in contract.json and let Goal Guardian auto-start a task, then retry.",
+              "Ensure state.active_task is set to a task in doing status."
+            )
+          )
+        );
+        return;
+      }
+      const status = activeTaskStatus(reduxState, activeTaskId);
+      if (status && status !== "doing") {
+        process.stdout.write(
+          JSON.stringify(
+            blockOrWarn(
+              policy,
+              contract,
+              `BLOCKED: Active task ${activeTaskId} is not in doing state.`,
+              "Ensure the active task is in progress before running MCP tools.",
+              "Mark the active task status as doing."
+            )
+          )
+        );
+        return;
+      }
+    }
+    if (policy.enforceTaskScope) {
+      const drift = evaluateTaskScopeDrift(policy, reduxState, "mcp", key);
+      if (drift) {
+        await appendAudit(workspaceRoot, {
+          event: "scopeDriftWarning",
+          actionType: "mcp",
+          actionValue: key,
+          activeTaskId: drift.activeTaskId,
+          activeTaskTitle: drift.activeTaskTitle,
+          taskTerms: drift.taskTerms,
+          actionTerms: drift.actionTerms
+        });
+        process.stdout.write(JSON.stringify(scopeWarn(policy, contract, "mcp", key, drift)));
+        return;
+      }
+    }
     if (mcpPath) {
       const preview = await previewViaMcp(mcpPath, workspaceRoot, "mcp", key);
       if (preview) {
@@ -16851,9 +17315,12 @@ ${recoveryMsg}`,
       });
       process.stdout.write(
         JSON.stringify(
-          cursorResponseDeny(
+          blockOrWarn(
+            policy,
+            contract,
             `BLOCKED: ${reason}`,
-            `MCP call "${key}" is permanently blocked.`
+            `MCP call "${key}" is classified as blocked by policy.`,
+            `Avoid MCP call: ${key}`
           )
         )
       );
@@ -17017,6 +17484,68 @@ ${recoveryMsg}`,
       process.stdout.write(JSON.stringify(cursorResponseAllow()));
       return;
     }
+    if (policy.enforceReduxControl && !isBootstrapReadPath(rel)) {
+      if (!reduxState) {
+        process.stdout.write(
+          JSON.stringify(
+            blockOrWarn(
+              policy,
+              contract,
+              "BLOCKED: Redux control requires .cursor/goal-guardian/state.json",
+              "Initialize Goal Guardian state files, then retry.",
+              "Create .cursor/goal-guardian/state.json (via extension install)."
+            )
+          )
+        );
+        return;
+      }
+      const activeTaskId = String(reduxState.active_task ?? "").trim();
+      if (!activeTaskId) {
+        process.stdout.write(
+          JSON.stringify(
+            blockOrWarn(
+              policy,
+              contract,
+              "BLOCKED: No active Redux task.",
+              "Set success criteria in contract.json and let Goal Guardian auto-start a task, then retry.",
+              "Ensure state.active_task is set to a task in doing status."
+            )
+          )
+        );
+        return;
+      }
+      const status = activeTaskStatus(reduxState, activeTaskId);
+      if (status && status !== "doing") {
+        process.stdout.write(
+          JSON.stringify(
+            blockOrWarn(
+              policy,
+              contract,
+              `BLOCKED: Active task ${activeTaskId} is not in doing state.`,
+              "Ensure the active task is in progress before reading workspace files.",
+              "Mark the active task status as doing."
+            )
+          )
+        );
+        return;
+      }
+    }
+    if (policy.enforceTaskScope && !isBootstrapReadPath(rel)) {
+      const drift = evaluateTaskScopeDrift(policy, reduxState, "read", rel);
+      if (drift) {
+        await appendAudit(workspaceRoot, {
+          event: "scopeDriftWarning",
+          actionType: "read",
+          actionValue: rel,
+          activeTaskId: drift.activeTaskId,
+          activeTaskTitle: drift.activeTaskTitle,
+          taskTerms: drift.taskTerms,
+          actionTerms: drift.actionTerms
+        });
+        process.stdout.write(JSON.stringify(scopeWarn(policy, contract, "read", rel, drift)));
+        return;
+      }
+    }
     if (mcpPath) {
       const preview = await previewViaMcp(mcpPath, workspaceRoot, "read", rel);
       if (preview) {
@@ -17036,9 +17565,12 @@ ${recoveryMsg}`,
       });
       process.stdout.write(
         JSON.stringify(
-          cursorResponseDeny(
+          blockOrWarn(
+            policy,
+            contract,
             `BLOCKED: ${reason}`,
-            `Reading "${rel}" is permanently blocked for security.`
+            `Reading "${rel}" is classified as blocked for security.`,
+            `Avoid reading: ${rel}`
           )
         )
       );
