@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.11
+- Publish follow-up for advisory-only policy/docs refresh.
+- Trim panel demo GIF intro so the animation starts on visible panel content.
+
 ## 0.4.10
 - Improve Goal Panel UX for first-time users:
   - add "How To Read This Panel" onboarding section

@@ -166,7 +166,7 @@ Animated preview of the panel running through the 20-task replay:
 
 ## Redux state screenshot
 
-<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/redux-state.png?v=0.4.10" alt="Redux state view" width="900" />
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/redux-state.png?v=0.4.11" alt="Redux state view" width="900" />
 
 ## Troubleshooting
 

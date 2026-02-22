@@ -2,7 +2,7 @@
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
   "description": "Goal-first Cursor: a state-driven anti-drift workspace that does not install blocking hooks.",
-  "version": "0.4.10",
+  "version": "0.4.11",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
   "galleryBanner": {
