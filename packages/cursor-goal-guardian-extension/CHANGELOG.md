@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.10
+- Improve Goal Panel UX for first-time users:
+  - add "How To Read This Panel" onboarding section
+  - add "Session Pulse" summary and "Next Best Action"
+  - keep Action Timeline visually central with clearer legend
+- Add reproducible 20-task panel replay recorder (`scripts/record-panel-demo-20tasks.mjs`).
+- Add user-facing validation documentation and animated panel demo references.
+
 ## 0.3.5
 - Stop wiring Cursor hooks/MCP from the extension; extension is now state-driven anti-drift only.
 - On activation/install, remove legacy Goal Guardian hook entries from `.cursor/hooks.json` and legacy `goal-guardian` from `.cursor/mcp.json` (with backups).
