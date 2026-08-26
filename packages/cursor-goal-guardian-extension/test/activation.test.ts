@@ -115,6 +115,11 @@ describe("activation surface", () => {
     await runUninstall(root);
     expect(await fileExists(rulePath)).toBe(false);
     expect(await fileExists(path.join(root, ".cursor", "goal-guardian"))).toBe(false);
+    // No trace means no empty shells either: when nothing but guardian
+    // scaffolding existed, the wiring files and folders disappear entirely.
+    expect(await fileExists(path.join(root, ".cursor", "hooks.json"))).toBe(false);
+    expect(await fileExists(path.join(root, ".cursor", "rules"))).toBe(false);
+    expect(await fileExists(path.join(root, ".cursor", "skills"))).toBe(false);
   });
 
   it("v1 workspace -> auto-migrates with backups and exactly one passive notice", async () => {
@@ -130,7 +135,14 @@ describe("activation surface", () => {
     expect(await fileExists(`${p.contract}.v1.bak`)).toBe(true);
     const notices = recorded.windowMessages.filter((m) => m.kind === "information");
     expect(notices).toHaveLength(1);
-    expect(notices[0]?.message).toMatch(/upgraded this workspace to the v2 format/);
+    expect(notices[0]?.message).toMatch(/upgraded this workspace/);
     expect(recorded.windowMessages).toHaveLength(1);
+
+    // An upgraded user must land fully connected, not with transformed files
+    // and a dead product: recorder wiring, agent rule, and skills all present.
+    expect(await fileExists(path.join(root, ".cursor", "hooks.json"))).toBe(true);
+    expect(await fileExists(path.join(root, ".cursor", "mcp.json"))).toBe(true);
+    expect(await fileExists(path.join(root, ".cursor", "rules", "goal-guardian.mdc"))).toBe(true);
+    expect(await fileExists(path.join(root, ".cursor", "skills", "guardian", "SKILL.md"))).toBe(true);
   });
 });

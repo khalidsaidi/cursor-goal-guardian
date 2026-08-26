@@ -156,6 +156,17 @@ export function isGuardianHookCommand(command: unknown): boolean {
   return typeof command === "string" && /goal-guardian-hook/.test(command);
 }
 
+/**
+ * The full connection: watcher wiring, hub registration, session rule, skills.
+ * Used by the invited Setup flow and by the 0.4.x upgrade — a migrated user
+ * already opted in, and without this their agent never learns the protocol.
+ */
+export async function connectWorkspace(root: string, context: vscode.ExtensionContext): Promise<void> {
+  await wireIntegration(root, context);
+  await wireUserLevelMcp(context);
+  await writeGuardianRule(root);
+}
+
 async function writeGuardianRule(root: string): Promise<void> {
   const rulePath = path.join(root, GUARDIAN_RULE_RELATIVE_PATH);
   await fs.mkdir(path.dirname(rulePath), { recursive: true });
@@ -253,9 +264,7 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
   }
   await writeJsonAtomic(p.migrationMarker, { from: 2, to: 2, ts: new Date().toISOString(), migratedBy: "setup" });
 
-  await wireIntegration(root, context);
-  await wireUserLevelMcp(context);
-  await writeGuardianRule(root);
+  await connectWorkspace(root, context);
 
   const gitignore = await vscode.window.showQuickPick(["Yes", "No"], {
     title: "Add .cursor/goal-guardian/telemetry/ to .gitignore?",
@@ -281,19 +290,29 @@ export async function runUninstall(root: string): Promise<void> {
   }
 
   const hooksPath = path.join(root, ".cursor", "hooks.json");
-  const hooks = await readJsonOr<{ hooks?: Record<string, Array<{ command: string }>> } | null>(hooksPath, null);
+  const hooks = await readJsonOr<{ version?: number; hooks?: Record<string, Array<{ command: string }>> } | null>(hooksPath, null);
   if (hooks?.hooks) {
     for (const [event, entries] of Object.entries(hooks.hooks)) {
       hooks.hooks[event] = entries.filter((e) => !isGuardianHookCommand(e?.command));
       if (hooks.hooks[event].length === 0) delete hooks.hooks[event];
     }
-    await writeJsonAtomic(hooksPath, hooks);
+    // "Leaves no trace" means no trace: a shell holding nothing but our own
+    // scaffolding is deleted, a file with someone else's hooks is preserved.
+    if (Object.keys(hooks.hooks).length === 0) await fs.rm(hooksPath, { force: true });
+    else await writeJsonAtomic(hooksPath, hooks);
   }
 
   const mcpPath = path.join(root, ".cursor", "mcp.json");
   const mcp = await readJsonOr<{ mcpServers?: Record<string, unknown> } | null>(mcpPath, null);
   if (mcp?.mcpServers && "goal-guardian" in mcp.mcpServers) {
     delete mcp.mcpServers["goal-guardian"];
-    await writeJsonAtomic(mcpPath, mcp);
+    if (Object.keys(mcp.mcpServers).length === 0 && Object.keys(mcp).length === 1) await fs.rm(mcpPath, { force: true });
+    else await writeJsonAtomic(mcpPath, mcp);
+  }
+
+  // Empty parent folders we created are litter too; rmdir refuses non-empty
+  // ones, which is exactly the safety we want.
+  for (const dir of ["rules", "skills", ""]) {
+    await fs.rmdir(path.join(root, ".cursor", dir)).catch(() => undefined);
   }
 }

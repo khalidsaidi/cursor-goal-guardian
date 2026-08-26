@@ -13,7 +13,7 @@ import { PanelController } from "./panel/panelController.js";
 import { RescoreService } from "./rescoreService.js";
 import { StatusBar } from "./statusBar.js";
 import { registerAutoBehaviors } from "./autoBehaviors.js";
-import { doctorIntegration, runSetup, runUninstall } from "./setup.js";
+import { connectWorkspace, doctorIntegration, runSetup, runUninstall } from "./setup.js";
 import { openCommandCenter } from "./commandCenter.js";
 
 /**
@@ -177,9 +177,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         migratedBy: `cursor-goal-guardian-extension@${context.extension.packageJSON.version as string}`,
       });
       if (result.migrated) {
+        // An 0.4.x workspace is an existing opt-in: finish the connection so
+        // the upgraded user actually gets the recorder, the agent tools, and
+        // the session rule — not just transformed files.
+        await connectWorkspace(root, context);
         await doctorIntegration(root, context);
         void vscode.window.showInformationMessage(
-          "Goal Guardian upgraded this workspace to the v2 format (backups saved as *.v1.bak).",
+          "Goal Guardian upgraded this workspace (backups saved as *.v1.bak) and connected session tracking — just ask your agent for something.",
         );
       }
       startServices();
