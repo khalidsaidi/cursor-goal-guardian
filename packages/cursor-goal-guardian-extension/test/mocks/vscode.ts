@@ -135,3 +135,5 @@ export function makeContext(extensionPath = "/tmp/gg-ext"): {
     extension: { packageJSON: { version: "1.0.0-rc.0" } },
   };
 }
+
+export const env = { remoteName: "wsl" };

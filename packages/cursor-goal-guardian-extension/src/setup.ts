@@ -222,6 +222,16 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
 
   await connectWorkspace(root, context);
 
+  // Cursor gates project-configured MCP servers behind a one-time, per-project
+  // enable (verified live on native Windows: every new project's source starts
+  // "Disabled"). Remote hosts have historically started it without the toggle,
+  // but the guidance is harmless there and vital on desktop.
+  if (vscode.env.remoteName === undefined) {
+    void vscode.window.showInformationMessage(
+      "One more step from Cursor itself: it lists this project's goal-guardian server as Disabled until you enable it once — Settings → MCP → goal-guardian → turn on this project's source.",
+    );
+  }
+
   const gitignore = await vscode.window.showQuickPick(["Yes", "No"], {
     title: "Add .cursor/goal-guardian/telemetry/ to .gitignore?",
     placeHolder: "Telemetry files are machine-written and per-session",

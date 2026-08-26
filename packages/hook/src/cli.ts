@@ -3,6 +3,7 @@
  * blocks and NEVER breaks the editor — every path, including crashes and
  * malformed input, ends in permission:"allow" and exit code 0.
  */
+import fs from "node:fs";
 import path from "node:path";
 import { advisoryAllow, type HookResponse } from "./respond.js";
 import { runPipeline } from "./pipeline.js";
@@ -21,10 +22,43 @@ function eventName(payload: Record<string, unknown>): string {
   return "";
 }
 
+/** True when this directory is a Guardian workspace. */
+function isGuardianWorkspace(dir: string): boolean {
+  try {
+    return fs.existsSync(path.join(dir, ".cursor", "goal-guardian"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the workspace this event belongs to. Native-Windows Cursor sends
+ * hook payloads with NO workspace_roots and a cwd outside the workspace —
+ * only file_path identifies where the work is happening. Ladder:
+ * 1. workspace_roots (WSL/remote sends it)
+ * 2. ascend from file_path until a Guardian workspace appears
+ * 3. cwd, if it is a Guardian workspace
+ * Unresolvable returns "" and the caller answers a bare allow — never a
+ * guessed directory, never a tape written into the wrong place.
+ */
 function workspaceRoot(payload: Record<string, unknown>): string {
   const roots = payload.workspace_roots;
   if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
-  return process.cwd();
+
+  const filePath = typeof payload.file_path === "string" ? payload.file_path : "";
+  if (filePath && path.isAbsolute(filePath)) {
+    let dir = path.dirname(filePath);
+    for (let i = 0; i < 32; i += 1) {
+      if (isGuardianWorkspace(dir)) return dir;
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+
+  const cwd = process.cwd();
+  if (isGuardianWorkspace(cwd)) return cwd;
+  return "";
 }
 
 function relativePath(root: string, value: string): string {
@@ -36,6 +70,7 @@ function relativePath(root: string, value: string): string {
 
 async function handle(payload: Record<string, unknown>): Promise<HookResponse> {
   const root = workspaceRoot(payload);
+  if (!root) return advisoryAllow();
   const event = eventName(payload);
 
   switch (event) {

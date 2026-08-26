@@ -290,3 +290,31 @@ WSL) — needs a fresh-boot investigation of Cursor's hook loading on win32.
 Consequence while 1+2 stand: the product is fully proven on
 Linux/WSL; on native Windows only the panel, setup, repair, removal,
 and upgrade are proven — live tracking (the core feature) is not.
+
+## Windows open items: resolved and root-caused (2026-08-26)
+
+**Item 1 — RESOLVED.** Native-Windows IDE chats could not reach the
+workspace's Guardian because Cursor gates every project-configured MCP server
+behind a one-time, per-project enable (each new project's source starts
+"Disabled" in Settings -> MCP). After the single toggle, the agent bound the
+workspace and recorded the goal (verified live). Setup now tells desktop
+users about that one step, and the global server keeps refusing to guess with
+an agent-relayable message until then.
+
+**Item 2 — ROOT-CAUSED upstream.** Native-Windows Cursor executes hook
+commands in a sandboxed context that mis-attributes the workspace (its own
+execution log labels every run "windows_temp_file") and blocks access to the
+real workspace, so the recorder answers its safe bare-allow and cannot tape.
+Proof: the identical binary with the identical captured payload writes the
+tape correctly when run outside that context, from any cwd, in both C:\Temp
+and C:\Users locations; inside Cursor's hook runtime it cannot. WSL/remote
+hosts have no such sandbox and record correctly. Our side was still improved
+and pinned by tests: the hook now resolves the workspace by ascending from
+the payload's file_path (native payloads carry no workspace_roots), and
+refuses to guess rather than ever writing to a wrong location. Remaining fix
+belongs to Cursor's win32 hook attribution; until then, recording on native
+Windows is limited to what the MCP server tapes (tool calls), and the
+recorder works fully on WSL/remote and every POSIX platform.
+
+Also fixed: the packaging script recompiled only when dist-bin was missing,
+which once shipped an hour-old binary; it now always compiles fresh.

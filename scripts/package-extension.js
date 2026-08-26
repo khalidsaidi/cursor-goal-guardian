@@ -35,14 +35,10 @@ const target = targetFlag >= 0 ? process.argv[targetFlag + 1] : hostTarget();
 run("pnpm", ["--filter", "@goal-guardian/core", "build"], root);
 run("pnpm", ["--filter", "cursor-goal-guardian-extension", "build"], root);
 
-// Ensure the compiled binaries for this target exist, then stage them as the
-// VSIX's bin/ — nothing else ships there.
+// Always compile fresh — a stale dist-bin once shipped an hour-old binary.
 const compiled = path.join(root, "dist-bin", target);
-try {
-  await fs.access(compiled);
-} catch {
-  run("node", [path.join(root, "scripts", "compile-binaries.mjs"), ...(target === hostTarget() ? ["--host-only"] : [])], root);
-}
+if (target === hostTarget()) run("node", [path.join(root, "scripts", "compile-binaries.mjs"), "--host-only"], root);
+else run("node", [path.join(root, "scripts", "compile-binaries.mjs")], root);
 await fs.rm(binDir, { recursive: true, force: true });
 await fs.mkdir(binDir, { recursive: true });
 for (const entry of await fs.readdir(compiled)) {
