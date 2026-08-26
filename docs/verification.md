@@ -204,3 +204,23 @@ two real defects (a stale five-tool assertion in the packaged-binary smoke,
 and a latency budget blind to the win32 process-spawn tax); after the fixes
 all three platforms pass: build, typecheck, full suite, offline e2e with the
 packaged binaries.
+
+## Runtime as a product component (2026-08-26)
+
+Replaced every runtime workaround with one architecture: discover a real
+Node.js (the remote server's own binary, or an absolute PATH resolution, or a
+previously installed copy) — and when none exists, offer it: one modal,
+"Download the official Node.js build (about 30 MB, verified, kept inside the
+extension's own storage)", with a clean abort that writes nothing. All three
+surfaces (hooks, workspace MCP, hub MCP) are wired to the same absolute
+runtime path on every platform; ELECTRON_RUN_AS_NODE and the Windows .cmd
+shim are gone.
+
+Driven headed on this machine's native Windows (which has no Node.js): the
+offer appeared on Connect, the download verified against SHASUMS256 and
+installed in ~10 s, the wizard continued, and the wired hook answered a real
+payload in 105 ms with the tape written; the MCP server handshook over stdio
+under the same runtime. Also hardened the global server's workspace
+resolution: the home directory is never accepted as a workspace, and an
+unresolvable workspace returns an instruction the agent can relay instead of
+silently writing session files into home (regression-tested).

@@ -21036,6 +21036,7 @@ var StdioServerTransport = class {
 
 // packages/mcp/src/workspace.ts
 import fs4 from "node:fs";
+import os from "node:os";
 import path6 from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23561,6 +23562,11 @@ function looksLikeWorkspace(p) {
     return false;
   }
 }
+function isHomeish(p) {
+  const norm = path6.resolve(p);
+  const home = path6.resolve(os.homedir());
+  return norm === home || norm === path6.join(home, ".cursor");
+}
 async function workspaceRoot() {
   if (process.env.GOAL_GUARDIAN_WORKSPACE_ROOT) return process.env.GOAL_GUARDIAN_WORKSPACE_ROOT;
   if (cachedRoot) return cachedRoot;
@@ -23575,12 +23581,22 @@ async function workspaceRoot() {
     } catch {
     }
   }
-  const envRoot = process.env.CURSOR_WORKSPACE_ROOT || process.env.WORKSPACE_FOLDER_PATHS?.split(",")[0];
-  if (envRoot && looksLikeWorkspace(envRoot)) {
-    cachedRoot = envRoot;
-    return envRoot;
+  const candidates = [
+    process.env.CURSOR_WORKSPACE_ROOT,
+    ...process.env.WORKSPACE_FOLDER_PATHS?.split(/[;,]/) ?? []
+  ].filter((c) => Boolean(c && c.trim()));
+  for (const candidate of candidates) {
+    const c = candidate.trim();
+    if (looksLikeWorkspace(c) && !isHomeish(c)) {
+      cachedRoot = c;
+      return c;
+    }
   }
-  return process.cwd();
+  const cwd = process.cwd();
+  if (looksLikeWorkspace(cwd) && !isHomeish(cwd)) return cwd;
+  throw new Error(
+    "Goal Guardian could not determine which workspace this chat belongs to (the client offered no workspace roots). Tell the user: open the project folder in Cursor, or add the repository to this chat's context, then retry."
+  );
 }
 
 // packages/mcp/src/tools/getContract.ts

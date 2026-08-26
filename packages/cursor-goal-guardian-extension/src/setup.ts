@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { ensureRuntime } from "./runtime.js";
 import {
   criteriaFromTexts,
   defaultConfig,
@@ -33,52 +33,8 @@ const HOOK_EVENTS = [
   "afterTabFileEdit",
 ];
 
-export interface NodeInvocation {
-  /** Absolute path to a Node.js runtime, or the bare name "node" (PATH). */
-  exe: string;
-  /** Extra env for MCP server entries (the run-Electron-as-Node fallback). */
-  mcpEnv?: Record<string, string>;
-  /** Env prefix for the hook shell command (POSIX Electron fallback). */
-  hookPrefix?: string;
-  /** True when even the fallback can't run the hook on this platform. */
-  hookUnavailable?: boolean;
-}
-
-function pathHasNode(): boolean {
-  const probe = process.platform === "win32" ? "node.exe" : "node";
-  const result = spawnSync(probe, ["--version"], { timeout: 3000, shell: process.platform === "win32" });
-  return result.status === 0;
-}
-
-/**
- * A user's machine is not required to have Node.js. Resolution ladder:
- * 1. The runtime the extension host itself runs on — in Cursor's remote server
- *    (WSL/SSH) process.execPath IS a real node binary, present by definition.
- * 2. A node on PATH (typical desktop developer machine).
- * 3. Cursor's Electron binary run as Node (works for MCP via env everywhere,
- *    and for hooks on POSIX; on Windows without node the hook is honestly
- *    reported as unavailable instead of silently wired to a dead command).
- */
-export function resolveNodeInvocation(
-  execPath: string = process.execPath,
-  hasPathNode: () => boolean = pathHasNode,
-  platform: NodeJS.Platform = process.platform,
-): NodeInvocation {
-  const base = execPath.split(/[\\/]/).pop()?.toLowerCase() ?? "";
-  if (base === "node" || base === "node.exe") return { exe: execPath };
-  if (hasPathNode()) return { exe: "node" };
-  if (platform === "win32") {
-    return { exe: execPath, mcpEnv: { ELECTRON_RUN_AS_NODE: "1" }, hookUnavailable: true };
-  }
-  return { exe: execPath, mcpEnv: { ELECTRON_RUN_AS_NODE: "1" }, hookPrefix: "ELECTRON_RUN_AS_NODE=1 " };
-}
-
-function quoteExe(exe: string): string {
-  return exe === "node" ? "node" : `"${exe}"`;
-}
-
-function hookCommand(context: vscode.ExtensionContext, inv: NodeInvocation = resolveNodeInvocation()): string {
-  return `${inv.hookPrefix ?? ""}${quoteExe(inv.exe)} "${bundledBinPaths(context).hook}"`;
+function hookCommand(context: vscode.ExtensionContext, runtimeExe: string): string {
+  return `"${runtimeExe}" "${bundledBinPaths(context).hook}"`;
 }
 
 async function readJsonOr<T>(filePath: string, fallback: T): Promise<T> {
@@ -95,18 +51,17 @@ async function readJsonOr<T>(filePath: string, fallback: T): Promise<T> {
  * Registering there once makes the guardian's tools available in every hub
  * chat. Merge-preserving; uninstall removes only our entry.
  */
-function mcpServerEntry(context: vscode.ExtensionContext, inv: NodeInvocation, extraEnv?: Record<string, string>): Record<string, unknown> {
-  const env = { ...(inv.mcpEnv ?? {}), ...(extraEnv ?? {}) };
-  const entry: Record<string, unknown> = { command: inv.exe, args: [bundledBinPaths(context).mcp] };
-  if (Object.keys(env).length > 0) entry.env = env;
+function mcpServerEntry(context: vscode.ExtensionContext, runtimeExe: string, extraEnv?: Record<string, string>): Record<string, unknown> {
+  const entry: Record<string, unknown> = { command: runtimeExe, args: [bundledBinPaths(context).mcp] };
+  if (extraEnv && Object.keys(extraEnv).length > 0) entry.env = extraEnv;
   return entry;
 }
 
-export async function wireUserLevelMcp(context: vscode.ExtensionContext, inv: NodeInvocation = resolveNodeInvocation()): Promise<void> {
+export async function wireUserLevelMcp(context: vscode.ExtensionContext, runtimeExe: string): Promise<void> {
   const userMcpPath = path.join(process.env.GOAL_GUARDIAN_TEST_HOME ?? os.homedir(), ".cursor", "mcp.json");
   const config = await readJsonOr<{ mcpServers?: Record<string, unknown> }>(userMcpPath, {});
   config.mcpServers = config.mcpServers ?? {};
-  const desired = mcpServerEntry(context, inv);
+  const desired = mcpServerEntry(context, runtimeExe);
   if (JSON.stringify(config.mcpServers["goal-guardian"]) === JSON.stringify(desired)) return;
   config.mcpServers["goal-guardian"] = desired;
   await writeJsonAtomic(userMcpPath, config);
@@ -123,32 +78,25 @@ export async function unwireUserLevelMcp(): Promise<void> {
 }
 
 /** Wire .cursor/hooks.json and .cursor/mcp.json to the bundled binaries, preserving unrelated entries. */
-export async function wireIntegration(root: string, context: vscode.ExtensionContext, inv: NodeInvocation = resolveNodeInvocation()): Promise<void> {
+export async function wireIntegration(root: string, context: vscode.ExtensionContext, runtimeExe: string): Promise<void> {
   const cursorDir = path.join(root, ".cursor");
   await fs.mkdir(cursorDir, { recursive: true });
 
-  if (!inv.hookUnavailable) {
-    const hooksPath = path.join(cursorDir, "hooks.json");
-    const hooks = await readJsonOr<{ version?: number; hooks?: Record<string, Array<{ command: string }>> }>(hooksPath, {});
-    hooks.version = hooks.version ?? 1;
-    hooks.hooks = hooks.hooks ?? {};
-    for (const event of HOOK_EVENTS) {
-      const entries = (hooks.hooks[event] ?? []).filter((e) => !isGuardianHookCommand(e?.command));
-      entries.push({ command: hookCommand(context, inv) });
-      hooks.hooks[event] = entries;
-    }
-    await writeJsonAtomic(hooksPath, hooks);
-  } else {
-    void vscode.window.showWarningMessage(
-      "Goal Guardian: the background watcher needs Node.js, which wasn't found on this machine. " +
-        "Everything else works; install Node.js and run Setup again to enable it.",
-    );
+  const hooksPath = path.join(cursorDir, "hooks.json");
+  const hooks = await readJsonOr<{ version?: number; hooks?: Record<string, Array<{ command: string }>> }>(hooksPath, {});
+  hooks.version = hooks.version ?? 1;
+  hooks.hooks = hooks.hooks ?? {};
+  for (const event of HOOK_EVENTS) {
+    const entries = (hooks.hooks[event] ?? []).filter((e) => !isGuardianHookCommand(e?.command));
+    entries.push({ command: hookCommand(context, runtimeExe) });
+    hooks.hooks[event] = entries;
   }
+  await writeJsonAtomic(hooksPath, hooks);
 
   const mcpPath = path.join(cursorDir, "mcp.json");
   const mcp = await readJsonOr<{ mcpServers?: Record<string, unknown> }>(mcpPath, {});
   mcp.mcpServers = mcp.mcpServers ?? {};
-  mcp.mcpServers["goal-guardian"] = mcpServerEntry(context, inv, { GOAL_GUARDIAN_WORKSPACE_ROOT: root });
+  mcp.mcpServers["goal-guardian"] = mcpServerEntry(context, runtimeExe, { GOAL_GUARDIAN_WORKSPACE_ROOT: root });
   await writeJsonAtomic(mcpPath, mcp);
 }
 
@@ -161,9 +109,9 @@ export function isGuardianHookCommand(command: unknown): boolean {
  * Used by the invited Setup flow and by the 0.4.x upgrade — a migrated user
  * already opted in, and without this their agent never learns the protocol.
  */
-export async function connectWorkspace(root: string, context: vscode.ExtensionContext): Promise<void> {
-  await wireIntegration(root, context);
-  await wireUserLevelMcp(context);
+export async function connectWorkspace(root: string, context: vscode.ExtensionContext, runtimeExe: string): Promise<void> {
+  await wireIntegration(root, context, runtimeExe);
+  await wireUserLevelMcp(context, runtimeExe);
   await writeGuardianRule(root);
 }
 
@@ -186,12 +134,12 @@ async function writeGuardianRule(root: string): Promise<void> {
  * entries that reference stale locations. Runs only when guardian files
  * already exist; writes only when something actually differs.
  */
-export async function doctorIntegration(root: string, context: vscode.ExtensionContext, inv: NodeInvocation = resolveNodeInvocation()): Promise<void> {
+export async function doctorIntegration(root: string, context: vscode.ExtensionContext, runtimeExe: string): Promise<void> {
   const hooksPath = path.join(root, ".cursor", "hooks.json");
   const hooks = await readJsonOr<{ hooks?: Record<string, Array<{ command: string }>> } | null>(hooksPath, null);
-  if (hooks?.hooks && !inv.hookUnavailable) {
+  if (hooks?.hooks) {
     let changed = false;
-    const current = hookCommand(context, inv);
+    const current = hookCommand(context, runtimeExe);
     for (const entries of Object.values(hooks.hooks)) {
       for (const entry of entries) {
         if (isGuardianHookCommand(entry?.command) && entry.command !== current) {
@@ -207,7 +155,7 @@ export async function doctorIntegration(root: string, context: vscode.ExtensionC
   const mcp = await readJsonOr<{ mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> } | null>(mcpPath, null);
   const entry = mcp?.mcpServers?.["goal-guardian"];
   if (entry && Array.isArray(entry.args) && entry.args.some((a) => /goal-guardian-mcp/.test(a))) {
-    const desired = mcpServerEntry(context, inv, { GOAL_GUARDIAN_WORKSPACE_ROOT: root });
+    const desired = mcpServerEntry(context, runtimeExe, { GOAL_GUARDIAN_WORKSPACE_ROOT: root });
     if (JSON.stringify(entry) !== JSON.stringify(desired)) {
       mcp!.mcpServers!["goal-guardian"] = desired as never;
       await writeJsonAtomic(mcpPath, mcp);
@@ -215,11 +163,19 @@ export async function doctorIntegration(root: string, context: vscode.ExtensionC
   }
 
   // The hub reads the user-level registration; keep its runtime fresh too.
-  await wireUserLevelMcp(context, inv);
+  await wireUserLevelMcp(context, runtimeExe);
 }
 
-/** The invited setup flow: goal -> criteria -> constraints (all skippable), then files + wiring. */
+/** The invited setup flow: runtime first (offer or abort), then goal -> criteria -> constraints (all skippable), then files + wiring. */
 export async function runSetup(root: string, context: vscode.ExtensionContext): Promise<boolean> {
+  const runtimeExe = await ensureRuntime(context, { interactive: true });
+  if (!runtimeExe) {
+    void vscode.window.showInformationMessage(
+      "Goal Guardian setup was canceled — nothing was written. Run Setup again anytime.",
+    );
+    return false;
+  }
+
   const goal = await vscode.window.showInputBox({
     title: "Goal Guardian setup (1/3) — Goal",
     prompt: "One unambiguous sentence: what is this session/project trying to achieve? (Esc to skip)",
@@ -264,7 +220,7 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
   }
   await writeJsonAtomic(p.migrationMarker, { from: 2, to: 2, ts: new Date().toISOString(), migratedBy: "setup" });
 
-  await connectWorkspace(root, context);
+  await connectWorkspace(root, context, runtimeExe);
 
   const gitignore = await vscode.window.showQuickPick(["Yes", "No"], {
     title: "Add .cursor/goal-guardian/telemetry/ to .gitignore?",
