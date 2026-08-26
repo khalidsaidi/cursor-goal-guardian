@@ -14,10 +14,18 @@
     "type": "git",
     "url": "https://github.com/khalidsaidi/cursor-goal-guardian.git"
   },
+  "homepage": "https://github.com/khalidsaidi/cursor-goal-guardian#readme",
+  "bugs": {
+    "url": "https://github.com/khalidsaidi/cursor-goal-guardian/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["AI", "Chat", "Visualization"],
+  "categories": [
+    "AI",
+    "Chat",
+    "Visualization"
+  ],
   "keywords": [
     "cursor",
     "ai-agent",
@@ -30,7 +38,9 @@
     "productivity",
     "guardrail"
   ],
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "dist/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -52,21 +62,67 @@
       ]
     },
     "commands": [
-      { "command": "goalGuardian.setup", "title": "Goal Guardian: Set Up Workspace" },
-      { "command": "goalGuardian.commandCenter", "title": "Goal Guardian: Command Center" },
-      { "command": "goalGuardian.showPanel", "title": "Goal Guardian: Show Panel" },
-      { "command": "goalGuardian.refresh", "title": "Goal Guardian: Refresh", "icon": "$(refresh)" },
-      { "command": "goalGuardian.openContract", "title": "Goal Guardian: Open Contract" },
-      { "command": "goalGuardian.openConfig", "title": "Goal Guardian: Open Config" },
-      { "command": "goalGuardian.openState", "title": "Goal Guardian: Open State Store" },
-      { "command": "goalGuardian.openActions", "title": "Goal Guardian: Open Action Log" },
-      { "command": "goalGuardian.openAuditLog", "title": "Goal Guardian: Open Audit Log" },
-      { "command": "goalGuardian.startNextTask", "title": "Goal Guardian: Start Next Task" },
-      { "command": "goalGuardian.completeActiveTask", "title": "Goal Guardian: Complete Active Task" },
-      { "command": "goalGuardian.rebuildState", "title": "Goal Guardian: Rebuild State from Action Log" },
-      { "command": "goalGuardian.dispatchAction", "title": "Goal Guardian: Dispatch Action (Advanced)" },
-      { "command": "goalGuardian.rescoreDrift", "title": "Goal Guardian: Review Recent Drift with AI" },
-      { "command": "goalGuardian.uninstall", "title": "Goal Guardian: Remove from Workspace" }
+      {
+        "command": "goalGuardian.setup",
+        "title": "Goal Guardian: Set Up Workspace"
+      },
+      {
+        "command": "goalGuardian.commandCenter",
+        "title": "Goal Guardian: Command Center"
+      },
+      {
+        "command": "goalGuardian.showPanel",
+        "title": "Goal Guardian: Show Panel"
+      },
+      {
+        "command": "goalGuardian.refresh",
+        "title": "Goal Guardian: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "goalGuardian.openContract",
+        "title": "Goal Guardian: Open Contract"
+      },
+      {
+        "command": "goalGuardian.openConfig",
+        "title": "Goal Guardian: Open Config"
+      },
+      {
+        "command": "goalGuardian.openState",
+        "title": "Goal Guardian: Open State Store"
+      },
+      {
+        "command": "goalGuardian.openActions",
+        "title": "Goal Guardian: Open Action Log"
+      },
+      {
+        "command": "goalGuardian.openAuditLog",
+        "title": "Goal Guardian: Open Audit Log"
+      },
+      {
+        "command": "goalGuardian.startNextTask",
+        "title": "Goal Guardian: Start Next Task"
+      },
+      {
+        "command": "goalGuardian.completeActiveTask",
+        "title": "Goal Guardian: Complete Active Task"
+      },
+      {
+        "command": "goalGuardian.rebuildState",
+        "title": "Goal Guardian: Rebuild State from Action Log"
+      },
+      {
+        "command": "goalGuardian.dispatchAction",
+        "title": "Goal Guardian: Dispatch Action (Advanced)"
+      },
+      {
+        "command": "goalGuardian.rescoreDrift",
+        "title": "Goal Guardian: Review Recent Drift with AI"
+      },
+      {
+        "command": "goalGuardian.uninstall",
+        "title": "Goal Guardian: Remove from Workspace"
+      }
     ],
     "menus": {
       "view/title": [
