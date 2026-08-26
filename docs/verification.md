@@ -346,3 +346,38 @@ Windows: an agent session produced `action.observed` records for its edits
 task completed over the project MCP server, panel and status bar tracking
 throughout. In-chat nudges remain hook-only (no extension channel into the
 conversation exists); findings surface in the panel and status bar there.
+
+## Full headed retest with regression hunt (2026-08-26, second pass)
+
+Driven click-by-click in real Cursor on native Windows (wp3-wp8) and WSL
+(wslprobe, wslprobe2), with defects fixed and re-verified live as found:
+
+- Setup is an in-panel form (goal textarea grows and resizes; criteria and
+  boundaries are press-Enter chips with removal; gitignore checkbox; one
+  Connect button). No palette, no delimiters anywhere in the journey.
+- First install introduces itself: the panel reveals itself once per install
+  — verified on native Windows immediately and on WSL via the remote retry
+  (the workbench restores its layout late there and stomped a one-shot
+  reveal).
+- Complete means verified, generalized: agents probe the environment first,
+  run the proof before recording completion, and when the proof cannot run
+  they offer the fix or record the gap and wait. Seen live in four separate
+  agent sessions (missing node handled by offer, by absolute-path fallback,
+  and by PATH repair on user consent).
+- OS-level shell observation on native Windows: WMI process-creation events
+  scoped to the editor's process tree, deduped against the terminal channel
+  (letters-only fingerprints), wrappers unwrapped to their payloads, editor
+  machinery filtered (path markers pinned by tests after live sightings),
+  and exactly one recorder per workspace elected via an atomic heartbeat
+  lease (Cursor runs a second extension host for its Agents Window; the
+  naive check-then-write election raced and double-taped).
+- WSL/hooks path regression-free: hooks taped with full richness and no
+  observer interference; drift nudge machinery intact; AI review dismissed
+  the env-probe false alarm with a reasoned verdict; session review scored
+  on course; uninstall left zero trace while preserving the user's own
+  .gitignore lines.
+- CI: macos-15-intel replaces the starved macos-13 queue (green with a
+  platform-aware latency budget); darwin-x64 binaries additionally execute
+  under Rosetta on arm64 runners every push; SEA downloads retry; e2e
+  compiles once per run (Windows exe-handle race); testkit cleanup retries
+  Windows ENOTEMPTY.
