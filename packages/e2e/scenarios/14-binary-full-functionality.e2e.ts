@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { execSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,7 +46,7 @@ describe("14 [deterministic] shipped binaries: full functionality on this platfo
   let client: Client;
 
   beforeAll(async () => {
-    execSync(`node ${path.join(REPO, "scripts", "compile-binaries.mjs")} --host-only`, { cwd: REPO, stdio: "inherit" });
+    // Binaries are compiled once per run by globalSetup.
     expect(fs.existsSync(BIN_MCP)).toBe(true);
     expect(fs.existsSync(BIN_HOOK)).toBe(true);
     ws = await scaffoldWorkspace({});

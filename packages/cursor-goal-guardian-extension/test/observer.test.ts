@@ -106,6 +106,15 @@ describe("process watcher filter", () => {
     expect(isReportableProcess("node.exe", "node --test src/math.test.ts")).toBe(true);
   });
 
+  it("drops opaque tool-runner temp-script wrappers; their children carry the story", () => {
+    expect(
+      isReportableProcess(
+        "powershell.exe",
+        "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -ExecutionPolicy Bypass -NonInteractive -File C:\\Users\\k\\AppData\\Local\\Temp\\ps-script-1.ps1",
+      ),
+    ).toBe(false);
+  });
+
   it("the watch script carries its own sentinel so it can filter itself", () => {
     expect(processWatchScript()).toContain("gg-process-watch");
   });

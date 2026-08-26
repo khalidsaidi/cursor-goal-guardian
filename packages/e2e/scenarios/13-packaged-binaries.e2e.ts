@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { execSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +22,7 @@ const PACKAGED_HOOK = path.join(BIN_DIR, `goal-guardian-hook${EXE}`);
  */
 describe("13 [deterministic] the packaged extension binaries actually run", () => {
   beforeAll(() => {
-    execSync(`node ${path.join(REPO, "scripts", "compile-binaries.mjs")} --host-only`, { cwd: REPO, stdio: "inherit" });
+    // Binaries are compiled once per run by globalSetup.
     expect(fs.existsSync(PACKAGED_MCP)).toBe(true);
     expect(fs.existsSync(PACKAGED_HOOK)).toBe(true);
   }, 240_000);

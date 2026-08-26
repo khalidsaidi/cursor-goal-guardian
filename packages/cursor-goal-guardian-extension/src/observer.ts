@@ -20,6 +20,9 @@ import { readAuditTail, runPipeline, type AuditRecord, type DriftActionType, typ
 const EDIT_DEBOUNCE_MS = 1_500;
 const HOOK_LIVENESS_WINDOW_MS = 5 * 60_000;
 const LIVENESS_CACHE_MS = 30_000;
+const LEASE_HEARTBEAT_MS = 10_000;
+const LEASE_STALE_MS = 30_000;
+const LEASE_RETRY_MS = 20_000;
 const IGNORED_SEGMENTS = new Set([".git", "node_modules", "dist", "out", "build", "coverage", ".next", ".cache"]);
 
 /** Native Windows desktop only — everywhere else Cursor's hooks work and are the richer channel. */
@@ -64,6 +67,9 @@ const INFRASTRUCTURE_CMD_MARKERS = [
   "\\resources\\app\\",
   "/resources/app/",
   "appdata\\local\\programs\\cursor\\",
+  // Tool-runner temp-script wrappers are opaque; their child processes carry
+  // the real commands and are taped in their own right.
+  "-noninteractive -file c:\\users\\",
 ];
 
 /** Filter for OS-level process events: keep real commands, drop plumbing. */
@@ -157,14 +163,64 @@ export class Observer implements vscode.Disposable {
   private livenessCheckedAt = 0;
   private livenessResult = false;
   private started = false;
+  private leaseTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly root: string | null) {}
 
+  private leasePath(): string {
+    return path.join(this.root ?? "", ".cursor", "goal-guardian", "telemetry", "observer.lock");
+  }
+
+  /** True when this instance holds (or just took) the single-recorder lease. */
+  private acquireLease(): boolean {
+    const lease = this.leasePath();
+    try {
+      const stat = fs.statSync(lease);
+      const holder = fs.readFileSync(lease, "utf8").trim();
+      if (holder === String(process.pid)) return true;
+      if (Date.now() - stat.mtimeMs < LEASE_STALE_MS) return false; // live holder elsewhere
+    } catch {
+      /* no lease yet */
+    }
+    try {
+      fs.mkdirSync(path.dirname(lease), { recursive: true });
+      fs.writeFileSync(lease, String(process.pid), "utf8");
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private touchLease(): void {
+    try {
+      const now = new Date();
+      fs.utimesSync(this.leasePath(), now, now);
+    } catch {
+      /* workspace removed — dispose will clean up */
+    }
+  }
+
   start(): void {
-    if (this.started || !this.root) return;
+    if (!this.root) return;
     if (!shouldObserve(process.platform, vscode.env.remoteName)) return;
     if (!fs.existsSync(path.join(this.root, ".cursor", "goal-guardian"))) return;
+
+    // Cursor runs more than one extension host per workspace (the Agents
+    // Window has its own), so more than one Observer can exist. Exactly one
+    // may record — elected by a heartbeat lease; the others retry and take
+    // over when the holder's window closes.
+    if (!this.acquireLease()) {
+      this.leaseTimer ??= setInterval(() => this.start(), LEASE_RETRY_MS);
+      return;
+    }
+    if (this.leaseTimer) {
+      clearInterval(this.leaseTimer);
+      this.leaseTimer = null;
+    }
+    if (this.started) return;
     this.started = true;
+    this.heartbeatTimer = setInterval(() => this.touchLease(), LEASE_HEARTBEAT_MS);
 
     const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(this.root, "**/*"));
     this.disposables.push(watcher);
@@ -278,5 +334,14 @@ export class Observer implements vscode.Disposable {
     this.disposables.length = 0;
     this.watcherProc?.kill();
     this.watcherProc = null;
+    if (this.leaseTimer) clearInterval(this.leaseTimer);
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    try {
+      if (this.started && fs.readFileSync(this.leasePath(), "utf8").trim() === String(process.pid)) {
+        fs.rmSync(this.leasePath(), { force: true });
+      }
+    } catch {
+      /* nothing to release */
+    }
   }
 }
