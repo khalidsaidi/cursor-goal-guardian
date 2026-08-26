@@ -22,7 +22,7 @@ const PACKAGED_HOOK = path.join(BIN_DIR, `goal-guardian-hook${EXE}`);
  */
 describe("13 [deterministic] the packaged extension binaries actually run", () => {
   beforeAll(() => {
-    execSync(`node ${path.join(REPO, "scripts", "compile-binaries.mjs")} --host-only`, { cwd: REPO, stdio: "ignore" });
+    execSync(`node ${path.join(REPO, "scripts", "compile-binaries.mjs")} --host-only`, { cwd: REPO, stdio: "inherit" });
     expect(fs.existsSync(PACKAGED_MCP)).toBe(true);
     expect(fs.existsSync(PACKAGED_HOOK)).toBe(true);
   }, 240_000);

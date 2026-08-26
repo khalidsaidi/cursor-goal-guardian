@@ -46,7 +46,7 @@ describe("14 [deterministic] shipped binaries: full functionality on this platfo
   let client: Client;
 
   beforeAll(async () => {
-    execSync(`node ${path.join(REPO, "scripts", "compile-binaries.mjs")} --host-only`, { cwd: REPO, stdio: "ignore" });
+    execSync(`node ${path.join(REPO, "scripts", "compile-binaries.mjs")} --host-only`, { cwd: REPO, stdio: "inherit" });
     expect(fs.existsSync(BIN_MCP)).toBe(true);
     expect(fs.existsSync(BIN_HOOK)).toBe(true);
     ws = await scaffoldWorkspace({});

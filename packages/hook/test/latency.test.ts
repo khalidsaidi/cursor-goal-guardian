@@ -14,9 +14,11 @@ afterAll(async () => {
 
 // The hook sits in the hot path of every shell/read/edit event. Budget is
 // overridable for slow CI runners; locally the bundle runs well under it.
-// Windows pays a real process-spawn tax (~100ms+ on CI runners); the budget
-// is per-platform so the test measures our code, not the OS's exec cost.
-const BUDGET_MS = Number(process.env.GG_HOOK_LATENCY_MS ?? (process.platform === "win32" ? 450 : 150));
+// Windows pays a real process-spawn tax (~100ms+ on CI runners), and shared
+// Intel macOS runners spawn slowly too (~180ms measured) — the budget is
+// per-platform so the test measures our code, not the OS's exec cost.
+const DEFAULT_BUDGET_MS = process.platform === "win32" ? 450 : process.platform === "darwin" ? 400 : 150;
+const BUDGET_MS = Number(process.env.GG_HOOK_LATENCY_MS ?? DEFAULT_BUDGET_MS);
 
 describe("latency", () => {
   it(`p95 of sequential invocations stays under ${BUDGET_MS}ms`, () => {

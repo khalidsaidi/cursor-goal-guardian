@@ -1,7 +1,14 @@
 import { describe, it, expect, afterEach } from "vitest";
 import path from "node:path";
 import type { AuditRecord } from "@goal-guardian/core";
-import { hooksRecentlyAlive, isIgnoredRelPath, shouldObserve } from "../src/observer.js";
+import {
+  hooksRecentlyAlive,
+  isDuplicateShell,
+  isIgnoredRelPath,
+  isReportableProcess,
+  processWatchScript,
+  shouldObserve,
+} from "../src/observer.js";
 import { offerMcpEnableGuidance } from "../src/setup.js";
 import { recorded, responses, env } from "./mocks/vscode.js";
 
@@ -59,6 +66,64 @@ describe("hook liveness gate", () => {
 
   it("the observer's own echo never counts as hook liveness", () => {
     expect(hooksRecentlyAlive([hookEvent("2026-01-01T10:09:00.000Z", "observer")], now)).toBe(false);
+  });
+});
+
+// OS-level shell observation: nothing an agent tool-runner launches escapes
+// process creation, but editor plumbing and our own binaries stay off the tape.
+describe("process watcher filter", () => {
+  it("keeps real commands", () => {
+    expect(isReportableProcess("node.exe", "node --test src/math.test.ts")).toBe(true);
+    expect(isReportableProcess("powershell.exe", "powershell -Command winget install X")).toBe(true);
+  });
+
+  it("drops plumbing, our binaries, empty command lines, and the watcher itself", () => {
+    expect(isReportableProcess("conhost.exe", "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4")).toBe(false);
+    expect(isReportableProcess("Cursor.exe", "Cursor.exe --type=utility")).toBe(false);
+    expect(isReportableProcess("goal-guardian-hook.exe", "goal-guardian-hook.exe")).toBe(false);
+    expect(isReportableProcess("node.exe", "")).toBe(false);
+    expect(isReportableProcess("powershell.exe", "powershell -Command # gg-process-watch ...")).toBe(false);
+  });
+
+  it("drops the editor's own machinery seen live: hook-runtime wrapper, tsserver, typings installer", () => {
+    expect(
+      isReportableProcess(
+        "powershell.exe",
+        "powershell.exe -NoProfile -c \"Get-Content 'C:\\Users\\k\\AppData\\Local\\Temp\\cursor-hook-payload-1.json' | & 'goal-guardian-hook.exe'\"",
+      ),
+    ).toBe(false);
+    expect(
+      isReportableProcess(
+        "node.exe",
+        "c:\\Users\\k\\AppData\\Local\\Programs\\cursor\\resources\\app\\resources\\helpers\\node.exe tsserver.js",
+      ),
+    ).toBe(false);
+    expect(
+      isReportableProcess("node.exe", "node.exe c:/Users/k/AppData/Local/Programs/cursor/resources/app/extensions/node_modules/typescript/lib/typingsInstaller.js"),
+    ).toBe(false);
+    // A user's own node stays reportable.
+    expect(isReportableProcess("node.exe", "node --test src/math.test.ts")).toBe(true);
+  });
+
+  it("the watch script carries its own sentinel so it can filter itself", () => {
+    expect(processWatchScript()).toContain("gg-process-watch");
+  });
+});
+
+describe("shell dedup across channels", () => {
+  const now = 1_000_000;
+  it("the same execution seen by both channels tapes once, whichever lands first", () => {
+    const recent = [{ value: "npm test", ts: now - 5_000 }];
+    expect(isDuplicateShell(recent, "npm test", now)).toBe(true);
+    // WMI sees the full spawned command line wrapping the typed command —
+    // still the same execution, in either arrival order.
+    expect(isDuplicateShell(recent, 'powershell.exe -Command "npm test"', now)).toBe(true);
+    expect(isDuplicateShell([{ value: 'powershell.exe -Command "npm test"', ts: now - 5_000 }], "npm test", now)).toBe(true);
+  });
+
+  it("old sightings expire; new commands always tape", () => {
+    expect(isDuplicateShell([{ value: "npm test", ts: now - 120_000 }], "npm test", now)).toBe(false);
+    expect(isDuplicateShell([{ value: "npm test", ts: now - 5_000 }], "git status", now)).toBe(false);
   });
 });
 

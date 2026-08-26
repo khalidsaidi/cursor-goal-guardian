@@ -1,6 +1,8 @@
 import * as vscode from "vscode";
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline";
+import { spawn, type ChildProcess } from "node:child_process";
 import { readAuditTail, runPipeline, type AuditRecord, type DriftActionType, type HookEventName } from "@goal-guardian/core";
 
 /**
@@ -40,6 +42,88 @@ export function hooksRecentlyAlive(records: AuditRecord[], nowMs: number): boole
   );
 }
 
+/** Editor plumbing and our own binaries never belong on the tape. */
+const INFRASTRUCTURE_IMAGES = new Set([
+  "conhost.exe",
+  "cursor.exe",
+  "crashpad_handler.exe",
+  "winpty-agent.exe",
+  "goal-guardian-hook.exe",
+  "goal-guardian-mcp.exe",
+]);
+
+/** Substrings that mark a command line as the editor's own machinery, not the
+ * user's or agent's work: our binaries and watcher, Cursor's hook-runtime
+ * wrapper (it pipes a temp payload file into the hook), and anything run out
+ * of the editor's install tree (tsserver, typings installer, helpers). */
+const INFRASTRUCTURE_CMD_MARKERS = [
+  "goal-guardian-hook",
+  "goal-guardian-mcp",
+  "gg-process-watch",
+  "cursor-hook-payload",
+  "\\resources\\app\\",
+  "/resources/app/",
+  "appdata\\local\\programs\\cursor\\",
+];
+
+/** Filter for OS-level process events: keep real commands, drop plumbing. */
+export function isReportableProcess(name: string, cmd: string): boolean {
+  if (!cmd.trim()) return false;
+  if (INFRASTRUCTURE_IMAGES.has(name.toLowerCase())) return false;
+  const lower = cmd.toLowerCase();
+  return !INFRASTRUCTURE_CMD_MARKERS.some((marker) => lower.includes(marker));
+}
+
+/**
+ * Two channels can see the same command (terminal shell integration, which is
+ * richer but bypassable, and OS process creation, which nothing bypasses).
+ * A command that textually contains — or is contained by — something taped in
+ * the last minute is the same execution, not a new one.
+ */
+export function isDuplicateShell(recent: Array<{ value: string; ts: number }>, value: string, nowMs: number): boolean {
+  const norm = value.trim();
+  return recent.some(
+    (r) => nowMs - r.ts < 60_000 && (r.value.includes(norm) || norm.includes(r.value)),
+  );
+}
+
+/**
+ * PowerShell one-liner sentinel: gg-process-watch. Subscribes to Windows'
+ * own process-creation events (WMI), walks each new process's ancestry, and
+ * prints one JSON line per process born inside the editor's process tree.
+ * Push-based — no polling loop on our side, nothing an agent tool-runner can
+ * bypass, scoped strictly to the editor's own descendants.
+ */
+export function processWatchScript(): string {
+  return [
+    "# gg-process-watch",
+    "$ErrorActionPreference='SilentlyContinue'",
+    "$ext=[int]$env:GG_EXT_PID",
+    "$root=$ext",
+    "for($i=0;$i -lt 6;$i++){",
+    "  $p=Get-CimInstance Win32_Process -Filter \"ProcessId=$root\"",
+    "  if(-not $p){break}",
+    "  $par=Get-CimInstance Win32_Process -Filter \"ProcessId=$($p.ParentProcessId)\"",
+    "  if($par -and $par.Name -match 'Cursor'){$root=$par.ProcessId}else{break}",
+    "}",
+    "Register-CimIndicationEvent -Query \"SELECT * FROM __InstanceCreationEvent WITHIN 2 WHERE TargetInstance ISA 'Win32_Process'\" -SourceIdentifier gg | Out-Null",
+    "while($true){",
+    "  $e=Wait-Event -SourceIdentifier gg",
+    "  if(-not $e){continue}",
+    "  Remove-Event -EventIdentifier $e.EventIdentifier",
+    "  $t=$e.SourceEventArgs.NewEvent.TargetInstance",
+    "  $pp=$t.ParentProcessId;$hit=$false",
+    "  for($d=0;$d -lt 8 -and $pp;$d++){",
+    "    if($pp -eq $root){$hit=$true;break}",
+    "    $q=Get-CimInstance Win32_Process -Filter \"ProcessId=$pp\"",
+    "    if(-not $q){break}",
+    "    $pp=$q.ParentProcessId",
+    "  }",
+    "  if($hit){@{name=$t.Name;cmd=[string]$t.CommandLine} | ConvertTo-Json -Compress}",
+    "}",
+  ].join("\n");
+}
+
 interface ShellExecutionStartEvent {
   execution?: { commandLine?: { value?: string } };
 }
@@ -47,6 +131,8 @@ interface ShellExecutionStartEvent {
 export class Observer implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly recentShell: Array<{ value: string; ts: number }> = [];
+  private watcherProc: ChildProcess | null = null;
   private livenessCheckedAt = 0;
   private livenessResult = false;
   private started = false;
@@ -64,7 +150,8 @@ export class Observer implements vscode.Disposable {
     const onFile = (uri: vscode.Uri): void => this.queueEdit(uri.fsPath);
     this.disposables.push(watcher.onDidChange(onFile), watcher.onDidCreate(onFile));
 
-    // Terminal commands, when the editor exposes shell integration events.
+    // Terminal commands, when the editor exposes shell integration events
+    // (richer: the exact typed command line, before execution).
     const win = vscode.window as unknown as {
       onDidStartTerminalShellExecution?: (listener: (e: ShellExecutionStartEvent) => void) => vscode.Disposable;
     };
@@ -72,10 +159,52 @@ export class Observer implements vscode.Disposable {
       this.disposables.push(
         win.onDidStartTerminalShellExecution((e) => {
           const command = e.execution?.commandLine?.value ?? "";
-          if (command.trim()) void this.record("beforeShellExecution", "shell", command);
+          if (command.trim()) this.recordShell(command);
         }),
       );
     }
+
+    // OS-level backstop: agent tool-runners can bypass integrated terminals,
+    // but nothing launches a process without the OS seeing it.
+    this.startProcessWatcher();
+  }
+
+  private startProcessWatcher(): void {
+    try {
+      this.watcherProc = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", processWatchScript()], {
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "ignore"],
+        env: { ...process.env, GG_EXT_PID: String(process.pid) },
+      });
+      const out = this.watcherProc.stdout;
+      if (!out) return;
+      readline.createInterface({ input: out }).on("line", (line) => {
+        try {
+          const p = JSON.parse(line) as { name?: string; cmd?: string };
+          const name = p.name ?? "";
+          const cmd = (p.cmd ?? "").trim();
+          if (isReportableProcess(name, cmd)) this.recordShell(cmd);
+        } catch {
+          /* non-JSON chatter from the shell — ignore */
+        }
+      });
+      this.watcherProc.on("error", () => {
+        this.watcherProc = null;
+      });
+    } catch {
+      // The recorder must never disturb the editor; the terminal channel
+      // still stands.
+    }
+  }
+
+  /** Both shell channels funnel here; one execution is taped exactly once. */
+  private recordShell(command: string): void {
+    const now = Date.now();
+    while (this.recentShell.length > 0 && now - this.recentShell[0]!.ts > 60_000) this.recentShell.shift();
+    if (isDuplicateShell(this.recentShell, command, now)) return;
+    this.recentShell.push({ value: command.trim(), ts: now });
+    if (this.recentShell.length > 16) this.recentShell.shift();
+    void this.record("beforeShellExecution", "shell", command);
   }
 
   private queueEdit(file: string): void {
@@ -123,5 +252,7 @@ export class Observer implements vscode.Disposable {
     this.timers.clear();
     for (const d of this.disposables) d.dispose();
     this.disposables.length = 0;
+    this.watcherProc?.kill();
+    this.watcherProc = null;
   }
 }

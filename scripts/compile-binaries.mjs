@@ -85,10 +85,13 @@ async function winArm64NodeExe() {
   await fs.mkdir(cacheDir, { recursive: true });
   const name = `node-v${NODE_SEA_VERSION}-win-arm64`;
   const zip = path.join(cacheDir, `${name}.zip`);
-  run("curl", ["-fsSL", "-o", zip, `https://nodejs.org/dist/v${NODE_SEA_VERSION}/${name}.zip`]);
+  // CI runners see transient nodejs.org hiccups; retries make the build
+  // deterministic instead of luck-based.
+  const CURL_RETRY = ["--retry", "4", "--retry-delay", "2", "--retry-all-errors"];
+  run("curl", ["-fsSL", ...CURL_RETRY, "-o", zip, `https://nodejs.org/dist/v${NODE_SEA_VERSION}/${name}.zip`]);
   // checksum against the official manifest
   const sums = path.join(cacheDir, `SHASUMS256-${NODE_SEA_VERSION}.txt`);
-  run("curl", ["-fsSL", "-o", sums, `https://nodejs.org/dist/v${NODE_SEA_VERSION}/SHASUMS256.txt`]);
+  run("curl", ["-fsSL", ...CURL_RETRY, "-o", sums, `https://nodejs.org/dist/v${NODE_SEA_VERSION}/SHASUMS256.txt`]);
   const sumsText = await fs.readFile(sums, "utf8");
   const expected = sumsText.split("\n").find((l) => l.includes(`${name}.zip`))?.split(/\s+/)[0];
   const crypto = await import("node:crypto");
