@@ -5,3 +5,8 @@ export * from "./schema/state.js";
 export * from "./schema/config.js";
 export * from "./schema/audit.js";
 export * from "./schema/verdicts.js";
+export * from "./fsutil.js";
+export * from "./store/errors.js";
+export * from "./store/hash.js";
+export * from "./store/reducer.js";
+export * from "./store/store.js";
