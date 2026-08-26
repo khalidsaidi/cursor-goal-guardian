@@ -240,3 +240,33 @@ Windows (headed connect; wired `.exe` hook 67 ms warm — first-ever run pays a
 one-time Defender scan — and MCP handshake), and macOS via the CI matrix,
 where the darwin runner compiles and executes the shipped binary in the
 packaged-binary smoke. All three jobs green.
+
+## Full-functionality matrix (2026-08-26)
+
+Scenario 14 exercises the complete functionality of the shipped binaries on
+whatever platform runs it: all six MCP tools as a session lifecycle
+(including the decision-gated switch refusal), and every hook path — bare
+allow, drift burst nudged exactly once, per-segment chain advisories
+(alert/caution/ok against the real policy table), guardian-tool exemption,
+edit observation, quiet mode. The CI matrix runs it on all six shipped
+architectures natively: linux x64/arm64, darwin x64/arm64, win32 x64, and
+win32 arm64 (windows-11-arm runner executing the Node-SEA-built native
+binaries).
+
+Headed full journey, Linux (WSL): connect -> real agent (goal auto-declared,
+board completed through the shipped executables) -> /guardian briefing
+(guardian_get_status on the tape) -> hand-mangled state -> repair card ->
+one-click rebuild restored the exact goal -> status bar -> Command Center ->
+Remove -> the whole .cursor directory gone.
+
+Native Windows, verified: connect/wiring to the .exe pair, panel/tour,
+direct execution of the wired hook (67 ms warm) and MCP handshake, repair
+flow, Command Center removal with zero trace, and the zero-action 0.4.11
+upgrade (earlier rehearsals). Two OPEN platform findings for a dedicated
+session: (a) native-Windows IDE chats bind the user-level MCP source even
+after enabling the workspace source and reloading — the hardened resolver
+correctly refuses (the agent relayed "could not attach... open the project
+folder", twice, zero stray writes) but agent-driven workspace attach through
+Cursor's source selection remains unproven there; (b) workspace hooks.json
+produced no hook events from agent activity on native Windows (it does on
+WSL) — needs a fresh-boot investigation of Cursor's hook loading on win32.
