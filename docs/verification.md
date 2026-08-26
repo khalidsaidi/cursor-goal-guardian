@@ -84,3 +84,17 @@ MIGRATE_IMPORT action (breaking `state === replay(actions)` — live rebuild
 exposed it); the rebuild command swallowed errors (now surfaces a calm
 warning); and a stale error dialog was found queue-blocking every subsequent
 modal — dialog handling is now part of the live-test playbook.
+
+## Command coverage: 14/14, live
+
+Every contributed command was executed in a real Cursor window with its
+effect verified (disk and/or DOM): setup (full wizard), showPanel, refresh,
+openContract, openConfig, openState, openActions, openAuditLog (each opened
+a real editor tab with correct content), startNextTask, completeActiveTask
+(both via panel buttons and palette), rebuildState (error path pre-fix and
+success path post-fix), dispatchAction (action-type QuickPick + JSON payload
+→ OPEN_QUESTION landed with a human actor), rescoreDrift (manual command ran
+the real judge; consented state persisted per workspace), and uninstall
+(native dialog → complete removal). Webview affordances all clicked live:
+welcome setup button, task-start rows, complete/start buttons, consent card,
+and the per-item "Review with AI" button (third drift judged 0.95 on click).
