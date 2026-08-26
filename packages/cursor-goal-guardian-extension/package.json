@@ -1,7 +1,7 @@
 {
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
-  "description": "Drift flight-recorder for AI coding sessions in Cursor: records what the agent did, scores it against your declared goal, and shows the tape. Advisory-only — it never blocks and never nags.",
+  "description": "Your AI agent forgets what it's building. Guardian doesn't: ask like you always do and the request becomes a tracked goal — drift gets caught, false alarms clear themselves, and \"where were we?\" is one glance. Never blocks, never nags.",
   "version": "1.0.0",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
@@ -17,8 +17,19 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "keywords": ["cursor", "drift", "observability", "workflow", "guardrail", "ai-safety"],
+  "categories": ["AI", "Chat", "Visualization"],
+  "keywords": [
+    "cursor",
+    "ai-agent",
+    "drift",
+    "goals",
+    "flight-recorder",
+    "observability",
+    "mcp",
+    "hooks",
+    "productivity",
+    "guardrail"
+  ],
   "activationEvents": ["onStartupFinished"],
   "main": "dist/extension.js",
   "contributes": {

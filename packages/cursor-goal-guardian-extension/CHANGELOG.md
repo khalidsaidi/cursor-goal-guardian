@@ -7,6 +7,10 @@ it records what the agent did, scores it against the declared goal, and shows
 the tape. It never blocks, and it never nags.
 
 ### Added
+- Get-started tour in the panel: a six-step first-ten-minutes checklist whose
+  steps complete from evidence in the actual session (goal declared, task
+  finished, `/guardian` used, review consented…) — never from clicking "next".
+  Dismissible; retires itself when finished.
 - Session anchor: setup writes `.cursor/rules/goal-guardian.mdc` so every agent
   session loads the contract and records progress unprompted (verified e2e with
   a real, uninstructed Cursor agent).

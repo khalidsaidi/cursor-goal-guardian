@@ -29,8 +29,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const controller = new PanelController(context, root, {
     isSemanticConsented: () => rescore.isConsented(),
     isSemanticAvailable: () => rescore.isAvailable(),
+    isCommandCenterUsed: () => context.workspaceState.get<boolean>("goalGuardian.tour.commandCenterUsed", false),
+    isTourDismissed: () => context.workspaceState.get<boolean>("goalGuardian.tour.dismissed", false),
     onCommand: async (command) => {
       if (command === "enableRescore") await rescore.grantConsent();
+      else if (command === "dismissTour") await context.workspaceState.update("goalGuardian.tour.dismissed", true);
       else if (command === "editGoal") {
         if (!root) return;
         const state = await readStateSafe(root);
@@ -139,6 +142,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const r = requireRoot();
       if (!r) return;
       try {
+        await context.workspaceState.update("goalGuardian.tour.commandCenterUsed", true);
         await openCommandCenter({ root: r, rescoreNow: () => rescore.rescoreNow(), refresh: () => controller.refresh() });
       } catch (err) {
         void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);

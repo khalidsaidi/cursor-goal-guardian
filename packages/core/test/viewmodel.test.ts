@@ -125,3 +125,55 @@ describe("panel view model", () => {
     expect(vm.suggestion).toBeNull();
   });
 });
+
+describe("get-started tour", () => {
+  const stepById = (vm: ReturnType<typeof buildPanelViewModel>) =>
+    Object.fromEntries(vm.tour.steps.map((s) => [s.id, s.done]));
+
+  it("every step completes from evidence on the tape, not clicks", () => {
+    const records: AuditRecord[] = [
+      { ts: at(30), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/guardian_get_status" },
+      { ts: at(20), kind: "drift.verdict", driftId: "d1", verdict: "dismissed", judge: "cursor-agent", confidence: 0.9, rationale: "r" },
+    ];
+    const vm = buildPanelViewModel(baseInputs({ records, commandCenterUsed: true }));
+    expect(stepById(vm)).toEqual({ connect: true, ask: true, tick: true, steer: true, review: true, center: true });
+    expect(vm.tour.doneCount).toBe(6);
+    // All done -> the section retires itself.
+    expect(vm.tour.visible).toBe(false);
+  });
+
+  it("a fresh connected workspace shows 1 of 6 with the momentum step done", () => {
+    const inputs = baseInputs();
+    inputs.state = defaultState();
+    const vm = buildPanelViewModel(inputs);
+    expect(stepById(vm)).toEqual({ connect: true, ask: false, tick: false, steer: false, review: false, center: false });
+    expect(vm.tour).toMatchObject({ doneCount: 1, total: 6, visible: true });
+  });
+
+  it("asking completes via goal or via any tape record; /guardian completes only on a guardian status/contract call", () => {
+    const inputs = baseInputs();
+    inputs.state = defaultState();
+    inputs.records = [
+      { ts: at(10), kind: "action.observed", actionType: "mcp", actionValue: "browser/take_screenshot" },
+    ];
+    const vm = buildPanelViewModel(inputs);
+    expect(stepById(vm).ask).toBe(true);
+    expect(stepById(vm).steer).toBe(false);
+  });
+
+  it("consent alone completes the review step", () => {
+    const vm = buildPanelViewModel(baseInputs({ semanticConsented: true }));
+    expect(stepById(vm).review).toBe(true);
+  });
+
+  it("dismissed hides the tour without touching step state", () => {
+    const vm = buildPanelViewModel(baseInputs({ tourDismissed: true }));
+    expect(vm.tour.visible).toBe(false);
+    expect(vm.tour.doneCount).toBeGreaterThan(0);
+  });
+
+  it("not-set-up keeps the tour invisible (the welcome screen is step 1)", () => {
+    const vm = buildPanelViewModel(baseInputs({ setUp: false }));
+    expect(vm.tour.visible).toBe(false);
+  });
+});

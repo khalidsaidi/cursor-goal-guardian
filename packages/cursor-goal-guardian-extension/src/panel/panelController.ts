@@ -12,6 +12,8 @@ import {
 export interface PanelDelegate {
   isSemanticConsented(): boolean;
   isSemanticAvailable(): boolean;
+  isCommandCenterUsed(): boolean;
+  isTourDismissed(): boolean;
   onCommand(command: string): Promise<void>;
   onStartTask(taskId: string): Promise<void>;
   onRescoreOne(driftId: string): Promise<void>;
@@ -92,6 +94,8 @@ export class PanelController implements vscode.WebviewViewProvider {
       now: new Date(),
       semanticConsented: this.delegate.isSemanticConsented(),
       semanticAvailable: this.delegate.isSemanticAvailable(),
+      commandCenterUsed: this.delegate.isCommandCenterUsed(),
+      tourDismissed: this.delegate.isTourDismissed(),
     };
     if (!this.root) return buildPanelViewModel(empty);
     const format = await detectWorkspaceFormat(this.root);
@@ -109,7 +113,7 @@ export class PanelController implements vscode.WebviewViewProvider {
     const nonce = crypto.randomBytes(16).toString("hex");
     const script = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "webview.js"));
     const style = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "panel.css"));
-    const sections = ["welcome", "goal", "focus", "criteria", "constraints", "drift", "consent"]
+    const sections = ["welcome", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"]
       .map((id) => `<div id="${id}"></div>`)
       .join("\n");
     return `<!DOCTYPE html>

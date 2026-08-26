@@ -40,7 +40,11 @@ Guardian: Show Panel".) You'll see this:
 about what you're building, plus one housekeeping question — and pressing
 **Esc through all of them is completely fine** (step 4 works either way).
 Guardian writes its files into a small `.cursor/goal-guardian` folder in your
-project. You never need to open it.
+project. You never need to open it. The panel now shows a **Get started
+checklist (1 of 6 already done)** — it ticks itself from what actually happens
+in your session, the same way Guardian tracks goals. No "next" buttons.
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s13-tour.png" alt="The get-started checklist that completes from the real session" width="500" />
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s9-setup.png" alt="The setup wizard" width="800" />
 
@@ -70,14 +74,19 @@ That's it. You now have a session that can't lose the plot.
 ### In your chat (where you already live)
 
 Guardian's skills sit in the same `/` menu as everything else, and the agent
-follows a session protocol automatically: it loads your goal at session
-start, records progress as it finishes tasks, and when *you* change direction
-("actually, let's do X first") it puts the pivot on the record instead of
-silently forgetting the old thread:
+follows a session protocol automatically. Here is the whole core move — one
+plain request, and the goal, the "Tracking:" line, and the task board all
+come from it:
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-ask.gif" alt="One request becomes a tracked goal with its own done-when list" width="800" />
+
+And when *you* change direction ("actually, let's do X first"), the pivot
+goes on the record — with its own done-when — instead of silently deleting
+the old thread:
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-pivot.gif" alt="A mid-session pivot recorded on the tape" width="800" />
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s1-slash-menu.png" alt="Guardian skills in the slash menu" width="800" />
-
-<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s3-hub-pivot.png" alt="A pivot recorded on the tape" width="800" />
 
 And when the *agent* wanders off on its own, Guardian's tap on the shoulder
 arrives right in the conversation — the agent pauses and asks you: continue
@@ -110,7 +119,7 @@ detour — dismissing housekeeping with a written reason, confirming real
 drift, and periodically reading the whole session to answer one question:
 *is this still on course?*
 
-<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s12-consent.png" alt="AI review consent" width="800" />
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-review.gif" alt="Consent once; false alarms clear themselves with written reasons" width="800" />
 
 ### Safety rails
 
@@ -150,6 +159,7 @@ drift, and periodically reading the whole session to answer one question:
 | | ✓ Task switches require a recorded reason (the machine enforces it) |
 | | ✓ Detours paired with the action that brought the session back |
 | **IDE** | ✓ Full-height session panel (goal, lamp, board, checklist, track) |
+| | ✓ Get-started tour that completes from the real session, not from clicks |
 | | ✓ Click-to-edit goal · per-item "check with AI" |
 | | ✓ Status bar with click-to-steer Command Center |
 | | ✓ 15 palette commands incl. guided setup and full uninstall |

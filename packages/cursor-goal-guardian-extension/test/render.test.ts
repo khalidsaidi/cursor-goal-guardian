@@ -121,4 +121,25 @@ describe("panel sections", () => {
   it("escapeHtml covers the critical entities", () => {
     expect(escapeHtml(`<a href="x" onclick='y'>&`)).toBe("&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;");
   });
+
+  it("get-started tour renders progress, action links for open steps, and a dismiss control", () => {
+    const sections = renderSections(buildPanelViewModel(inputs()));
+    expect(sections.tour).toContain("Get started · 2 of 6");
+    expect(sections.tour).toContain('data-cmd="enableRescore"');
+    expect(sections.tour).toContain('data-cmd="commandCenter"');
+    expect(sections.tour).toContain('data-cmd="dismissTour"');
+    expect(sections.tour).toContain("Type /guardian in the chat");
+  });
+
+  it("tour disappears when dismissed and when every step is done", () => {
+    expect(renderSections(buildPanelViewModel(inputs({ tourDismissed: true }))).tour).toBe("");
+    const records: AuditRecord[] = [
+      { ts: at(30), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/guardian_get_status" },
+      { ts: at(20), kind: "drift.verdict", driftId: "d1", verdict: "dismissed", judge: "cursor-agent", confidence: 0.9, rationale: "r" },
+    ];
+    const st = inputs({ records, commandCenterUsed: true });
+    st.state.tasks[0]!.status = "done";
+    st.state.activeTaskId = null;
+    expect(renderSections(buildPanelViewModel(st)).tour).toBe("");
+  });
 });

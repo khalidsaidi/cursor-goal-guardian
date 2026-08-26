@@ -19,7 +19,7 @@ those three jobs and one placement.
 | Surface | Role | Content |
 |---|---|---|
 | **Open VSX listing** (= extension README) | Storefront | Hero GIF, benefits, "First 10 minutes" tutorial, the tour (per-capability media), full capability matrix, mechanism, reference |
-| ~~In-editor Walkthrough~~ | **Dropped after live verification (2026-08-25): Cursor removed the `Welcome: Open Walkthrough` command, so `contributes.walkthroughs` never surfaces.** The guided onboarding lives in the README tutorial, the panel welcome view, and `/guardian` instead. |
+| **In-panel Get-started tour** (replaces `contributes.walkthroughs` — Cursor removed the `Welcome: Open Walkthrough` command, verified live 2026-08-25) | Native guided onboarding, on-identity: a six-step checklist in the session panel whose steps complete from evidence on the tape (goal declared, task done, `/guardian` call observed, review consent, Command Center opened) — never from clicking "next". Dismissible; retires itself when complete. Verified live: opening the Command Center from the tour link ticked the step in real time. |
 | **Panel welcome view** | First-glance teacher | Already built: one promise + one button; add "or just ask your agent — Guardian starts tracking automatically" |
 | **`/guardian` skill** | In-chat help desk | Already answers "what can you do"; the briefing IS the tutorial's step 4 |
 | **Root README (GitHub)** | Evaluator/contributor page | Architecture, dev, validation (exists; link to extension README for the product story) |

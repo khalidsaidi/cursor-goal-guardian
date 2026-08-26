@@ -10,7 +10,7 @@ import type { PanelViewModel, PanelTask, PanelDriftEntry } from "@goal-guardian/
  * the user's side of the screen: "Done when", "Boundaries", "Mark done".
  */
 
-export const SECTION_IDS = ["welcome", "goal", "focus", "criteria", "constraints", "drift", "consent"] as const;
+export const SECTION_IDS = ["welcome", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"] as const;
 export type SectionId = (typeof SECTION_IDS)[number];
 
 export function escapeHtml(value: string): string {
@@ -81,6 +81,29 @@ function renderGoal(vm: PanelViewModel): string {
       ${vm.sessionReview ? `<p class="review-line">AI read the session: ${vm.sessionReview.verdict === "on_course" ? "on course" : "off course"} (${Math.round(vm.sessionReview.confidence * 100)}%) — ${escapeHtml(vm.sessionReview.rationale)}</p>` : ""}
       ${vm.suggestion ? `<p class="suggestion">${escapeHtml(vm.suggestion)}</p>` : ""}
     </div>`;
+}
+
+function renderTour(vm: PanelViewModel): string {
+  if (!vm.tour.visible) return "";
+  const items = vm.tour.steps
+    .map((s) => {
+      const action =
+        !s.done && s.id === "review"
+          ? `<button class="link" data-cmd="enableRescore">turn on</button>`
+          : !s.done && s.id === "center"
+            ? `<button class="link" data-cmd="commandCenter">open it</button>`
+            : "";
+      return `<li class="${s.done ? "done" : ""}">
+        <span class="tick">${s.done ? "✓" : ""}</span>
+        <span class="step"><b>${escapeHtml(s.label)}</b><span class="hint">${escapeHtml(s.hint)}${action ? " · " : ""}${action}</span></span>
+      </li>`;
+    })
+    .join("");
+  return `<div class="tour">
+    <div class="eyebrow">Get started · ${vm.tour.doneCount} of ${vm.tour.total}
+      <button class="link dismiss" data-cmd="dismissTour" title="Hide this checklist">hide</button></div>
+    <ul>${items}</ul>
+  </div>`;
 }
 
 function renderFocus(vm: PanelViewModel): string {
@@ -185,6 +208,7 @@ export function renderSections(vm: PanelViewModel): Record<SectionId, string> {
   return {
     welcome: renderWelcome(vm),
     goal: renderGoal(vm),
+    tour: renderTour(vm),
     focus: renderFocus(vm),
     criteria: renderCriteria(vm),
     constraints: renderConstraints(vm),

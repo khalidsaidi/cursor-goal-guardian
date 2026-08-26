@@ -20,6 +20,21 @@ export interface PanelDriftEntry {
   detail: string;
 }
 
+export interface TourStep {
+  id: "connect" | "ask" | "tick" | "steer" | "review" | "center";
+  label: string;
+  hint: string;
+  done: boolean;
+}
+
+export interface PanelTour {
+  steps: TourStep[];
+  doneCount: number;
+  total: number;
+  /** False once dismissed or every step is done — the section disappears for good. */
+  visible: boolean;
+}
+
 export interface PanelViewModel {
   setUp: boolean;
   goal: string;
@@ -37,6 +52,8 @@ export interface PanelViewModel {
   sessionReview: { verdict: "on_course" | "off_course"; confidence: number; rationale: string; ts: string; flaggedActions: string[] } | null;
   /** One honest sentence when the tape suggests the CONTRACT (not the agent) is stale. */
   suggestion: string | null;
+  /** The guided first-ten-minutes checklist; steps tick from the real tape. */
+  tour: PanelTour;
 }
 
 export interface PanelInputs {
@@ -47,6 +64,66 @@ export interface PanelInputs {
   now: Date;
   semanticConsented: boolean;
   semanticAvailable: boolean;
+  /** Host memory: the Command Center has been opened at least once here. */
+  commandCenterUsed?: boolean;
+  /** Host memory: the user hid the get-started tour. */
+  tourDismissed?: boolean;
+}
+
+/**
+ * The get-started tour is Guardian pointed at its own onboarding: each step
+ * completes from evidence on the tape, not from clicking "next". Steps mirror
+ * the README's "Your first 10 minutes" exactly.
+ */
+function buildTour(inputs: PanelInputs): PanelTour {
+  const { state, records } = inputs;
+  const steps: TourStep[] = [
+    {
+      id: "connect",
+      label: "Connect Guardian",
+      hint: "done — this workspace is wired up",
+      done: inputs.setUp,
+    },
+    {
+      id: "ask",
+      label: "Ask your agent for something",
+      hint: "your request becomes the goal",
+      done: state.goal.trim().length > 0 || records.length > 0,
+    },
+    {
+      id: "tick",
+      label: "See a task finish",
+      hint: "the checklist ticks itself as work lands",
+      done: state.tasks.some((t) => t.status === "done"),
+    },
+    {
+      id: "steer",
+      label: "Type /guardian in the chat",
+      hint: "a plain-language briefing of the session",
+      done: records.some(
+        (r) => r.kind === "action.observed" && r.actionType === "mcp" && /guardian_get_(status|contract)/.test(r.actionValue),
+      ),
+    },
+    {
+      id: "review",
+      label: "Turn on AI review",
+      hint: "false alarms clear themselves, with reasons",
+      done: inputs.semanticConsented || records.some((r) => r.kind === "drift.verdict"),
+    },
+    {
+      id: "center",
+      label: "Open the Command Center",
+      hint: "click the Guardian item in the status bar",
+      done: inputs.commandCenterUsed === true,
+    },
+  ];
+  const doneCount = steps.filter((s) => s.done).length;
+  return {
+    steps,
+    doneCount,
+    total: steps.length,
+    visible: inputs.setUp && inputs.tourDismissed !== true && doneCount < steps.length,
+  };
 }
 
 function toPanelTask(t: Task, activeId: string | null): PanelTask {
@@ -82,6 +159,7 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       semantic: { consented: inputs.semanticConsented, available: inputs.semanticAvailable, pendingCount: 0 },
       sessionReview: null,
       suggestion: null,
+      tour: buildTour(inputs),
     };
   }
 
@@ -152,5 +230,6 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
     },
     sessionReview,
     suggestion,
+    tour: buildTour(inputs),
   };
 }
