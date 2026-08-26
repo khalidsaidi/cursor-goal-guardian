@@ -270,3 +270,23 @@ folder", twice, zero stray writes) but agent-driven workspace attach through
 Cursor's source selection remains unproven there; (b) workspace hooks.json
 produced no hook events from agent activity on native Windows (it does on
 WSL) — needs a fresh-boot investigation of Cursor's hook loading on win32.
+
+
+# OPEN — NOT PROVEN (plain list)
+
+1. **Native Windows: agent cannot reach the workspace's Guardian.**
+   IDE chats bind the user-level MCP source even after enabling the
+   workspace source and reloading. Agent gets a clear error instead of
+   silent misbehavior, but tracking does not work from a native-Windows
+   IDE chat yet.
+2. **Native Windows: hooks never fire from agent activity.**
+   The recorder binary works when invoked directly, but Cursor on
+   native win32 did not invoke workspace hooks.json during agent runs
+   (WSL does). Recording is effectively OFF on native Windows.
+3. **darwin-x64 CI job**: queued behind GitHub's scarce macos-13
+   runners at time of writing (same suite that passed on the other
+   five architectures).
+
+Consequence while 1+2 stand: the product is fully proven on
+Linux/WSL; on native Windows only the panel, setup, repair, removal,
+and upgrade are proven — live tracking (the core feature) is not.
