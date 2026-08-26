@@ -22,10 +22,45 @@ onto disk**, where they cannot decay:
 
 - **Goal contract** — goal, success criteria, constraints (`contract.json`)
 - **Redux-style task board** — a real store with an append-only action log and
-  one pure reducer: state is always exactly `replay(actions)` (ids and
-  timestamps live in the actions, so time-travel/rebuild is deterministic);
-  task switches require a recorded decision
+  one pure reducer: state is always exactly `replay(actions)`; task switches
+  require a recorded decision
 - **The tape** — typed telemetry of hooks, actions, drift signals, and reviews
+
+## How the Redux store reduces drift (plain English)
+
+Drift happens because "what we're working on" normally lives in the agent's
+head — and the agent's head leaks. When the plan only exists in chat history,
+it mutates silently and nobody can point to the moment it changed.
+
+The store takes the plan out of anyone's head and makes it a **fact in a file**:
+
+1. **One answer to "what is the current task?"** Every part of the system — the
+   hooks, the panel, the AI reviewer, the agent itself — reads the same answer
+   from the same file. You can't drift from something fuzzy; once it's written
+   down, drifting from it becomes *visible*. The store is the fixed point that
+   makes the word "drift" mean anything at all.
+2. **The plan only changes through the front door.** The store never changes by
+   editing it — only by dispatching an action: start this task, complete that
+   one, record a decision. Switching away from an active task *without a
+   written decision is refused by the state machine itself*. The agent can
+   still wander with its hands, but it can never quietly rewrite what the
+   session is for — and that gap between recorded purpose and actual behavior
+   is exactly what every drift detector here measures.
+3. **Every change is a receipt.** Actions append to a log forever, and
+   replaying the log reproduces the current state exactly. When a drift
+   warning fires at 3:40 PM, you can see that the CSV task was started at
+   3:35 PM and no decision has been recorded since — so the dark-theme work at
+   3:40 has no recorded reason to exist.
+4. **Interruptions stop causing drift.** The classic drift moment is
+   *resuming* — after lunch, a meeting, or a context reset, everyone
+   reconstructs "where were we?" from fading memory and starts subtly wrong.
+   With the store, resuming is a read, not a reconstruction: active task,
+   done list, open questions, last decision.
+
+In one line: **the store doesn't stop the agent from wandering — it makes it
+impossible for the *goal* to wander.** The goal stays nailed to the floor, so
+the moment the work walks away from it, everything else (the scorer, the
+judge, the nudge, the panel) has a fixed spot to measure the distance from.
 
 ## How it stays on goal
 

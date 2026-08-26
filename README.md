@@ -32,6 +32,16 @@ reducer, deterministic replay (`state === replay(actions)`, exactly — v2 moved
 all id/timestamp generation into the actions to make that guarantee real),
 hash-guarded state, decision-gated task switches.
 
+**Why the store is the anti-drift mechanism, in plain English:** drift happens
+because the plan normally lives in the agent's context, and context leaks. The
+store makes the plan a fact in a file — there is one answer to "what is the
+current task", it can only change through a dispatched action, switching tasks
+without a recorded decision is refused by the state machine, and every change
+leaves a replayable receipt. The store doesn't stop the agent from wandering;
+it makes it impossible for the *goal* to wander — which gives every detector
+(lexical scorer, AI judge, nudges, panel) a fixed point to measure drift from,
+and makes resuming after any interruption a read instead of a guess.
+
 ## Repo layout (pnpm monorepo, all packages 1.0.0)
 
 ```

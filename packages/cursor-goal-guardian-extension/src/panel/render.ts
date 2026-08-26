@@ -30,6 +30,10 @@ function renderWelcome(vm: PanelViewModel): string {
       <h2>Goal Guardian</h2>
       <p>A drift flight-recorder for AI coding sessions. Declare a goal, and this panel
       shows what the agent did, whether it stayed on course, and how the session recovered.</p>
+      <p>The trick: your goal and task list become facts in files (a Redux-style store),
+      not memories in the agent's context. The agent can wander — the goal can't.
+      That fixed point is what makes drift visible, and resuming after any
+      interruption a read instead of a guess.</p>
       <p>Nothing is installed or written until you set it up — and it never blocks anything.</p>
       <button data-cmd="setup">Set up this workspace</button>
     </div>`;
