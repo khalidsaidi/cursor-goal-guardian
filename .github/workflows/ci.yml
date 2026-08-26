@@ -7,8 +7,13 @@ on:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # All six shipped architectures execute their own binaries.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-latest, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - run: corepack enable
@@ -16,7 +21,10 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+      # bun compiles five targets; windows-arm64 builds via Node SEA instead
+      # (bun has no win-arm64 build, so the step is skipped there).
       - uses: oven-sh/setup-bun@v2
+        if: matrix.os != 'windows-11-arm'
       - run: pnpm install --frozen-lockfile
       - run: node scripts/check-versions.mjs
       - run: pnpm -r build
