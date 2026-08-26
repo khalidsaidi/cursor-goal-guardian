@@ -164,3 +164,18 @@ evidence at every step:
 - /guardian briefing in-chat: "Everything on the board is done (5 of 5)…
   no drift; session health is stable" with next moves — plain prose from
   guardian_get_status, exactly as the skill specifies.
+
+## Upgrade rehearsal against the published bits (2026-08-26)
+
+Downloaded the actual 0.4.11 VSIX from Open VSX, installed it, and let it
+scaffold a workspace the way it does for real users (auto-created v1 state on
+activation; contract hand-edited per the old quick start). Then installed the
+1.0.0 VSIX over it — the same replace-in-place the marketplace performs — and
+reloaded the window, which is the standard apply step for ANY extension
+update.
+
+Result, with zero Guardian-specific user actions: files migrated to v2 with
+`*.v1.bak` backups, the old goal and criteria carried into the live panel as
+title and task board, and the workspace came out fully connected (hooks, MCP,
+rule, skills on the PATH-free runtime). The only prompt shown is the single
+passive upgrade notice.
