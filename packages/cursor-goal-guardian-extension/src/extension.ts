@@ -143,6 +143,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!r) return;
       try {
         await context.workspaceState.update("goalGuardian.tour.commandCenterUsed", true);
+        // workspaceState changes don't touch watched files — refresh so the
+        // tour tick shows immediately, from every entry point (status bar too).
+        void controller.refresh();
         await openCommandCenter({ root: r, rescoreNow: () => rescore.rescoreNow(), refresh: () => controller.refresh() });
       } catch (err) {
         void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
