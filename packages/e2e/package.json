@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
-    "test:e2e:offline": "vitest run --config vitest.e2e.config.ts scenarios/04-task-switch-rejected.e2e.ts scenarios/09-migration.e2e.ts scenarios/10-panel-pipeline.e2e.ts scenarios/11-quiet-mode.e2e.ts scenarios/13-packaged-binaries.e2e.ts"
+    "test:e2e:offline": "vitest run --config vitest.e2e.config.ts scenarios/04-task-switch-rejected.e2e.ts scenarios/09-migration.e2e.ts scenarios/10-panel-pipeline.e2e.ts scenarios/11-quiet-mode.e2e.ts scenarios/13-packaged-binaries.e2e.ts scenarios/14-binary-full-functionality.e2e.ts"
   },
   "dependencies": {
     "@goal-guardian/core": "workspace:*",

@@ -24,3 +24,4 @@ coverage/
 artifacts/panel-demo/
 dist-bin/
 packages/cursor-goal-guardian-extension/bin/
+.cache/

@@ -25,6 +25,9 @@ registerGetStatus(server);
 registerRecordProgress(server);
 registerUpdateGoal(server);
 
+// No top-level await: the entry must bundle to CJS for Node SEA (the
+// win32-arm64 executable), and CJS forbids TLA.
 const transport = new StdioServerTransport();
-await server.connect(transport);
-console.error("[goal-guardian] MCP server running on stdio (v1.0.0)");
+void server.connect(transport).then(() => {
+  console.error("[goal-guardian] MCP server running on stdio (v1.0.0)");
+});
