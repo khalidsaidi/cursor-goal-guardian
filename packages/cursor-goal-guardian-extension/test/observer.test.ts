@@ -8,6 +8,7 @@ import {
   isReportableProcess,
   processWatchScript,
   shouldObserve,
+  unwrapShellCommand,
 } from "../src/observer.js";
 import { offerMcpEnableGuidance } from "../src/setup.js";
 import { recorded, responses, env } from "./mocks/vscode.js";
@@ -124,6 +125,32 @@ describe("shell dedup across channels", () => {
   it("old sightings expire; new commands always tape", () => {
     expect(isDuplicateShell([{ value: "npm test", ts: now - 120_000 }], "npm test", now)).toBe(false);
     expect(isDuplicateShell([{ value: "npm test", ts: now - 5_000 }], "git status", now)).toBe(false);
+  });
+
+  it("escaping differences between channels cannot defeat the dedup", () => {
+    const typed = 'Get-Command node, npm -ErrorAction SilentlyContinue | Format-Table Name';
+    const wmi = 'Get-Command node, npm -ErrorAction SilentlyContinue \\| Format-Table \\"Name\\"';
+    expect(isDuplicateShell([{ value: typed, ts: now - 3_000 }], wmi, now)).toBe(true);
+  });
+});
+
+describe("wrapper unwrapping", () => {
+  it("powershell -c and -Command payloads become the taped command", () => {
+    expect(unwrapShellCommand('powershell.exe -NoProfile -c "node --test src/math.test.ts"')).toBe(
+      "node --test src/math.test.ts",
+    );
+    expect(unwrapShellCommand('powershell.exe -Command "npm -v"')).toBe("npm -v");
+    expect(unwrapShellCommand('cmd.exe /c npm install')).toBe("npm install");
+  });
+
+  it("unwrapped payloads get the infrastructure filter again", () => {
+    const wrapper =
+      'powershell.exe -NoProfile -c "Get-Content \'C:\\Temp\\cursor-hook-payload-1.json\' | & \'goal-guardian-hook.exe\'"';
+    expect(isReportableProcess("powershell.exe", unwrapShellCommand(wrapper))).toBe(false);
+  });
+
+  it("plain commands pass through untouched", () => {
+    expect(unwrapShellCommand("node --test src/math.test.ts")).toBe("node --test src/math.test.ts");
   });
 });
 

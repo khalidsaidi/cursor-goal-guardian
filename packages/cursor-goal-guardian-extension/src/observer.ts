@@ -75,16 +75,37 @@ export function isReportableProcess(name: string, cmd: string): boolean {
 }
 
 /**
+ * A shell wrapper's inner command is the story; the wrapper is noise. Pulls
+ * the payload out of `powershell ... -c "<cmd>"` / `-Command "<cmd>"` (and
+ * cmd.exe /c) so the tape reads like work, not plumbing.
+ */
+export function unwrapShellCommand(cmd: string): string {
+  const ps = /(?:-c(?:ommand)?)\s+"([\s\S]+)"\s*$/i.exec(cmd);
+  if (ps?.[1]) return ps[1].replace(/\\"/g, '"').trim();
+  const cmdExe = /cmd(?:\.exe)?"?\s+\/[cs]\s+(.+)$/i.exec(cmd);
+  if (cmdExe?.[1]) return cmdExe[1].trim();
+  return cmd;
+}
+
+/** Escaping and quoting differ between channels; compare the letters only. */
+function shellFingerprint(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+/**
  * Two channels can see the same command (terminal shell integration, which is
  * richer but bypassable, and OS process creation, which nothing bypasses).
- * A command that textually contains — or is contained by — something taped in
- * the last minute is the same execution, not a new one.
+ * A command whose normalized text contains — or is contained by — something
+ * taped in the last minute is the same execution, not a new one.
  */
 export function isDuplicateShell(recent: Array<{ value: string; ts: number }>, value: string, nowMs: number): boolean {
-  const norm = value.trim();
-  return recent.some(
-    (r) => nowMs - r.ts < 60_000 && (r.value.includes(norm) || norm.includes(r.value)),
-  );
+  const norm = shellFingerprint(value);
+  if (!norm) return true;
+  return recent.some((r) => {
+    if (nowMs - r.ts >= 60_000) return false;
+    const seen = shellFingerprint(r.value);
+    return seen.includes(norm) || norm.includes(seen);
+  });
 }
 
 /**
@@ -183,7 +204,10 @@ export class Observer implements vscode.Disposable {
           const p = JSON.parse(line) as { name?: string; cmd?: string };
           const name = p.name ?? "";
           const cmd = (p.cmd ?? "").trim();
-          if (isReportableProcess(name, cmd)) this.recordShell(cmd);
+          if (!isReportableProcess(name, cmd)) return;
+          // The wrapper's payload is the story; filter it again once bare.
+          const inner = unwrapShellCommand(cmd);
+          if (isReportableProcess(name, inner)) this.recordShell(inner);
         } catch {
           /* non-JSON chatter from the shell — ignore */
         }
