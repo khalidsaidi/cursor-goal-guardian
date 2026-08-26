@@ -36,8 +36,9 @@ export async function runPipeline(
   event: HookEventName,
   actionType: DriftActionType,
   actionValue: string,
+  ids: { conversationId?: string; generationId?: string } = {},
 ): Promise<HookResponse> {
-  await appendAudit(root, { ts: nowIso(), kind: "hook.event", event });
+  await appendAudit(root, { ts: nowIso(), kind: "hook.event", event, ...ids });
 
   const config = await readConfigSafe(root);
   const state = await readStateSafe(root);

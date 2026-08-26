@@ -137,7 +137,9 @@ export function createCursorAgentJudge(options: CursorAgentJudgeOptions = {}): D
     },
     async judge(candidates: DriftCandidate[], context: JudgeContext): Promise<DriftJudgement[]> {
       const prompt = buildJudgePrompt(candidates, context);
-      const args = ["-p", prompt, "--output-format", "json"];
+      // --trust: the judge only reads the prompt and emits text, but headless
+      // runs in an untrusted cwd otherwise stall on the trust prompt.
+      const args = ["-p", prompt, "--output-format", "json", "--trust"];
       if (options.model) args.push("--model", options.model);
       const res = await run(command, args, timeoutMs, options.cwd);
       if (res.code !== 0) throw new Error(`cursor-agent exited ${res.code}`);

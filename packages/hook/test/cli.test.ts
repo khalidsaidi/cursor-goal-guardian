@@ -76,10 +76,22 @@ describe("hook behavior (built bundle)", () => {
     expect(second.response.userMessage).toBeUndefined();
   });
 
-  it("goal-guardian MCP calls pass silently", async () => {
+  it("goal-guardian MCP calls pass silently (both server-name payload keys)", async () => {
     const w = await ws();
-    const { response } = runHook(w.root, { hook_event_name: "beforeMCPExecution", server: "goal-guardian", tool_name: "guardian_get_status" });
-    expect(response).toEqual({ continue: true, permission: "allow" });
+    const legacy = runHook(w.root, { hook_event_name: "beforeMCPExecution", server: "goal-guardian", tool_name: "guardian_get_status" });
+    expect(legacy.response).toEqual({ continue: true, permission: "allow" });
+    const current = runHook(w.root, {
+      hook_event_name: "beforeMCPExecution",
+      mcp_server_name: "goal-guardian",
+      tool_name: "guardian_declare_intent",
+      conversation_id: "conv-1",
+      generation_id: "gen-1",
+    });
+    expect(current.response).toEqual({ continue: true, permission: "allow" });
+    const records = await readAudit(w.root);
+    expect(auditOfKind(records, "drift.lexical")).toHaveLength(0);
+    const events = auditOfKind(records, "hook.event");
+    expect(events[events.length - 1]).toMatchObject({ conversationId: "conv-1", generationId: "gen-1" });
   });
 
   it("afterFileEdit records the event and drift without breaking anything", async () => {

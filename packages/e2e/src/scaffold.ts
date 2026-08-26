@@ -1,0 +1,113 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  criteriaFromTexts,
+  defaultConfig,
+  defaultState,
+  getGuardianPaths,
+  nowIso,
+  parseConfig,
+  writeJsonAtomic,
+  computeHash,
+  type Task,
+} from "@goal-guardian/core";
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+export const MCP_BIN = path.join(REPO, "packages", "mcp", "dist", "index.js");
+export const HOOK_BIN = path.join(REPO, "packages", "hook", "dist", "cli.cjs");
+export const FIXTURES = path.join(REPO, "fixtures", "v1");
+
+export interface ScaffoldOptions {
+  goal?: string;
+  successCriteria?: string[];
+  constraints?: string[];
+  tasks?: Array<Pick<Task, "id" | "title" | "status"> & { criterionId?: string }>;
+  config?: unknown;
+  /** Copy a frozen v0.x fixture instead of writing v2 files (migration scenario). */
+  oldFormatFixture?: string;
+}
+
+export interface E2EWorkspace {
+  root: string;
+  paths: ReturnType<typeof getGuardianPaths>;
+  cleanup(keep?: boolean): Promise<void>;
+}
+
+/**
+ * A real (tiny) project the agent can plausibly work in, wired to the BUILT
+ * guardian binaries — the same artifacts users run, never the TS source.
+ */
+export async function scaffoldWorkspace(opts: ScaffoldOptions = {}): Promise<E2EWorkspace> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-e2e-"));
+  const paths = getGuardianPaths(root);
+
+  await fs.mkdir(path.join(root, "src"), { recursive: true });
+  await writeJsonAtomic(path.join(root, "package.json"), { name: "e2e-project", version: "0.0.0", private: true, type: "module" });
+  await fs.writeFile(
+    path.join(root, "src", "math.ts"),
+    "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    "utf8",
+  );
+  await fs.writeFile(path.join(root, "README.md"), "# e2e project\n", "utf8");
+
+  const cursorDir = path.join(root, ".cursor");
+  await fs.mkdir(cursorDir, { recursive: true });
+  await writeJsonAtomic(path.join(cursorDir, "mcp.json"), {
+    mcpServers: {
+      "goal-guardian": {
+        command: "node",
+        args: [MCP_BIN],
+        env: { GOAL_GUARDIAN_WORKSPACE_ROOT: root },
+      },
+    },
+  });
+  const hookEntry = [{ command: `node "${HOOK_BIN}"` }];
+  await writeJsonAtomic(path.join(cursorDir, "hooks.json"), {
+    version: 1,
+    hooks: {
+      beforeShellExecution: hookEntry,
+      beforeMCPExecution: hookEntry,
+      beforeReadFile: hookEntry,
+      afterFileEdit: hookEntry,
+    },
+  });
+
+  if (opts.oldFormatFixture) {
+    await fs.cp(path.join(FIXTURES, opts.oldFormatFixture), root, { recursive: true });
+  } else {
+    await fs.mkdir(paths.telemetryDir, { recursive: true });
+    const criteria = criteriaFromTexts(opts.successCriteria ?? ["add() has a working implementation and a test"]);
+    await writeJsonAtomic(paths.contract, {
+      schemaVersion: 2,
+      goal: opts.goal ?? "Finish the math utilities",
+      successCriteria: criteria,
+      constraints: opts.constraints ?? [],
+    });
+    await writeJsonAtomic(paths.config, opts.config === undefined ? defaultConfig() : parseConfig(opts.config));
+    const state = defaultState();
+    state.goal = opts.goal ?? "Finish the math utilities";
+    state.successCriteria = criteria;
+    state.constraints = opts.constraints ?? [];
+    state.tasks = (opts.tasks ?? [{ id: "t1", title: criteria[0]!.text, status: "doing", criterionId: criteria[0]!.id }]).map((t) => ({ ...t }));
+    state.activeTaskId = state.tasks.find((t) => t.status === "doing")?.id ?? null;
+    state.meta.lastUpdated = nowIso();
+    state.meta.hash = computeHash(state);
+    await writeJsonAtomic(paths.state, state);
+    await fs.writeFile(paths.actions, "", "utf8");
+    await writeJsonAtomic(paths.migrationMarker, { from: 2, to: 2, ts: nowIso(), migratedBy: "e2e-scaffold" });
+  }
+
+  return {
+    root,
+    paths,
+    cleanup: async (keep = false) => {
+      if (keep) {
+        console.error(`[e2e] keeping failed workspace for inspection: ${root}`);
+        return;
+      }
+      await fs.rm(root, { recursive: true, force: true });
+    },
+  };
+}

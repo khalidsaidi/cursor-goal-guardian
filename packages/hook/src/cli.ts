@@ -40,20 +40,28 @@ async function handle(payload: Record<string, unknown>): Promise<HookResponse> {
 
   switch (event) {
     case "beforeShellExecution":
-      return runPipeline(root, "beforeShellExecution", "shell", String(payload.command ?? ""));
+      return runPipeline(root, "beforeShellExecution", "shell", String(payload.command ?? ""), ids(payload));
     case "beforeMCPExecution": {
-      const value = `${String(payload.server ?? "")}/${String(payload.tool_name ?? "")}`;
-      return runPipeline(root, "beforeMCPExecution", "mcp", value);
+      // Cursor sends the server as mcp_server_name; older builds used server.
+      const serverName = String(payload.mcp_server_name ?? payload.server ?? "");
+      const value = `${serverName}/${String(payload.tool_name ?? "")}`;
+      return runPipeline(root, "beforeMCPExecution", "mcp", value, ids(payload));
     }
     case "beforeReadFile":
     case "beforeTabFileRead":
-      return runPipeline(root, "beforeReadFile", "read", relativePath(root, String(payload.file_path ?? "")));
+      return runPipeline(root, "beforeReadFile", "read", relativePath(root, String(payload.file_path ?? "")), ids(payload));
     case "afterFileEdit":
     case "afterTabFileEdit":
-      return runPipeline(root, "afterFileEdit", "edit", relativePath(root, String(payload.file_path ?? "")));
+      return runPipeline(root, "afterFileEdit", "edit", relativePath(root, String(payload.file_path ?? "")), ids(payload));
     default:
       return advisoryAllow();
   }
+}
+
+function ids(payload: Record<string, unknown>): { conversationId?: string; generationId?: string } {
+  const conversationId = typeof payload.conversation_id === "string" ? payload.conversation_id : undefined;
+  const generationId = typeof payload.generation_id === "string" ? payload.generation_id : undefined;
+  return { ...(conversationId ? { conversationId } : {}), ...(generationId ? { generationId } : {}) };
 }
 
 async function main(): Promise<void> {

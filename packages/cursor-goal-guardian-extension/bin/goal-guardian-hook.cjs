@@ -6298,8 +6298,14 @@ function evaluateLexicalDrift(state, config, actionType, actionValue) {
     return null;
   if ((actionType === "read" || actionType === "edit") && isNeutralReadPath(actionValue, neutralPaths))
     return null;
-  if (actionType === "mcp" && actionValue.toLowerCase().startsWith("goal-guardian/"))
-    return null;
+  if (actionType === "mcp") {
+    const lower = actionValue.toLowerCase();
+    if (lower.startsWith("goal-guardian/"))
+      return null;
+    const tool = lower.slice(lower.lastIndexOf("/") + 1);
+    if (tool.startsWith("guardian_"))
+      return null;
+  }
   if (matchesPinnedContext(state, actionType, actionValue))
     return null;
   const task = state.tasks.find((t) => t.id === activeTaskId) ?? null;
@@ -6427,8 +6433,8 @@ function hasActiveDoingTask(state) {
 function truncate(value, max = 60) {
   return value.length > max ? `${value.slice(0, max - 1)}\u2026` : value;
 }
-async function runPipeline(root, event, actionType, actionValue) {
-  await appendAudit(root, { ts: nowIso(), kind: "hook.event", event });
+async function runPipeline(root, event, actionType, actionValue, ids2 = {}) {
+  await appendAudit(root, { ts: nowIso(), kind: "hook.event", event, ...ids2 });
   const config = await readConfigSafe(root);
   const state = await readStateSafe(root);
   const advisory = actionType === "edit" ? null : evaluatePolicy(actionType, actionValue, config);
@@ -6515,20 +6521,26 @@ async function handle(payload) {
   const event = eventName(payload);
   switch (event) {
     case "beforeShellExecution":
-      return runPipeline(root, "beforeShellExecution", "shell", String(payload.command ?? ""));
+      return runPipeline(root, "beforeShellExecution", "shell", String(payload.command ?? ""), ids(payload));
     case "beforeMCPExecution": {
-      const value = `${String(payload.server ?? "")}/${String(payload.tool_name ?? "")}`;
-      return runPipeline(root, "beforeMCPExecution", "mcp", value);
+      const serverName = String(payload.mcp_server_name ?? payload.server ?? "");
+      const value = `${serverName}/${String(payload.tool_name ?? "")}`;
+      return runPipeline(root, "beforeMCPExecution", "mcp", value, ids(payload));
     }
     case "beforeReadFile":
     case "beforeTabFileRead":
-      return runPipeline(root, "beforeReadFile", "read", relativePath(root, String(payload.file_path ?? "")));
+      return runPipeline(root, "beforeReadFile", "read", relativePath(root, String(payload.file_path ?? "")), ids(payload));
     case "afterFileEdit":
     case "afterTabFileEdit":
-      return runPipeline(root, "afterFileEdit", "edit", relativePath(root, String(payload.file_path ?? "")));
+      return runPipeline(root, "afterFileEdit", "edit", relativePath(root, String(payload.file_path ?? "")), ids(payload));
     default:
       return advisoryAllow();
   }
+}
+function ids(payload) {
+  const conversationId = typeof payload.conversation_id === "string" ? payload.conversation_id : void 0;
+  const generationId = typeof payload.generation_id === "string" ? payload.generation_id : void 0;
+  return { ...conversationId ? { conversationId } : {}, ...generationId ? { generationId } : {} };
 }
 async function main() {
   let response = advisoryAllow();

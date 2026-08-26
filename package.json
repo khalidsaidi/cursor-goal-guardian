@@ -14,7 +14,9 @@
     "eval:ab:live:unblind:help": "node scripts/unblind-live-ab.js --help",
     "panel:demo:20tasks": "node scripts/record-panel-demo-20tasks.mjs",
     "package:vsix": "node scripts/package-extension.js",
-    "publish:ovsx": "node scripts/publish-extension.js"
+    "publish:ovsx": "node scripts/publish-extension.js",
+    "test:e2e": "pnpm -r build && pnpm --filter @goal-guardian/e2e test:e2e",
+    "test:e2e:offline": "pnpm -r build && pnpm --filter @goal-guardian/e2e test:e2e:offline"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

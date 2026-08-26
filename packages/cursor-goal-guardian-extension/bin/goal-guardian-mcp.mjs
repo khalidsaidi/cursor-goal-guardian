@@ -21295,10 +21295,26 @@ var verdictCacheSchema = external_exports.object({
 }).strict();
 
 // packages/core/dist/fsutil.js
+import crypto2 from "node:crypto";
 import fs from "node:fs/promises";
 import path2 from "node:path";
+async function writeJsonAtomic(filePath, value) {
+  const dir = path2.dirname(filePath);
+  await fs.mkdir(dir, { recursive: true });
+  const tmp = path2.join(dir, `.${path2.basename(filePath)}.tmp-${crypto2.randomBytes(4).toString("hex")}`);
+  await fs.writeFile(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
+  await fs.rename(tmp, filePath);
+}
 async function readJsonFile(filePath) {
   return JSON.parse(await fs.readFile(filePath, "utf8"));
+}
+async function fileExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 async function appendLine(filePath, line) {
   await fs.mkdir(path2.dirname(filePath), { recursive: true });
@@ -21309,7 +21325,7 @@ async function appendLine(filePath, line) {
 import fs2 from "node:fs/promises";
 
 // packages/core/dist/store/hash.js
-import crypto2 from "node:crypto";
+import crypto3 from "node:crypto";
 function stableStringify(value) {
   if (Array.isArray(value)) {
     return `[${value.map((v) => stableStringify(v)).join(",")}]`;
@@ -21323,7 +21339,10 @@ function stableStringify(value) {
 }
 function computeHash(state) {
   const copy = { ...state, meta: { ...state.meta, hash: "" } };
-  return crypto2.createHash("sha256").update(stableStringify(copy)).digest("hex");
+  return crypto3.createHash("sha256").update(stableStringify(copy)).digest("hex");
+}
+function isManuallyEdited(state) {
+  return state.meta.hash !== "" && state.meta.hash !== computeHash(state);
 }
 
 // packages/core/dist/store/errors.js
@@ -21358,8 +21377,128 @@ var pinPayload = external_exports.object({ path: external_exports.string().min(1
 var migrateImportPayload = external_exports.object({
   state: guardianStateSchema.omit({ meta: true })
 });
+function parsePayload(schema, action) {
+  const result = schema.safeParse(action.payload);
+  if (!result.success) {
+    throw new StateError("INVALID_PAYLOAD", `Invalid payload for ${action.type}: ${result.error.issues[0]?.message ?? "unknown"}`);
+  }
+  return result.data;
+}
+function reduce(state, action) {
+  const next = JSON.parse(JSON.stringify(state));
+  switch (action.type) {
+    case "SET_GOAL": {
+      const p = parsePayload(setGoalPayload, action);
+      if (p.goal !== void 0)
+        next.goal = p.goal;
+      if (p.successCriteria !== void 0)
+        next.successCriteria = p.successCriteria;
+      if (p.constraints !== void 0)
+        next.constraints = p.constraints;
+      break;
+    }
+    case "ADD_TASKS": {
+      const p = parsePayload(addTasksPayload, action);
+      for (const t of p.tasks) {
+        if (next.tasks.some((x) => x.id === t.id))
+          continue;
+        next.tasks.push({ id: t.id, title: t.title, status: "todo", ...t.criterionId ? { criterionId: t.criterionId } : {} });
+        next.queue.push(t.id);
+      }
+      break;
+    }
+    case "START_TASK": {
+      const p = parsePayload(startTaskPayload, action);
+      const task = next.tasks.find((t) => t.id === p.taskId);
+      if (!task)
+        throw new StateError("TASK_NOT_FOUND", `Task not found: ${p.taskId}`);
+      if (next.activeTaskId && next.activeTaskId !== p.taskId) {
+        const cited = p.decisionId && next.decisions.some((d) => d.id === p.decisionId);
+        if (!cited) {
+          throw new StateError("DECISION_REQUIRED", "Switching the active task requires citing a recorded decision (decisionId).");
+        }
+        const previous = next.tasks.find((t) => t.id === next.activeTaskId);
+        if (previous && previous.status === "doing")
+          previous.status = "todo";
+      }
+      next.activeTaskId = task.id;
+      task.status = "doing";
+      break;
+    }
+    case "COMPLETE_TASK": {
+      const p = parsePayload(completeTaskPayload, action);
+      const task = next.tasks.find((t) => t.id === p.taskId);
+      if (!task)
+        throw new StateError("TASK_NOT_FOUND", `Task not found: ${p.taskId}`);
+      if (task.status === "todo" && !p.allowSkip) {
+        throw new StateError("TODO_TO_DONE", "Cannot complete a task that has not been started.");
+      }
+      task.status = "done";
+      if (next.activeTaskId === task.id)
+        next.activeTaskId = null;
+      next.queue = next.queue.filter((id) => id !== task.id);
+      break;
+    }
+    case "OPEN_QUESTION": {
+      const p = parsePayload(openQuestionPayload, action);
+      next.openQuestions.push({ id: p.id, text: p.text, ts: action.ts, status: "open" });
+      break;
+    }
+    case "CLOSE_QUESTION": {
+      const p = parsePayload(closeQuestionPayload, action);
+      const q = next.openQuestions.find((x) => x.id === p.id);
+      if (!q)
+        throw new StateError("QUESTION_NOT_FOUND", `Question not found: ${p.id}`);
+      q.status = "closed";
+      break;
+    }
+    case "ADD_DECISION": {
+      const p = parsePayload(addDecisionPayload, action);
+      next.decisions.push({ id: p.id, text: p.text, rationale: p.rationale, ts: action.ts });
+      break;
+    }
+    case "PIN_CONTEXT": {
+      const p = parsePayload(pinPayload, action);
+      if (!next.pinnedContext.includes(p.path))
+        next.pinnedContext.push(p.path);
+      break;
+    }
+    case "UNPIN_CONTEXT": {
+      const p = parsePayload(pinPayload, action);
+      next.pinnedContext = next.pinnedContext.filter((x) => x !== p.path);
+      break;
+    }
+    case "MIGRATE_IMPORT": {
+      const p = parsePayload(migrateImportPayload, action);
+      Object.assign(next, p.state);
+      break;
+    }
+  }
+  next.meta = {
+    lastActionId: action.id,
+    lastUpdated: action.ts,
+    actionCount: state.meta.actionCount + 1,
+    hash: ""
+  };
+  next.meta.hash = computeHash(next);
+  return guardianStateSchema.parse(next);
+}
 
 // packages/core/dist/store/store.js
+var SNAPSHOT_INTERVAL = 25;
+async function ensureStateFiles(workspaceRoot2, clock = systemClock) {
+  const p = getGuardianPaths(workspaceRoot2);
+  await fs2.mkdir(p.telemetryDir, { recursive: true });
+  if (!await fileExists(p.state)) {
+    const state = defaultState();
+    state.meta.lastUpdated = nowIso(clock);
+    state.meta.hash = computeHash(state);
+    await writeJsonAtomic(p.state, state);
+  }
+  if (!await fileExists(p.actions)) {
+    await fs2.writeFile(p.actions, "", "utf8");
+  }
+}
 async function loadState(workspaceRoot2) {
   const p = getGuardianPaths(workspaceRoot2);
   return parseState(await readJsonFile(p.state));
@@ -21380,6 +21519,52 @@ async function loadActions(workspaceRoot2) {
       throw new StateError("CORRUPT_ACTION_LOG", `Corrupt action log entry at line ${i + 1}.`);
     }
   });
+}
+function materializeAction(input, clock) {
+  const payload = { ...input.payload ?? {} };
+  if (input.type === "ADD_TASKS" && Array.isArray(payload.tasks)) {
+    payload.tasks = payload.tasks.map((t) => ({
+      ...t,
+      id: typeof t.id === "string" && t.id ? t.id : newId("task")
+    }));
+  }
+  if (input.type === "OPEN_QUESTION" && typeof payload.id !== "string")
+    payload.id = newId("q");
+  if (input.type === "ADD_DECISION" && typeof payload.id !== "string")
+    payload.id = newId("dec");
+  return {
+    id: newId("act"),
+    ts: nowIso(clock),
+    actor: input.actor ?? "agent",
+    type: input.type,
+    payload
+  };
+}
+function contractProjection(state) {
+  return contractSchema.parse({
+    schemaVersion: 2,
+    goal: state.goal,
+    successCriteria: state.successCriteria,
+    constraints: state.constraints
+  });
+}
+async function dispatch(workspaceRoot2, input, clock = systemClock) {
+  const p = getGuardianPaths(workspaceRoot2);
+  await ensureStateFiles(workspaceRoot2, clock);
+  const current = await loadState(workspaceRoot2);
+  if (isManuallyEdited(current)) {
+    throw new StateError("MANUAL_EDIT", "state.json was edited by hand. Run rebuild to restore it from the action log.");
+  }
+  const action = materializeAction(input, clock);
+  const next = reduce(current, action);
+  await appendLine(p.actions, JSON.stringify(action));
+  await writeJsonAtomic(p.state, next);
+  await writeJsonAtomic(p.contract, contractProjection(next));
+  if (next.meta.actionCount % SNAPSHOT_INTERVAL === 0) {
+    const snapshot = { lastActionIndex: next.meta.actionCount - 1, state: next };
+    await writeJsonAtomic(p.snapshot, snapshot);
+  }
+  return next;
 }
 
 // packages/core/dist/safeReaders.js
@@ -23115,8 +23300,14 @@ function evaluateLexicalDrift(state, config2, actionType, actionValue) {
     return null;
   if ((actionType === "read" || actionType === "edit") && isNeutralReadPath(actionValue, neutralPaths))
     return null;
-  if (actionType === "mcp" && actionValue.toLowerCase().startsWith("goal-guardian/"))
-    return null;
+  if (actionType === "mcp") {
+    const lower = actionValue.toLowerCase();
+    if (lower.startsWith("goal-guardian/"))
+      return null;
+    const tool = lower.slice(lower.lastIndexOf("/") + 1);
+    if (tool.startsWith("guardian_"))
+      return null;
+  }
   if (matchesPinnedContext(state, actionType, actionValue))
     return null;
   const task = state.tasks.find((t) => t.id === activeTaskId) ?? null;
@@ -23370,12 +23561,64 @@ function registerGetStatus(server2) {
   );
 }
 
+// packages/mcp/src/tools/recordProgress.ts
+function registerRecordProgress(server2) {
+  server2.registerTool(
+    "guardian_record_progress",
+    {
+      description: "Record a task transition on the session tape: start a task or complete one. Switching away from an active task requires a decision (text + rationale) \u2014 the state machine rejects undocumented pivots. This records progress; it grants nothing.",
+      inputSchema: {
+        action: external_exports.enum(["start_task", "complete_task"]).describe("The transition to record."),
+        taskId: external_exports.string().min(1).describe("The task id (see guardian_get_status for the board)."),
+        decision: external_exports.object({
+          text: external_exports.string().min(1).describe("What you decided."),
+          rationale: external_exports.string().min(1).describe("Why.")
+        }).optional().describe("Required when starting a task while a different one is active.")
+      }
+    },
+    async ({ action, taskId, decision }) => {
+      const root = workspaceRoot();
+      try {
+        if (action === "start_task") {
+          let decisionId;
+          if (decision) {
+            const state3 = await dispatch(root, {
+              type: "ADD_DECISION",
+              actor: "agent",
+              payload: { text: decision.text, rationale: decision.rationale }
+            });
+            decisionId = state3.decisions[state3.decisions.length - 1]?.id;
+          }
+          const state2 = await dispatch(root, {
+            type: "START_TASK",
+            actor: "agent",
+            payload: { taskId, ...decisionId ? { decisionId } : {} }
+          });
+          return ok({ activeTaskId: state2.activeTaskId });
+        }
+        const state = await dispatch(root, { type: "COMPLETE_TASK", actor: "agent", payload: { taskId } });
+        return ok({
+          completed: taskId,
+          remainingTodo: state.tasks.filter((t) => t.status === "todo").map((t) => ({ id: t.id, title: t.title }))
+        });
+      } catch (err) {
+        const message = err instanceof StateError ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+        return { isError: true, content: [{ type: "text", text: message }] };
+      }
+    }
+  );
+}
+function ok(payload) {
+  return { content: [{ type: "text", text: JSON.stringify(payload) }] };
+}
+
 // packages/mcp/src/index.ts
 var server = new McpServer({ name: "goal-guardian", version: "1.0.0" });
 registerGetContract(server);
 registerDeclareIntent(server);
 registerCheckAction(server);
 registerGetStatus(server);
+registerRecordProgress(server);
 var transport = new StdioServerTransport();
 await server.connect(transport);
 console.error("[goal-guardian] MCP server running on stdio (v1.0.0)");

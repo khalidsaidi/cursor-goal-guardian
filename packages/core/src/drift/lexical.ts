@@ -175,7 +175,14 @@ export function evaluateLexicalDrift(
   const neutralPaths = config.advisories.neutralPaths;
   if (actionType === "shell" && isNeutralShellCommand(actionValue, neutralCommands)) return null;
   if ((actionType === "read" || actionType === "edit") && isNeutralReadPath(actionValue, neutralPaths)) return null;
-  if (actionType === "mcp" && actionValue.toLowerCase().startsWith("goal-guardian/")) return null;
+  if (actionType === "mcp") {
+    const lower = actionValue.toLowerCase();
+    // The guardian's own tools are never drift, even when the host omits the
+    // server name from the hook payload (value like "/guardian_get_status").
+    if (lower.startsWith("goal-guardian/")) return null;
+    const tool = lower.slice(lower.lastIndexOf("/") + 1);
+    if (tool.startsWith("guardian_")) return null;
+  }
   if (matchesPinnedContext(state, actionType, actionValue)) return null;
 
   const task = state.tasks.find((t) => t.id === activeTaskId) ?? null;

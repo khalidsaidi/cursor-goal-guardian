@@ -54,9 +54,10 @@ describe("lexical drift truth table", () => {
     }
   });
 
-  it("goal-guardian MCP calls are exempt", () => {
+  it("goal-guardian MCP calls are exempt — even when the host omits the server name", () => {
     const s = stateWith("Build the expense form component");
     expect(evaluateLexicalDrift(s, config, "mcp", "goal-guardian/guardian_get_status")).toBeNull();
+    expect(evaluateLexicalDrift(s, config, "mcp", "/guardian_declare_intent")).toBeNull();
     expect(evaluateLexicalDrift(s, config, "mcp", "browser-server/take_screenshot_of_theme")).not.toBeNull();
   });
 

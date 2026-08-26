@@ -1,0 +1,15 @@
+{
+  "name": "@goal-guardian/e2e",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:offline": "vitest run --config vitest.e2e.config.ts scenarios/04-task-switch-rejected.e2e.ts scenarios/09-migration.e2e.ts scenarios/10-panel-pipeline.e2e.ts scenarios/11-quiet-mode.e2e.ts"
+  },
+  "dependencies": {
+    "@goal-guardian/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "cursor-goal-guardian-testkit": "workspace:*"
+  }
+}
