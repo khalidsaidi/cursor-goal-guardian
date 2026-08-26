@@ -224,3 +224,19 @@ under the same runtime. Also hardened the global server's workspace
 resolution: the home directory is never accepted as a workspace, and an
 unresolvable workspace returns an instruction the agent can relay instead of
 silently writing session files into home (regression-tested).
+
+## Self-contained binaries, verified on all three platforms (2026-08-26)
+
+Researched the shipping pattern of renowned extensions first: the OpenAI
+extension installed on this machine bundles self-contained native `codex`
+binaries for all six platform/arch combos — no runtime dependency, no
+dialogs. Guardian now ships the same way, per-platform: the hook and MCP
+server compile to standalone executables and each platform gets a targeted
+VSIX (~77 MB) published with `ovsx --target`.
+
+Verified by execution, not inference: Linux (WSL headed connect; wired hook
+answered ~50 ms; offline e2e runs the compiled artifacts), native Node-less
+Windows (headed connect; wired `.exe` hook 67 ms warm — first-ever run pays a
+one-time Defender scan — and MCP handshake), and macOS via the CI matrix,
+where the darwin runner compiles and executes the shipped binary in the
+packaged-binary smoke. All three jobs green.
