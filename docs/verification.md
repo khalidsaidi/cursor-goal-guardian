@@ -179,3 +179,24 @@ Result, with zero Guardian-specific user actions: files migrated to v2 with
 title and task board, and the workspace came out fully connected (hooks, MCP,
 rule, skills on the PATH-free runtime). The only prompt shown is the single
 passive upgrade notice.
+
+## Native Windows, no Node.js installed (2026-08-26)
+
+This machine's Windows side has no node on PATH — the worst-case desktop
+install. VSIX installed into the Windows-local Cursor, a local
+`C:\Temp\winlocal` folder opened (no WSL), Connect driven headed:
+
+- Panel, welcome, wizard, and the get-started tour all rendered and worked.
+- Wiring took the win32 fallback exactly as designed: `mcp.json` runs the
+  bundled server as `Cursor.exe` with `ELECTRON_RUN_AS_NODE=1`; `hooks.json`
+  is honestly not written (single setup warning explains the watcher needs
+  Node.js).
+- The fallback server was probed over real MCP stdio exactly as Cursor spawns
+  it: full initialize handshake and tools/list answered with all six guardian
+  tools — on a machine with no Node.js anywhere.
+
+## Cross-platform CI (2026-08-26)
+
+`ci/cross-platform` branch (PR #1) runs the full build + suite on
+ubuntu-latest, macos-latest, and windows-latest so darwin and win32 execute
+every shipped binary instead of being inferred from Linux.
