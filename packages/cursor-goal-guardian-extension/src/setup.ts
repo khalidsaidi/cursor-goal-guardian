@@ -10,6 +10,7 @@ import {
   getGuardianPaths,
   guardianRuleContent,
   GUARDIAN_RULE_RELATIVE_PATH,
+  GUARDIAN_SKILLS,
   readJsonFile,
   writeJsonAtomic,
 } from "@goal-guardian/core";
@@ -77,6 +78,13 @@ async function writeGuardianRule(root: string): Promise<void> {
   const rulePath = path.join(root, GUARDIAN_RULE_RELATIVE_PATH);
   await fs.mkdir(path.dirname(rulePath), { recursive: true });
   await fs.writeFile(rulePath, guardianRuleContent(), "utf8");
+  // Skills: guardian actions in the chat input's `/` menu — the surface users
+  // actually live in.
+  for (const skill of GUARDIAN_SKILLS) {
+    const dir = path.join(root, skill.relativeDir);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "SKILL.md"), skill.content, "utf8");
+  }
 }
 
 /**
@@ -180,6 +188,9 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
 export async function runUninstall(root: string): Promise<void> {
   await fs.rm(getGuardianPaths(root).dir, { recursive: true, force: true });
   await fs.rm(path.join(root, GUARDIAN_RULE_RELATIVE_PATH), { force: true });
+  for (const skill of GUARDIAN_SKILLS) {
+    await fs.rm(path.join(root, skill.relativeDir), { recursive: true, force: true });
+  }
 
   const hooksPath = path.join(root, ".cursor", "hooks.json");
   const hooks = await readJsonOr<{ hooks?: Record<string, Array<{ command: string }>> } | null>(hooksPath, null);

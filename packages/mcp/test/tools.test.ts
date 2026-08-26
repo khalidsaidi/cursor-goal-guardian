@@ -35,7 +35,7 @@ afterAll(async () => {
 });
 
 describe("tool surface", () => {
-  it("exposes exactly the five v2 tools — the permit machinery is gone", async () => {
+  it("exposes exactly the six v2 tools — the permit machinery is gone", async () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
@@ -44,6 +44,7 @@ describe("tool surface", () => {
       "guardian_get_contract",
       "guardian_get_status",
       "guardian_record_progress",
+      "guardian_update_goal",
     ]);
     expect(names).not.toContain("guardian_issue_permit");
     expect(names).not.toContain("guardian_check_step");
@@ -131,6 +132,21 @@ describe("guardian_record_progress", () => {
   });
 });
 
+describe("guardian_update_goal", () => {
+  it("the chat can change the goal and grow the done-when list", async () => {
+    const result = await callJson("guardian_update_goal", {
+      goal: "Ship the CSV export feature, plus filters",
+      add_criteria: ["Filter state is preserved in the export"],
+    });
+    expect(result.goal).toBe("Ship the CSV export feature, plus filters");
+    const criteria = result.criteria as Array<{ id: string; text: string }>;
+    expect(criteria.map((c) => c.id)).toContain("sc_2");
+    const status = await callJson("guardian_get_status");
+    const board = status.tasks as { todo: number; doing: number };
+    expect(board.todo + board.doing).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe("robustness", () => {
   it("rejects malformed arguments but stays alive for the next call", async () => {
     const outcome = await client
@@ -139,6 +155,6 @@ describe("robustness", () => {
       .catch(() => ({ isError: true }));
     expect(outcome.isError).toBe(true);
     const alive = await callJson("guardian_get_contract");
-    expect(alive.goal).toBe("Ship the CSV export feature");
+    expect(String(alive.goal)).toContain("CSV export");
   });
 });

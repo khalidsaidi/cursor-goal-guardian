@@ -109,7 +109,7 @@ export class PanelController implements vscode.WebviewViewProvider {
     const nonce = crypto.randomBytes(16).toString("hex");
     const script = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "webview.js"));
     const style = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "panel.css"));
-    const sections = ["welcome", "hero", "pulse", "board", "drift", "criteria", "constraints", "consent"]
+    const sections = ["welcome", "goal", "focus", "criteria", "constraints", "drift", "consent"]
       .map((id) => `<div id="${id}"></div>`)
       .join("\n");
     return `<!DOCTYPE html>

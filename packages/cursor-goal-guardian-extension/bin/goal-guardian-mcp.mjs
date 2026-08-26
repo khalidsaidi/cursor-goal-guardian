@@ -21058,6 +21058,51 @@ function getGuardianPaths(workspaceRoot2) {
 // packages/core/dist/rule.js
 import path2 from "node:path";
 var GUARDIAN_RULE_RELATIVE_PATH = path2.join(".cursor", "rules", "goal-guardian.mdc");
+var GUARDIAN_SKILLS = [
+  {
+    relativeDir: path2.join(".cursor", "skills", "guardian"),
+    content: [
+      "---",
+      "name: guardian",
+      "description: See the session goal, progress, and any drift \u2014 and steer from chat.",
+      "disable-model-invocation: true",
+      "---",
+      "# Guardian",
+      "",
+      "Accept `/guardian [question]`.",
+      "",
+      "1. Call the `goal-guardian` MCP tools `guardian_get_status` and `guardian_get_contract`.",
+      "2. With no question: present a short, readable briefing \u2014 the goal, the active task,",
+      "   what's done and what's left, and any drift with its review status. Plain prose,",
+      "   no JSON, no field names.",
+      "3. With a question ('why did we drift?', 'what's left?'): answer it from the tape.",
+      "4. End by offering the useful next moves: mark the task done, switch task, update",
+      "   the goal, or review drift with AI. Execute whichever the user picks via the",
+      "   guardian tools (guardian_record_progress / guardian_update_goal).",
+      ""
+    ].join("\n")
+  },
+  {
+    relativeDir: path2.join(".cursor", "skills", "guardian-goal"),
+    content: [
+      "---",
+      "name: guardian-goal",
+      "description: Declare or change the goal Guardian tracks for this session.",
+      "disable-model-invocation: true",
+      "---",
+      "# Guardian goal",
+      "",
+      "Accept `/guardian-goal <goal>`.",
+      "",
+      "- Empty: show the current goal and 'done when' list from `guardian_get_contract`,",
+      "  then `Usage: /guardian-goal <goal>`.",
+      "- With a goal: call `guardian_update_goal` with it, propose 2\u20134 'done when' criteria",
+      "  derived from the goal, and add the ones the user confirms via `guardian_update_goal`",
+      "  (add_criteria). Confirm the record in one line and continue with the work.",
+      ""
+    ].join("\n")
+  }
+];
 
 // packages/core/dist/clock.js
 import crypto from "node:crypto";
@@ -23660,6 +23705,71 @@ function ok(payload) {
   return { content: [{ type: "text", text: JSON.stringify(payload) }] };
 }
 
+// packages/mcp/src/tools/updateGoal.ts
+function registerUpdateGoal(server2) {
+  server2.registerTool(
+    "guardian_update_goal",
+    {
+      description: "Declare or change the session goal, add 'done when' criteria (each becomes a trackable task), or set boundaries. Use this when the user states or changes what the session is for \u2014 the chat is the interface; this puts it on the record.",
+      inputSchema: {
+        goal: external_exports.string().optional().describe("The goal, one unambiguous sentence. Omit to leave unchanged."),
+        add_criteria: external_exports.array(external_exports.string().min(1)).optional().describe("New 'done when' criteria to add; each becomes a task."),
+        constraints: external_exports.array(external_exports.string()).optional().describe("Replaces the boundaries list. Omit to leave unchanged.")
+      }
+    },
+    async ({ goal, add_criteria, constraints }) => {
+      const root = workspaceRoot();
+      try {
+        const current = await readStateSafe(root);
+        const payload = {};
+        if (goal !== void 0) payload.goal = goal;
+        if (constraints !== void 0) payload.constraints = constraints;
+        let criteria = current.successCriteria;
+        if (add_criteria && add_criteria.length > 0) {
+          const next = [...criteria];
+          for (const text of add_criteria) {
+            next.push({ id: `sc_${next.length + 1}`, text });
+          }
+          payload.successCriteria = next;
+          criteria = next;
+        }
+        let state = current;
+        if (Object.keys(payload).length > 0) {
+          state = await dispatch(root, { type: "SET_GOAL", actor: "agent", payload });
+        }
+        if (add_criteria && add_criteria.length > 0) {
+          const added = criteria.slice(-add_criteria.length);
+          state = await dispatch(root, {
+            type: "ADD_TASKS",
+            actor: "agent",
+            payload: { tasks: added.map((c) => ({ id: c.id, title: c.text, criterionId: c.id })) }
+          });
+          if (!state.activeTaskId) {
+            const first = state.tasks.find((t) => t.status === "todo");
+            if (first) state = await dispatch(root, { type: "START_TASK", actor: "agent", payload: { taskId: first.id } });
+          }
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                goal: state.goal,
+                criteria: state.successCriteria,
+                constraints: state.constraints,
+                activeTaskId: state.activeTaskId
+              })
+            }
+          ]
+        };
+      } catch (err) {
+        const message = err instanceof StateError ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+        return { isError: true, content: [{ type: "text", text: message }] };
+      }
+    }
+  );
+}
+
 // packages/mcp/src/index.ts
 var server = new McpServer({ name: "goal-guardian", version: "1.0.0" });
 registerGetContract(server);
@@ -23667,6 +23777,7 @@ registerDeclareIntent(server);
 registerCheckAction(server);
 registerGetStatus(server);
 registerRecordProgress(server);
+registerUpdateGoal(server);
 var transport = new StdioServerTransport();
 await server.connect(transport);
 console.error("[goal-guardian] MCP server running on stdio (v1.0.0)");

@@ -279,6 +279,51 @@ function getGuardianPaths(workspaceRoot2) {
 // packages/core/dist/rule.js
 var import_node_path2 = __toESM(require("node:path"), 1);
 var GUARDIAN_RULE_RELATIVE_PATH = import_node_path2.default.join(".cursor", "rules", "goal-guardian.mdc");
+var GUARDIAN_SKILLS = [
+  {
+    relativeDir: import_node_path2.default.join(".cursor", "skills", "guardian"),
+    content: [
+      "---",
+      "name: guardian",
+      "description: See the session goal, progress, and any drift \u2014 and steer from chat.",
+      "disable-model-invocation: true",
+      "---",
+      "# Guardian",
+      "",
+      "Accept `/guardian [question]`.",
+      "",
+      "1. Call the `goal-guardian` MCP tools `guardian_get_status` and `guardian_get_contract`.",
+      "2. With no question: present a short, readable briefing \u2014 the goal, the active task,",
+      "   what's done and what's left, and any drift with its review status. Plain prose,",
+      "   no JSON, no field names.",
+      "3. With a question ('why did we drift?', 'what's left?'): answer it from the tape.",
+      "4. End by offering the useful next moves: mark the task done, switch task, update",
+      "   the goal, or review drift with AI. Execute whichever the user picks via the",
+      "   guardian tools (guardian_record_progress / guardian_update_goal).",
+      ""
+    ].join("\n")
+  },
+  {
+    relativeDir: import_node_path2.default.join(".cursor", "skills", "guardian-goal"),
+    content: [
+      "---",
+      "name: guardian-goal",
+      "description: Declare or change the goal Guardian tracks for this session.",
+      "disable-model-invocation: true",
+      "---",
+      "# Guardian goal",
+      "",
+      "Accept `/guardian-goal <goal>`.",
+      "",
+      "- Empty: show the current goal and 'done when' list from `guardian_get_contract`,",
+      "  then `Usage: /guardian-goal <goal>`.",
+      "- With a goal: call `guardian_update_goal` with it, propose 2\u20134 'done when' criteria",
+      "  derived from the goal, and add the ones the user confirms via `guardian_update_goal`",
+      "  (add_criteria). Confirm the record in one line and continue with the work.",
+      ""
+    ].join("\n")
+  }
+];
 
 // packages/core/dist/clock.js
 var import_node_crypto = __toESM(require("node:crypto"), 1);

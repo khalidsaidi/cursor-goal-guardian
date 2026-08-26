@@ -2,10 +2,15 @@ import type { PanelViewModel, PanelTask, PanelDriftEntry } from "@goal-guardian/
 
 /**
  * Pure HTML renderers: (view model) -> section markup strings. No vscode, no
- * DOM — the webview script owns applying them, tests snapshot them directly.
+ * DOM — the webview script applies them, tests snapshot them.
+ *
+ * Design: the goal is the title, status reads like an instrument, and the
+ * drift section is drawn as a literal track — a vertical thread the session
+ * follows, with detours pushed off-axis and returns marked. All copy is on
+ * the user's side of the screen: "Done when", "Boundaries", "Mark done".
  */
 
-export const SECTION_IDS = ["welcome", "hero", "pulse", "board", "drift", "criteria", "constraints", "consent"] as const;
+export const SECTION_IDS = ["welcome", "goal", "focus", "criteria", "constraints", "drift", "consent"] as const;
 export type SectionId = (typeof SECTION_IDS)[number];
 
 export function escapeHtml(value: string): string {
@@ -17,117 +22,145 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-const HEALTH_LABEL: Record<PanelViewModel["health"], string> = {
-  stable: "🟢 On track",
-  recovering: "🟡 Recovering",
-  drifting: "🟠 Drifting",
+const STATUS_WORD: Record<PanelViewModel["health"], string> = {
+  stable: "on course",
+  recovering: "holding course",
+  drifting: "off course",
 };
+
+function statusSentence(vm: PanelViewModel): string {
+  const c = vm.counts24h;
+  const open = vm.driftFeed.filter((e) => e.status !== "dismissed" && !e.realigned);
+  const confirmedOpen = open.filter((e) => e.status === "confirmed").length;
+  const pendingOpen = open.filter((e) => e.status === "pending").length;
+  const detours = c.driftConfirmed + c.driftPending;
+
+  if (vm.health === "stable") {
+    return c.driftDismissed > 0
+      ? `Quiet day — ${c.driftDismissed} false alarm${c.driftDismissed === 1 ? "" : "s"} cleared by review.`
+      : "Nothing off-goal in the last 24 hours.";
+  }
+  if (confirmedOpen > 0) {
+    return `${confirmedOpen} detour${confirmedOpen === 1 ? "" : "s"} without a way back yet.`;
+  }
+  if (pendingOpen > 0) {
+    return `${pendingOpen} detour${pendingOpen === 1 ? "" : "s"} awaiting review — nothing confirmed off-goal.`;
+  }
+  return `${detours} detour${detours === 1 ? "" : "s"} — every one came back.`;
+}
 
 function renderWelcome(vm: PanelViewModel): string {
   if (vm.setUp) return "";
   return `
     <div class="welcome">
-      <h2>Goal Guardian</h2>
-      <p>A drift flight-recorder for AI coding sessions. Declare a goal, and this panel
-      shows what the agent did, whether it stayed on course, and how the session recovered.</p>
-      <p>The trick: your goal and task list become facts in files (a Redux-style store),
-      not memories in the agent's context. The agent can wander — the goal can't.
-      That fixed point is what makes drift visible, and resuming after any
-      interruption a read instead of a guess.</p>
-      <p>Nothing is installed or written until you set it up — and it never blocks anything.</p>
-      <button data-cmd="setup">Set up this workspace</button>
+      <div class="lamp-row"><span class="lamp idle"></span><span class="status-word">standing by</span></div>
+      <p>Guardian rides along while you work with your agent: it remembers the goal,
+      notices when the session wanders, and shows you the way back.</p>
+      <p class="quiet">Nothing is written until you connect it.</p>
+      <button data-cmd="setup">Connect Guardian to this workspace</button>
     </div>`;
 }
 
-function renderHero(vm: PanelViewModel): string {
+function renderGoal(vm: PanelViewModel): string {
   if (!vm.setUp) return "";
-  const goal = vm.goal.trim() ? escapeHtml(vm.goal) : "<em>No goal declared yet — open the contract to add one.</em>";
-  const task = vm.activeTask
-    ? `<span class="active-task">▶ ${escapeHtml(vm.activeTask.title)}</span>`
-    : `<span class="no-task">No active task</span>`;
-  const review = vm.sessionReview
-    ? `<div class="session-review ${vm.sessionReview.verdict}">AI session review: ${
-        vm.sessionReview.verdict === "on_course" ? "on course" : "off course"
-      } (${Math.round(vm.sessionReview.confidence * 100)}%) — ${escapeHtml(vm.sessionReview.rationale)}</div>`
+  const goal = vm.goal.trim();
+  const goalHtml = goal
+    ? `<button class="goal-text" data-cmd="editGoal" title="Change the goal">${escapeHtml(goal)}</button>`
+    : `<p class="goal-empty">No goal yet. Ask your agent for something — the request becomes
+       the goal automatically. Or <button class="link" data-cmd="editGoal">write it here</button>.</p>`;
+  return `
+    <div class="goal">
+      <div class="eyebrow">Goal</div>
+      ${goalHtml}
+      <div class="lamp-row">
+        <span class="lamp ${vm.health}"></span>
+        <span class="status-word">${STATUS_WORD[vm.health]}</span>
+      </div>
+      <p class="status-sentence">${escapeHtml(statusSentence(vm))}</p>
+      ${vm.sessionReview ? `<p class="review-line">AI read the session: ${vm.sessionReview.verdict === "on_course" ? "on course" : "off course"} (${Math.round(vm.sessionReview.confidence * 100)}%) — ${escapeHtml(vm.sessionReview.rationale)}</p>` : ""}
+      ${vm.suggestion ? `<p class="suggestion">${escapeHtml(vm.suggestion)}</p>` : ""}
+    </div>`;
+}
+
+function renderFocus(vm: PanelViewModel): string {
+  if (!vm.setUp) return "";
+  const active = vm.board.doing[0] ?? null;
+  const next = vm.board.todo;
+  const doneCount = vm.board.done.length;
+
+  const nowBlock = active
+    ? `<div class="now-card">
+         <span class="now-title">${escapeHtml(active.title)}</span>
+         <button data-cmd="completeActiveTask">Mark done</button>
+       </div>`
+    : next.length > 0
+      ? `<div class="now-card empty"><span class="now-title quiet">Nothing in progress</span><button data-cmd="startNextTask">Start "${escapeHtml(next[0]!.title.slice(0, 40))}"</button></div>`
+      : doneCount > 0
+        ? `<div class="now-card empty"><span class="now-title quiet">All done — everything on the list is finished.</span></div>`
+        : "";
+
+  const nextBlock = next.length
+    ? `<div class="eyebrow">Up next</div>
+       <ul class="next-list">${next
+         .map((t: PanelTask) => `<li><span>${escapeHtml(t.title)}</span><button class="link" data-task="${escapeHtml(t.id)}">Start</button></li>`)
+         .join("")}</ul>`
     : "";
-  const suggestion = vm.suggestion ? `<div class="suggestion">${escapeHtml(vm.suggestion)}</div>` : "";
-  return `
-    <div class="hero">
-      <div class="health">${HEALTH_LABEL[vm.health]}</div>
-      <div class="goal">${goal}</div>
-      <div class="task-line">${task}</div>
-      ${review}
-      ${suggestion}
-    </div>`;
-}
 
-function renderPulse(vm: PanelViewModel): string {
-  if (!vm.setUp) return "";
-  const c = vm.counts24h;
-  const tile = (label: string, value: number, tone = ""): string =>
-    `<div class="tile ${tone}"><div class="tile-value">${value}</div><div class="tile-label">${label}</div></div>`;
-  return `
-    <div class="pulse">
-      ${tile("confirmed drift (24h)", c.driftConfirmed, c.driftConfirmed > 0 ? "warn" : "")}
-      ${tile("unreviewed", c.driftPending)}
-      ${tile("dismissed", c.driftDismissed)}
-      ${tile("advisories", c.advisories)}
-      ${tile("intents", c.intents)}
-    </div>`;
-}
+  const doneBlock = doneCount ? `<div class="done-line">${doneCount} finished</div>` : "";
 
-function renderTask(t: PanelTask): string {
-  return `<li class="${t.active ? "active" : ""}" ${t.active ? "" : `data-task="${escapeHtml(t.id)}"`}>${escapeHtml(t.title)}</li>`;
-}
-
-function renderBoard(vm: PanelViewModel): string {
-  if (!vm.setUp) return "";
-  const column = (title: string, tasks: PanelTask[], extra = ""): string => `
-      <div class="column">
-        <h4>${title} <span class="count">${tasks.length}</span></h4>
-        <ul>${tasks.map(renderTask).join("")}</ul>
-        ${extra}
-      </div>`;
-  const doingExtra = vm.activeTask ? `<button data-cmd="completeActiveTask">Complete active task</button>` : "";
-  const todoExtra = vm.board.todo.length ? `<button data-cmd="startNextTask">Start next task</button>` : "";
-  return `<div class="board">${column("Doing", vm.board.doing, doingExtra)}${column("To do", vm.board.todo, todoExtra)}${column("Done", vm.board.done)}</div>`;
-}
-
-function renderDriftEntry(e: PanelDriftEntry): string {
-  const reviewBtn =
-    e.status === "pending" ? `<button class="link" data-rescore="${escapeHtml(e.driftId)}">Review with AI</button>` : "";
-  return `
-    <li class="drift-entry ${e.status}${e.realigned ? " realigned" : ""}">
-      <div class="drift-label">${escapeHtml(e.label)}${reviewBtn}</div>
-      <div class="drift-detail">${escapeHtml(e.detail)}</div>
-      ${e.realignmentType ? `<div class="drift-realign">↩ ${escapeHtml(e.realignmentType)}</div>` : ""}
-    </li>`;
-}
-
-function renderDrift(vm: PanelViewModel): string {
-  if (!vm.setUp) return "";
-  const visible = vm.driftFeed.filter((e) => e.status !== "dismissed");
-  const dismissed = vm.driftFeed.filter((e) => e.status === "dismissed");
-  const list = visible.length
-    ? `<ul>${visible.map(renderDriftEntry).join("")}</ul>`
-    : `<p class="quiet">No drift recorded. The tape is clean.</p>`;
-  const dismissedBlock = dismissed.length
-    ? `<details><summary>${dismissed.length} dismissed by review</summary><ul>${dismissed.map(renderDriftEntry).join("")}</ul></details>`
-    : "";
-  return `<div class="drift"><h3>Drift &amp; realignment</h3>${list}${dismissedBlock}</div>`;
+  if (!nowBlock && !nextBlock && !doneBlock) return "";
+  return `<div class="focus"><div class="eyebrow">Now</div>${nowBlock}${nextBlock}${doneBlock}</div>`;
 }
 
 function renderCriteria(vm: PanelViewModel): string {
   if (!vm.setUp || vm.successCriteria.length === 0) return "";
   const items = vm.successCriteria
-    .map((c) => `<li class="${c.done ? "done" : ""}">${c.done ? "✅" : "⬜"} ${escapeHtml(c.text)}</li>`)
+    .map((c) => `<li class="${c.done ? "done" : ""}"><span class="tick">${c.done ? "✓" : ""}</span>${escapeHtml(c.text)}</li>`)
     .join("");
-  return `<div class="criteria"><h3>Success criteria</h3><ul>${items}</ul></div>`;
+  return `<div class="criteria"><div class="eyebrow">Done when</div><ul>${items}</ul></div>`;
 }
 
 function renderConstraints(vm: PanelViewModel): string {
   if (!vm.setUp || vm.constraints.length === 0) return "";
-  return `<div class="constraints"><h3>Constraints</h3><ul>${vm.constraints.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul></div>`;
+  return `<div class="constraints"><div class="eyebrow">Boundaries</div><ul>${vm.constraints.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul></div>`;
+}
+
+function shortTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function driftChip(e: PanelDriftEntry): string {
+  if (e.realigned) return `<span class="chip back">came back</span>`;
+  if (e.status === "confirmed") return `<span class="chip confirmed">off-goal</span>`;
+  return `<span class="chip pending">unreviewed<button class="link" data-rescore="${escapeHtml(e.driftId)}">check with AI</button></span>`;
+}
+
+function renderDrift(vm: PanelViewModel): string {
+  if (!vm.setUp) return "";
+  // The feed arrives newest-first; a track is a path, so it flows down in time.
+  const visible = vm.driftFeed.filter((e) => e.status !== "dismissed").slice().reverse();
+  const dismissed = vm.driftFeed.length - visible.length;
+
+  const body = visible.length
+    ? `<ol class="track">${visible
+        .map((e) => {
+          const value = e.detail.replace(/^\[(shell|mcp|read|edit)\]\s*/, "");
+          const kind = e.detail.match(/^\[(shell|mcp|read|edit)\]/)?.[1] ?? "";
+          return `<li class="${e.realigned ? "back" : e.status}">
+            <span class="node"></span>
+            <div class="entry">
+              <div class="entry-head"><span class="when">${shortTime(e.ts)}</span>${driftChip(e)}</div>
+              <code title="${escapeHtml(e.detail)}">${escapeHtml(kind ? `${kind} · ` : "")}${escapeHtml(value.split(" · task:")[0]?.slice(0, 64) ?? "")}</code>
+            </div>
+          </li>`;
+        })
+        .join("")}</ol>`
+    : `<p class="quiet">The session is following the track. Detours will show up here.</p>`;
+
+  const cleared = dismissed ? `<p class="quiet">${dismissed} false alarm${dismissed === 1 ? "" : "s"} cleared by review.</p>` : "";
+  return `<div class="drift"><div class="eyebrow">Off the track</div>${body}${cleared}</div>`;
 }
 
 function renderConsent(vm: PanelViewModel): string {
@@ -135,26 +168,26 @@ function renderConsent(vm: PanelViewModel): string {
   if (vm.semantic.consented) {
     return vm.semantic.available
       ? ""
-      : `<div class="consent muted">AI drift review is offline (cursor-agent unavailable). Lexical signals still record.</div>`;
+      : `<div class="consent muted">AI review is offline right now — detours stay marked "unreviewed" until it's back.</div>`;
   }
   if (vm.semantic.pendingCount === 0) return "";
   return `
     <div class="consent">
-      <p>${vm.semantic.pendingCount} drift signal${vm.semantic.pendingCount === 1 ? "" : "s"} awaiting review.
-      Goal Guardian can review them with AI in the background (uses your Cursor account — a few small calls per session).</p>
-      <button data-cmd="enableRescore">Enable AI review</button>
+      <p>${vm.semantic.pendingCount === 1 ? "One detour is" : `${vm.semantic.pendingCount} detours are`} waiting for review.
+      Guardian can double-check them with AI so false alarms clear themselves
+      (uses your Cursor account — a few small calls).</p>
+      <button data-cmd="enableRescore">Turn on AI review</button>
     </div>`;
 }
 
 export function renderSections(vm: PanelViewModel): Record<SectionId, string> {
   return {
     welcome: renderWelcome(vm),
-    hero: renderHero(vm),
-    pulse: renderPulse(vm),
-    board: renderBoard(vm),
-    drift: renderDrift(vm),
+    goal: renderGoal(vm),
+    focus: renderFocus(vm),
     criteria: renderCriteria(vm),
     constraints: renderConstraints(vm),
+    drift: renderDrift(vm),
     consent: renderConsent(vm),
   };
 }

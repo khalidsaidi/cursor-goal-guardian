@@ -116,3 +116,24 @@ there instead of demanding sidebar visits:
   "why?" input, verified writing ADD_DECISION + START_TASK), update goal,
   review drift with AI, notifications toggle (verified writing config.json),
   open panel/files.
+
+## v1.1 interaction model: the request IS the goal (verified live)
+
+- Fresh workspace, empty goal, fully wired: a plain chat request ("Add a
+  subtract function…") auto-declared the goal FROM the user's words via
+  guardian_update_goal, derived three 'done when' criteria, and worked
+  through them on the record (SET_GOAL → ADD_TASKS → START/COMPLETE ×3),
+  acknowledged in one chat line. Zero ceremony; the user just asks.
+- Chat-native surfaces: guardian_update_goal MCP tool; /guardian and
+  /guardian-goal project skills (the chat input's own "/" menu); rule
+  extended with the request-is-the-goal protocol and chat steering.
+- Cursor's Agents hub (agent-first mode) confirmed live: no extension
+  sidebar exists there — the rule + skills + MCP + hooks path is the ONLY
+  product surface in hub mode, and it carries the whole experience.
+- Panel redesigned (design-review loop with screenshots in Chrome):
+  goal-as-title (click to edit), instrument status (lamp + "on course /
+  holding course / off course"), plain-language sections (Now, Up next,
+  Done when, Boundaries), and the drift section drawn as a literal track —
+  detours off-axis, returns on the line, chronological. Trust hierarchy
+  fixed: an unreviewed lexical signal no longer outvotes a confident
+  whole-tape AI verdict.

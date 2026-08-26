@@ -31,7 +31,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     isSemanticAvailable: () => rescore.isAvailable(),
     onCommand: async (command) => {
       if (command === "enableRescore") await rescore.grantConsent();
-      else await vscode.commands.executeCommand(`goalGuardian.${command}`);
+      else if (command === "editGoal") {
+        if (!root) return;
+        const state = await readStateSafe(root);
+        const goal = await vscode.window.showInputBox({ title: "Goal", value: state.goal, prompt: "One unambiguous sentence." });
+        if (goal !== undefined) await dispatch(root, { type: "SET_GOAL", actor: "human", payload: { goal } });
+      } else await vscode.commands.executeCommand(`goalGuardian.${command}`);
       await controller.refresh();
     },
     onStartTask: async (taskId) => {

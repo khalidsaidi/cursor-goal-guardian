@@ -112,6 +112,17 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
     }
   }
 
+  // Trust hierarchy: an unreviewed lexical signal should not outvote a
+  // confident whole-tape verdict. With nothing CONFIRMED and open, and the
+  // judge reading the session as on course, "drifting" softens to recovering.
+  let health = summary.drift.health;
+  const confirmedOpen = summary.drift.entries.some(
+    (e) => e.status === "confirmed" && !e.realigned && Date.parse(e.ts) >= horizon,
+  );
+  if (health === "drifting" && !confirmedOpen && sessionReview?.verdict === "on_course" && sessionReview.confidence >= 0.7) {
+    health = "recovering";
+  }
+
   const persistentlyOff =
     (summary.drift.health === "drifting" && summary.drift.unresolved >= 3) ||
     (sessionReview?.verdict === "off_course" && sessionReview.confidence >= 0.7);
@@ -130,7 +141,7 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       doing: state.tasks.filter((t) => t.status === "doing").map((t) => toPanelTask(t, state.activeTaskId)),
       done: state.tasks.filter((t) => t.status === "done").map((t) => toPanelTask(t, state.activeTaskId)),
     },
-    health: summary.drift.health,
+    health,
     counts24h: summary.counts24h,
     driftFeed,
     badge,

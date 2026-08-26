@@ -13,12 +13,12 @@ const at = (minAgo: number) => new Date(NOW.getTime() - minAgo * 60 * 1000).toIS
 
 function inputs(overrides: Partial<PanelInputs> = {}): PanelInputs {
   const state = defaultState();
-  state.goal = "Ship CSV export";
-  state.successCriteria = criteriaFromTexts(["serializer works"]);
-  state.constraints = ["no new deps"];
+  state.goal = "Ship the checkout flow";
+  state.successCriteria = criteriaFromTexts(["Payment form works", "Order email sends"]);
+  state.constraints = ["No new dependencies"];
   state.tasks = [
-    { id: "t1", title: "serializer works", status: "doing", criterionId: "sc_1" },
-    { id: "t2", title: "filters", status: "todo" },
+    { id: "t1", title: "Payment form works", status: "doing", criterionId: "sc_1" },
+    { id: "t2", title: "Order email sends", status: "todo", criterionId: "sc_2" },
   ];
   state.activeTaskId = "t1";
   return { setUp: true, state, records: [], actions: [], now: NOW, semanticConsented: false, semanticAvailable: true, ...overrides };
@@ -32,60 +32,90 @@ const drift = (id: string, minAgo: number): AuditRecord => ({
   actionType: "shell",
   actionValue: `docker build <img> & "quote"`,
   activeTaskId: "t1",
-  activeTaskTitle: "serializer works",
-  taskTerms: ["serializer"],
+  activeTaskTitle: "Payment form works",
+  taskTerms: ["payment"],
   actionTerms: ["docker"],
   confidence: "low",
 });
 
-describe("panel section renderers", () => {
-  it("welcome state renders only the welcome section", () => {
+describe("panel sections", () => {
+  it("not connected: only the welcome invitation renders", () => {
     const sections = renderSections(buildPanelViewModel(inputs({ setUp: false })));
-    expect(sections.welcome).toContain("Set up this workspace");
+    expect(sections.welcome).toContain("Connect Guardian to this workspace");
     expect(sections.welcome).toContain('data-cmd="setup"');
+    expect(sections.welcome).toContain("standing by");
     for (const id of SECTION_IDS.filter((s) => s !== "welcome")) {
       expect(sections[id]).toBe("");
     }
   });
 
-  it("set-up state renders hero/board and no welcome", () => {
+  it("the goal is the title, editable; the instrument reads on course", () => {
     const sections = renderSections(buildPanelViewModel(inputs()));
     expect(sections.welcome).toBe("");
-    expect(sections.hero).toContain("Ship CSV export");
-    expect(sections.hero).toContain("🟢 On track");
-    expect(sections.board).toContain("serializer works");
-    expect(sections.board).toContain('data-cmd="completeActiveTask"');
-    expect(sections.board).toContain('data-cmd="startNextTask"');
-    expect(sections.criteria).toContain("⬜");
-    expect(sections.constraints).toContain("no new deps");
-    expect(sections.drift).toContain("The tape is clean");
-    expect(sections.consent).toBe("");
+    expect(sections.goal).toContain("Ship the checkout flow");
+    expect(sections.goal).toContain('data-cmd="editGoal"');
+    expect(sections.goal).toContain("on course");
+    expect(sections.goal).toContain("Nothing off-goal in the last 24 hours.");
   });
 
-  it("drift entries escape HTML and expose per-item review buttons; consent card appears with pending drift", () => {
+  it("an empty goal invites the chat-first path", () => {
+    const inp = inputs();
+    inp.state.goal = "";
+    const sections = renderSections(buildPanelViewModel(inp));
+    expect(sections.goal).toContain("Ask your agent for something");
+  });
+
+  it("focus shows Now with Mark done, Up next with Start, and a finished count", () => {
+    const inp = inputs();
+    inp.state.tasks.push({ id: "t3", title: "Old spike", status: "done" });
+    const sections = renderSections(buildPanelViewModel(inp));
+    expect(sections.focus).toContain("Payment form works");
+    expect(sections.focus).toContain("Mark done");
+    expect(sections.focus).toContain("Up next");
+    expect(sections.focus).toContain('data-task="t2"');
+    expect(sections.focus).toContain("1 finished");
+  });
+
+  it("plain-language lists: Done when checklist and Boundaries", () => {
+    const inp = inputs();
+    inp.state.tasks[0]!.status = "done";
+    inp.state.activeTaskId = null;
+    const sections = renderSections(buildPanelViewModel(inp));
+    expect(sections.criteria).toContain("Done when");
+    expect(sections.criteria).toMatch(/class="done"/);
+    expect(sections.constraints).toContain("Boundaries");
+    expect(sections.constraints).toContain("No new dependencies");
+  });
+
+  it("the track: detours render as off-axis nodes with chips; HTML is escaped", () => {
     const sections = renderSections(buildPanelViewModel(inputs({ records: [drift("d1", 30)] })));
-    expect(sections.drift).toContain("docker build &lt;img&gt; &amp; &quot;quote&quot;");
-    expect(sections.drift).not.toContain("<img>");
+    expect(sections.drift).toContain('class="track"');
+    expect(sections.drift).toContain("unreviewed");
     expect(sections.drift).toContain('data-rescore="d1"');
-    expect(sections.consent).toContain("Enable AI review");
+    expect(sections.drift).toContain("docker build &lt;img&gt;");
+    expect(sections.drift).not.toContain("<img>");
+    expect(sections.goal).toContain("off course");
+    expect(sections.consent).toContain("Turn on AI review");
   });
 
-  it("consented + unavailable renders the offline note instead of the ask", () => {
+  it("a realigned detour reads 'came back'; dismissed ones become cleared false alarms", () => {
+    const records: AuditRecord[] = [
+      drift("d1", 30),
+      { ts: at(25), kind: "drift.verdict", driftId: "d1", verdict: "dismissed", judge: "cursor-agent", confidence: 0.8, rationale: "fine" },
+      drift("d2", 20),
+    ];
+    const actions = [{ id: "a1", ts: at(18), actor: "agent" as const, type: "ADD_DECISION" as const, payload: {} }];
+    const sections = renderSections(buildPanelViewModel(inputs({ records, actions })));
+    expect(sections.drift).toContain("came back");
+    expect(sections.drift).toContain("1 false alarm cleared by review");
+  });
+
+  it("consented + offline shows the calm offline note", () => {
     const sections = renderSections(
       buildPanelViewModel(inputs({ records: [drift("d1", 30)], semanticConsented: true, semanticAvailable: false })),
     );
     expect(sections.consent).toContain("offline");
-    expect(sections.consent).not.toContain("Enable AI review");
-  });
-
-  it("dismissed drifts are tucked behind a details toggle", () => {
-    const records: AuditRecord[] = [
-      drift("d1", 30),
-      { ts: at(10), kind: "drift.verdict", driftId: "d1", verdict: "dismissed", judge: "cursor-agent", confidence: 0.8, rationale: "fine" },
-    ];
-    const sections = renderSections(buildPanelViewModel(inputs({ records })));
-    expect(sections.drift).toContain("<details>");
-    expect(sections.drift).toContain("1 dismissed by review");
+    expect(sections.consent).not.toContain("Turn on AI review");
   });
 
   it("escapeHtml covers the critical entities", () => {
