@@ -11,7 +11,10 @@ jobs:
       fail-fast: false
       matrix:
         # All six shipped architectures execute their own binaries.
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-latest, windows-latest, windows-11-arm]
+        # macos-15-intel is the supported x64 runner (macos-13 queues are
+        # chronically starved); macos-latest additionally executes the
+        # darwin-x64 binaries under Rosetta as a second, faster x64 proof.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15-intel, macos-latest, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -34,3 +37,13 @@ jobs:
       # agent scenarios are skipped automatically in CI (no cursor-agent,
       # and the harness gates on GG_E2E_CONFIRM there).
       - run: pnpm --filter @goal-guardian/e2e test:e2e:offline
+      # Second x64 proof for macOS, independent of Intel-runner queues: the
+      # arm64 runner cross-compiles the darwin-x64 binaries and EXECUTES them
+      # under Rosetta — a real run of the shipped artifact, not just a build.
+      - name: darwin-x64 binaries under Rosetta
+        if: matrix.os == 'macos-latest'
+        run: |
+          node scripts/compile-binaries.mjs --target darwin-x64
+          file dist-bin/darwin-x64/goal-guardian-hook | grep x86_64
+          echo '{"hook_event_name":"beforeShellExecution","command":"git status","workspace_roots":["'"$PWD"'"]}' \
+            | ./dist-bin/darwin-x64/goal-guardian-hook | grep '"permission":"allow"'

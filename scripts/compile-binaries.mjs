@@ -144,7 +144,13 @@ async function buildSea(dir) {
 }
 
 const hostOnly = process.argv.includes("--host-only");
-const wanted = hostOnly ? [hostTarget()] : Object.keys(TARGETS);
+const targetFlag = process.argv.indexOf("--target");
+const wanted =
+  targetFlag !== -1
+    ? [process.argv[targetFlag + 1]]
+    : hostOnly
+      ? [hostTarget()]
+      : Object.keys(TARGETS);
 
 for (const target of wanted) {
   const spec = TARGETS[target];
