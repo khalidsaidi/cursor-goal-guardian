@@ -82,6 +82,55 @@ describe("quietness contract", () => {
     expect(unrelated.response.userMessage).toBeDefined();
   });
 
+  it("escalation off (default): confirmed drift still only ever allows", async () => {
+    const w = await ws();
+    runHook(w.root, shellEvent("docker build -t darkmode-theme ."));
+    const drifts = auditOfKind(await readAudit(w.root), "drift.lexical");
+    const { writeJsonAtomic } = await import("@goal-guardian/core");
+    await writeJsonAtomic(w.paths.verdicts, {
+      schemaVersion: 2,
+      entries: { [drifts[0]!.driftId]: { verdict: "confirmed", judge: "cursor-agent", confidence: 0.9, rationale: "r", ts: new Date().toISOString() } },
+    });
+    const next = runHook(w.root, shellEvent("docker push darkmode-theme:latest"));
+    expect(next.response.permission).toBe("allow");
+  });
+
+  it("escalation 'ask': drift confirmed by the judge that continues after its nudge hands the call to the human", async () => {
+    const w = await ws({ advisories: { escalateConfirmedDrift: "ask" } });
+    const first = runHook(w.root, shellEvent("docker build -t darkmode-theme ."));
+    expect(first.response.permission).toBe("allow"); // first contact: nudge only
+    expect(first.response.userMessage).toBeDefined();
+
+    const drifts = auditOfKind(await readAudit(w.root), "drift.lexical");
+    const { writeJsonAtomic } = await import("@goal-guardian/core");
+    await writeJsonAtomic(w.paths.verdicts, {
+      schemaVersion: 2,
+      entries: { [drifts[0]!.driftId]: { verdict: "confirmed", judge: "cursor-agent", confidence: 0.9, rationale: "r", ts: new Date().toISOString() } },
+    });
+
+    const continued = runHook(w.root, shellEvent("docker push darkmode-theme:latest"));
+    expect(continued.response.permission).toBe("ask");
+    expect(continued.response.userMessage).toMatch(/confirmed off-goal work/);
+
+    // Without a confirmed verdict, the same continuation stays a silent allow.
+    const w2 = await ws({ advisories: { escalateConfirmedDrift: "ask" } });
+    runHook(w2.root, shellEvent("docker build -t darkmode-theme ."));
+    const unconfirmed = runHook(w2.root, shellEvent("docker push darkmode-theme:latest"));
+    expect(unconfirmed.response.permission).toBe("allow");
+    expect(unconfirmed.response.userMessage).toBeUndefined();
+  });
+
+  it("the raw tape records shell/mcp/edit actions but not reads", async () => {
+    const w = await ws();
+    runHook(w.root, shellEvent("pnpm test"));
+    runHook(w.root, { hook_event_name: "beforeMCPExecution", mcp_server_name: "some-server", tool_name: "do_thing" });
+    runHook(w.root, { hook_event_name: "afterFileEdit", file_path: "src/expense-form.tsx" });
+    runHook(w.root, readEvent("src/expense-form.tsx"));
+    const observed = auditOfKind(await readAudit(w.root), "action.observed");
+    expect(observed.map((o) => o.actionType)).toEqual(["shell", "mcp", "edit"]);
+    expect(observed[1]?.actionValue).toBe("some-server/do_thing");
+  });
+
   it("nudge format: one sentence, prefixed, pointing at the panel", async () => {
     const w = await ws();
     const { response } = runHook(w.root, shellEvent("docker build -t darkmode-theme ."));

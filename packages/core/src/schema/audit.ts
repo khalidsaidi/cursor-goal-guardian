@@ -75,12 +75,38 @@ export const intentDeclaredRecordSchema = z
   })
   .strict();
 
+/** The raw tape: every substantive action, so semantic review can read the session itself. */
+export const actionObservedRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("action.observed"),
+    actionType: z.enum(["shell", "mcp", "edit"]),
+    actionValue: z.string(),
+  })
+  .strict();
+
+/** A whole-session verdict from the judge over the raw tape — catches in-vocabulary drift no lexical signal can. */
+export const sessionReviewRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("session.review"),
+    verdict: z.enum(["on_course", "off_course"]),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string(),
+    judge: z.string().min(1),
+    sampledActions: z.number().int().nonnegative(),
+    flaggedActions: z.array(z.string()),
+  })
+  .strict();
+
 export const auditRecordSchema = z.discriminatedUnion("kind", [
   hookEventRecordSchema,
   lexicalDriftRecordSchema,
   driftVerdictRecordSchema,
   policyAdvisoryRecordSchema,
   intentDeclaredRecordSchema,
+  actionObservedRecordSchema,
+  sessionReviewRecordSchema,
 ]);
 
 export type HookEventName = z.infer<typeof hookEventNameSchema>;
@@ -89,6 +115,8 @@ export type LexicalDriftRecord = z.infer<typeof lexicalDriftRecordSchema>;
 export type DriftVerdictRecord = z.infer<typeof driftVerdictRecordSchema>;
 export type PolicyAdvisoryRecord = z.infer<typeof policyAdvisoryRecordSchema>;
 export type IntentDeclaredRecord = z.infer<typeof intentDeclaredRecordSchema>;
+export type ActionObservedRecord = z.infer<typeof actionObservedRecordSchema>;
+export type SessionReviewRecord = z.infer<typeof sessionReviewRecordSchema>;
 export type AuditRecord = z.infer<typeof auditRecordSchema>;
 
 export function parseAuditRecord(value: unknown): AuditRecord {

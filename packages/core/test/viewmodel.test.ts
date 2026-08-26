@@ -105,4 +105,23 @@ describe("panel view model", () => {
     const vm = buildPanelViewModel(baseInputs({ semanticConsented: true, semanticAvailable: false }));
     expect(vm.semantic).toMatchObject({ consented: true, available: false });
   });
+
+  it("surfaces the newest session review and suggests updating a stale contract", () => {
+    const records: AuditRecord[] = [
+      { ts: at(60), kind: "session.review", verdict: "on_course", confidence: 0.9, rationale: "early", judge: "cursor-agent", sampledActions: 12, flaggedActions: [] },
+      { ts: at(10), kind: "session.review", verdict: "off_course", confidence: 0.8, rationale: "all theming work", judge: "cursor-agent", sampledActions: 15, flaggedActions: ["[shell] docker build"] },
+    ];
+    const vm = buildPanelViewModel(baseInputs({ records }));
+    expect(vm.sessionReview).toMatchObject({ verdict: "off_course", confidence: 0.8, flaggedActions: ["[shell] docker build"] });
+    expect(vm.suggestion).toMatch(/update the contract or record a decision/);
+  });
+
+  it("no suggestion when the session reads on course", () => {
+    const records: AuditRecord[] = [
+      { ts: at(10), kind: "session.review", verdict: "on_course", confidence: 0.95, rationale: "focused", judge: "cursor-agent", sampledActions: 10, flaggedActions: [] },
+    ];
+    const vm = buildPanelViewModel(baseInputs({ records }));
+    expect(vm.sessionReview?.verdict).toBe("on_course");
+    expect(vm.suggestion).toBeNull();
+  });
 });

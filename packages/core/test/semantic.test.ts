@@ -150,6 +150,113 @@ describe("rescorer", () => {
   });
 });
 
+describe("session review (whole-tape second lens)", () => {
+  const observed = (i: number, minAgo: number, value = `docker build step-${i}`): AuditRecord => ({
+    ts: at(minAgo),
+    kind: "action.observed",
+    actionType: "shell",
+    actionValue: value,
+  });
+
+  function reviewJudge(result: import("../src/index.js").SessionReviewResult | null) {
+    const calls: string[][] = [];
+    const judge: DriftJudge & { calls: string[][] } = {
+      id: "fake",
+      calls,
+      isAvailable: async () => ({ ok: true }),
+      judge: async () => [],
+      reviewSession: async (actions) => {
+        calls.push(actions);
+        return result;
+      },
+    };
+    return judge;
+  }
+
+  it("does nothing until minNewActions accumulate; then reviews and records", async () => {
+    const root = await makeRoot();
+    const config = parseConfig({ drift: { semantic: { sessionReview: { minNewActions: 3, maxActions: 10 } } } });
+    const judge = reviewJudge({ verdict: "off_course", confidence: 0.85, rationale: "all theming work", flagged: [0, 2] });
+    const { runSessionReview } = await import("../src/index.js");
+
+    await appendAudit(root, observed(1, 30));
+    await appendAudit(root, observed(2, 20));
+    expect(await runSessionReview(root, state, config, judge, clock)).toEqual({ reviewed: false, calledJudge: false });
+
+    await appendAudit(root, observed(3, 10));
+    const result = await runSessionReview(root, state, config, judge, clock);
+    expect(result).toEqual({ reviewed: true, calledJudge: true });
+    expect(judge.calls[0]).toHaveLength(3);
+
+    const reviews = (await readAuditTail(root)).filter((r) => r.kind === "session.review");
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]).toMatchObject({
+      verdict: "off_course",
+      confidence: 0.85,
+      sampledActions: 3,
+      flaggedActions: ["[shell] docker build step-1", "[shell] docker build step-3"],
+    });
+  });
+
+  it("only actions newer than the last review count toward the next one", async () => {
+    const root = await makeRoot();
+    const config = parseConfig({ drift: { semantic: { sessionReview: { minNewActions: 2 } } } });
+    const judge = reviewJudge({ verdict: "on_course", confidence: 0.9, rationale: "fine", flagged: [] });
+    const { runSessionReview } = await import("../src/index.js");
+    await appendAudit(root, observed(1, 60));
+    await appendAudit(root, observed(2, 50));
+    await runSessionReview(root, state, config, judge, clock);
+    // No new actions since the review -> nothing to do.
+    expect(await runSessionReview(root, state, config, judge, clock)).toEqual({ reviewed: false, calledJudge: false });
+  });
+
+  it("respects the enabled flag and judges without the capability", async () => {
+    const root = await makeRoot();
+    await appendAudit(root, observed(1, 10));
+    const { runSessionReview } = await import("../src/index.js");
+    const off = parseConfig({ drift: { semantic: { sessionReview: { enabled: false } } } });
+    const judge = reviewJudge({ verdict: "on_course", confidence: 1, rationale: "", flagged: [] });
+    expect(await runSessionReview(root, state, off, judge, clock)).toEqual({ reviewed: false, calledJudge: false });
+
+    const plainJudge: DriftJudge = { id: "plain", isAvailable: async () => ({ ok: true }), judge: async () => [] };
+    expect(await runSessionReview(root, state, defaultConfig(), plainJudge, clock)).toEqual({ reviewed: false, calledJudge: false });
+  });
+
+  it("an unusable judge reply records nothing and stays retryable", async () => {
+    const root = await makeRoot();
+    const config = parseConfig({ drift: { semantic: { sessionReview: { minNewActions: 1 } } } });
+    for (let i = 0; i < 2; i++) await appendAudit(root, observed(i, 10 - i));
+    const { runSessionReview } = await import("../src/index.js");
+    const nullJudge = reviewJudge(null);
+    expect(await runSessionReview(root, state, config, nullJudge, clock)).toEqual({ reviewed: false, calledJudge: true });
+    expect((await readAuditTail(root)).filter((r) => r.kind === "session.review")).toHaveLength(0);
+  });
+});
+
+describe("session review parser", () => {
+  const envelope = (result: string): string =>
+    JSON.stringify({ type: "result", subtype: "success", is_error: false, result });
+
+  it("parses a clean object envelope", async () => {
+    const { parseSessionReviewOutput } = await import("../src/index.js");
+    const out = parseSessionReviewOutput(
+      envelope('{"verdict":"off_course","confidence":0.8,"rationale":"theming","flagged":[1,2]}'),
+    );
+    expect(out).toEqual({ verdict: "off_course", confidence: 0.8, rationale: "theming", flagged: [1, 2] });
+  });
+
+  it("parses prose-wrapped and fenced objects; rejects garbage and bad values", async () => {
+    const { parseSessionReviewOutput } = await import("../src/index.js");
+    expect(
+      parseSessionReviewOutput(envelope('Here is my review:\n```json\n{"verdict":"on_course","confidence":0.95,"rationale":"ok","flagged":[]}\n```')),
+    ).toMatchObject({ verdict: "on_course", confidence: 0.95 });
+    expect(parseSessionReviewOutput(envelope("I cannot judge this."))).toBeNull();
+    expect(parseSessionReviewOutput(envelope('{"verdict":"sideways","confidence":0.5}'))).toBeNull();
+    expect(parseSessionReviewOutput(envelope('{"verdict":"on_course","confidence":7}'))).toBeNull();
+    expect(parseSessionReviewOutput("not json at all")).toBeNull();
+  });
+});
+
 describe("cursor-agent judge prompt and parser (real recorded captures)", () => {
   const candidates: DriftCandidate[] = [
     { driftId: "d1", actionType: "shell", actionValue: "docker build -t theme .", activeTaskTitle: "Ship CSV export" },

@@ -4,6 +4,7 @@ import {
   readConfigSafe,
   readStateSafe,
   runRescore,
+  runSessionReview,
   type DriftJudge,
 } from "@goal-guardian/core";
 
@@ -96,6 +97,12 @@ export class RescoreService {
       if (result.calledJudge) {
         this.callsThisSession += 1;
         this.consecutiveFailures = result.recorded > 0 ? 0 : this.consecutiveFailures + (result.judged > 0 ? 1 : 0);
+      }
+      // Second lens: whole-tape review (catches in-vocabulary drift).
+      if (this.callsThisSession < config.drift.semantic.sessionCallCap) {
+        const review = await runSessionReview(this.root, state, config, this.judge);
+        if (review.calledJudge) this.callsThisSession += 1;
+        if (review.reviewed) this.onDidRescore();
       }
       if (result.recorded > 0) this.onDidRescore();
     } catch {

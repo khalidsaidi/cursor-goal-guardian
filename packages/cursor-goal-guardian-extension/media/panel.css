@@ -35,6 +35,15 @@ li { padding: 3px 6px; border-radius: 3px; }
 .hero .goal { line-height: 1.4; }
 .hero .task-line { margin-top: 4px; opacity: 0.9; }
 .hero .no-task { opacity: 0.6; font-style: italic; }
+.session-review { margin-top: 6px; font-size: 11px; opacity: 0.85; }
+.session-review.off_course { color: var(--vscode-editorWarning-foreground); opacity: 1; }
+.suggestion {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-left: 3px solid var(--vscode-editorWarning-foreground);
+  background: var(--vscode-editorWidget-background, rgba(128,128,128,0.08));
+  line-height: 1.4;
+}
 
 .pulse { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .tile {

@@ -57,4 +57,16 @@ describe("policy engine severity table", () => {
   it("matching is case-insensitive", () => {
     expect(evaluatePolicy("shell", "Git Reset --hard", config).severity).toBe("caution");
   });
+
+  it("chained shell commands: the most severe segment wins", () => {
+    expect(evaluatePolicy("shell", "git init && git reset --hard", config)).toMatchObject({
+      severity: "caution",
+      rule: "git reset --hard*",
+    });
+    // An ok-prefix must not mask a dangerous chained segment.
+    expect(evaluatePolicy("shell", "git status && rm -rf /", config).severity).toBe("alert");
+    expect(evaluatePolicy("shell", "ls -la; sudo rm cache", config).severity).toBe("caution");
+    // A single safe command is unaffected.
+    expect(evaluatePolicy("shell", "git status", config).severity).toBe("ok");
+  });
 });

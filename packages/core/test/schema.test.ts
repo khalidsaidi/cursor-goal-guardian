@@ -151,6 +151,17 @@ describe("audit record schema", () => {
       reason: "destructive filesystem command",
     },
     { ts: nowIso(), kind: "intent.declared", intentId: "int_1", summary: "implement serializer" },
+    { ts: nowIso(), kind: "action.observed", actionType: "shell", actionValue: "pnpm test" },
+    {
+      ts: nowIso(),
+      kind: "session.review",
+      verdict: "off_course",
+      confidence: 0.8,
+      rationale: "theming spree",
+      judge: "cursor-agent",
+      sampledActions: 14,
+      flaggedActions: ["[shell] docker build"],
+    },
   ];
 
   it("round-trips every record kind", () => {

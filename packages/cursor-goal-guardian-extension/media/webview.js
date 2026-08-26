@@ -25,11 +25,15 @@
     if (!vm.setUp) return "";
     const goal = vm.goal.trim() ? escapeHtml(vm.goal) : "<em>No goal declared yet \u2014 open the contract to add one.</em>";
     const task = vm.activeTask ? `<span class="active-task">\u25B6 ${escapeHtml(vm.activeTask.title)}</span>` : `<span class="no-task">No active task</span>`;
+    const review = vm.sessionReview ? `<div class="session-review ${vm.sessionReview.verdict}">AI session review: ${vm.sessionReview.verdict === "on_course" ? "on course" : "off course"} (${Math.round(vm.sessionReview.confidence * 100)}%) \u2014 ${escapeHtml(vm.sessionReview.rationale)}</div>` : "";
+    const suggestion = vm.suggestion ? `<div class="suggestion">${escapeHtml(vm.suggestion)}</div>` : "";
     return `
     <div class="hero">
       <div class="health">${HEALTH_LABEL[vm.health]}</div>
       <div class="goal">${goal}</div>
       <div class="task-line">${task}</div>
+      ${review}
+      ${suggestion}
     </div>`;
   }
   function renderPulse(vm) {

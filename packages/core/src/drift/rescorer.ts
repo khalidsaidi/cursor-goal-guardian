@@ -2,7 +2,7 @@ import { getGuardianPaths } from "../paths.js";
 import { systemClock, nowIso, type Clock } from "../clock.js";
 import type { GuardianConfig } from "../schema/config.js";
 import type { GuardianState } from "../schema/state.js";
-import type { LexicalDriftRecord } from "../schema/audit.js";
+import type { ActionObservedRecord, LexicalDriftRecord } from "../schema/audit.js";
 import { emptyVerdictCache, parseVerdictCache, type VerdictCache } from "../schema/verdicts.js";
 import { appendAudit, readAuditTail } from "../audit/log.js";
 import { readJsonFile, writeJsonAtomic } from "../fsutil.js";
@@ -104,4 +104,69 @@ export async function runRescore(
     await writeJsonAtomic(getGuardianPaths(workspaceRoot).verdicts, cache);
   }
   return { judged: batch.length, recorded, calledJudge: true };
+}
+
+export interface SessionReviewRunResult {
+  reviewed: boolean;
+  calledJudge: boolean;
+}
+
+/**
+ * The second semantic lens: judge a sample of the RAW action tape against the
+ * goal. This is what catches in-vocabulary drift — work that shares words with
+ * the task but serves something else — which lexical scoring can never flag.
+ * Runs only when enough new actions accumulated since the last review.
+ */
+export async function runSessionReview(
+  workspaceRoot: string,
+  state: GuardianState,
+  config: GuardianConfig,
+  judge: DriftJudge,
+  clock: Clock = systemClock,
+): Promise<SessionReviewRunResult> {
+  const settings = config.drift.semantic.sessionReview;
+  if (!settings.enabled || !judge.reviewSession) return { reviewed: false, calledJudge: false };
+
+  const records = await readAuditTail(workspaceRoot, 2000);
+  let lastReviewTs = 0;
+  for (const r of records) {
+    if (r.kind === "session.review") {
+      const ts = Date.parse(r.ts);
+      if (Number.isFinite(ts) && ts > lastReviewTs) lastReviewTs = ts;
+    }
+  }
+
+  const fresh = records.filter((r): r is ActionObservedRecord => {
+    if (r.kind !== "action.observed") return false;
+    const ts = Date.parse(r.ts);
+    return Number.isFinite(ts) && ts > lastReviewTs;
+  });
+  if (fresh.length < settings.minNewActions) return { reviewed: false, calledJudge: false };
+
+  const sample = fresh.slice(-settings.maxActions).map((r) => `[${r.actionType}] ${r.actionValue}`);
+  const context: JudgeContext = {
+    goal: state.goal,
+    successCriteria: state.successCriteria.map((c) => c.text),
+    constraints: state.constraints,
+  };
+
+  let result;
+  try {
+    result = await judge.reviewSession(sample, context);
+  } catch {
+    return { reviewed: false, calledJudge: true };
+  }
+  if (!result) return { reviewed: false, calledJudge: true };
+
+  await appendAudit(workspaceRoot, {
+    ts: nowIso(clock),
+    kind: "session.review",
+    verdict: result.verdict,
+    confidence: result.confidence,
+    rationale: result.rationale,
+    judge: judge.id,
+    sampledActions: sample.length,
+    flaggedActions: result.flagged.map((i) => sample[i]).filter((a): a is string => a !== undefined),
+  });
+  return { reviewed: true, calledJudge: true };
 }

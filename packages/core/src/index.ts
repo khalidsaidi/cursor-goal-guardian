@@ -1,4 +1,5 @@
 export * from "./paths.js";
+export * from "./rule.js";
 export * from "./clock.js";
 export * from "./schema/contract.js";
 export * from "./schema/state.js";

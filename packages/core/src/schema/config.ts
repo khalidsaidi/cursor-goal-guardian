@@ -37,6 +37,16 @@ export const configSchema = z
             batchSize: z.number().int().positive().default(10),
             debounceSeconds: z.number().positive().default(30),
             sessionCallCap: z.number().int().positive().default(20),
+            /** Whole-tape review: the judge periodically reads recent raw actions
+             *  against the goal, catching in-vocabulary drift lexical scoring cannot. */
+            sessionReview: z
+              .object({
+                enabled: z.boolean().default(true),
+                minNewActions: z.number().int().positive().default(10),
+                maxActions: z.number().int().positive().default(30),
+              })
+              .strict()
+              .default({}),
           })
           .strict()
           .default({}),
@@ -46,6 +56,11 @@ export const configSchema = z
     advisories: z
       .object({
         remindWhenNoActiveTask: z.boolean().default(true),
+        /** Escalation for drift that is lexically flagged, semantically CONFIRMED,
+         *  and continues after a nudge: "ask" hands the decision to the human via
+         *  the editor's confirmation UI. Never "deny" — Goal Guardian never blocks;
+         *  at most it asks the person. Off by default. */
+        escalateConfirmedDrift: z.enum(["off", "ask"]).default("off"),
         shellRules: z.array(policyRuleSchema).default([]),
         mcpRules: z.array(policyRuleSchema).default([]),
         readRules: z.array(policyRuleSchema).default([]),

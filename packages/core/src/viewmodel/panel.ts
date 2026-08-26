@@ -33,6 +33,10 @@ export interface PanelViewModel {
   /** Confirmed, un-realigned drifts in the last 24h — the view badge number. */
   badge: number;
   semantic: { consented: boolean; available: boolean; pendingCount: number };
+  /** Latest whole-tape judge verdict, if any. */
+  sessionReview: { verdict: "on_course" | "off_course"; confidence: number; rationale: string; ts: string; flaggedActions: string[] } | null;
+  /** One honest sentence when the tape suggests the CONTRACT (not the agent) is stale. */
+  suggestion: string | null;
 }
 
 export interface PanelInputs {
@@ -76,6 +80,8 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       driftFeed: [],
       badge: 0,
       semantic: { consented: inputs.semanticConsented, available: inputs.semanticAvailable, pendingCount: 0 },
+      sessionReview: null,
+      suggestion: null,
     };
   }
 
@@ -99,6 +105,20 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
     (e) => e.status === "confirmed" && !e.realigned && Date.parse(e.ts) >= horizon,
   ).length;
 
+  let sessionReview: PanelViewModel["sessionReview"] = null;
+  for (const r of records) {
+    if (r.kind === "session.review" && (!sessionReview || Date.parse(r.ts) > Date.parse(sessionReview.ts))) {
+      sessionReview = { verdict: r.verdict, confidence: r.confidence, rationale: r.rationale, ts: r.ts, flaggedActions: r.flaggedActions };
+    }
+  }
+
+  const persistentlyOff =
+    (summary.drift.health === "drifting" && summary.drift.unresolved >= 3) ||
+    (sessionReview?.verdict === "off_course" && sessionReview.confidence >= 0.7);
+  const suggestion = persistentlyOff
+    ? "A lot of recent work reads as off-goal. If the goal actually changed, update the contract or record a decision — the guardian scores against what's declared, not what's intended."
+    : null;
+
   return {
     setUp: true,
     goal: state.goal,
@@ -119,5 +139,7 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       available: inputs.semanticAvailable,
       pendingCount: summary.counts24h.driftPending,
     },
+    sessionReview,
+    suggestion,
   };
 }

@@ -1,5 +1,12 @@
 import { spawn } from "node:child_process";
-import type { DriftCandidate, DriftJudge, DriftJudgement, JudgeAvailability, JudgeContext } from "./judge.js";
+import type {
+  DriftCandidate,
+  DriftJudge,
+  DriftJudgement,
+  JudgeAvailability,
+  JudgeContext,
+  SessionReviewResult,
+} from "./judge.js";
 
 /**
  * The first DriftJudge implementation: shells out to the Cursor CLI agent in
@@ -90,6 +97,62 @@ export function parseJudgeOutput(stdout: string, candidates: DriftCandidate[]): 
   return out;
 }
 
+export function buildSessionReviewPrompt(actions: string[], context: JudgeContext): string {
+  const lines: string[] = [
+    "You are auditing whether an AI coding session stayed on its declared goal.",
+    "",
+    `Goal: ${context.goal || "(none declared)"}`,
+  ];
+  if (context.successCriteria.length) {
+    lines.push("Success criteria:");
+    for (const c of context.successCriteria) lines.push(`- ${c}`);
+  }
+  if (context.constraints.length) {
+    lines.push("Constraints:");
+    for (const c of context.constraints) lines.push(`- ${c}`);
+  }
+  lines.push("", "Recent session actions, oldest first:", "");
+  actions.forEach((a, i) => lines.push(`${i}. ${a}`));
+  lines.push(
+    "",
+    "Judge the session as a whole. Refactors, tests, housekeeping, and",
+    "prerequisites count as in service of the goal. off_course means real work",
+    "is being spent on something the goal does not need.",
+    "",
+    'Reply with ONLY a JSON object, no other text:',
+    '{"verdict":"on_course"|"off_course","confidence":0.0-1.0,"rationale":"<30 words","flagged":[indexes of off-goal actions]}',
+  );
+  return lines.join("\n");
+}
+
+/** Tolerant parse of the session-review reply; null when unusable (skip, retry later). */
+export function parseSessionReviewOutput(stdout: string): SessionReviewResult | null {
+  let text = stdout;
+  try {
+    const envelope = JSON.parse(stdout) as { result?: unknown; is_error?: unknown };
+    if (envelope.is_error === true) return null;
+    if (typeof envelope.result === "string") text = envelope.result;
+  } catch {
+    // raw text
+  }
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const verdict = parsed.verdict === "on_course" || parsed.verdict === "off_course" ? parsed.verdict : null;
+  const confidence = typeof parsed.confidence === "number" && parsed.confidence >= 0 && parsed.confidence <= 1 ? parsed.confidence : null;
+  if (!verdict || confidence === null) return null;
+  const flagged = Array.isArray(parsed.flagged)
+    ? parsed.flagged.filter((n): n is number => Number.isInteger(n) && (n as number) >= 0)
+    : [];
+  return { verdict, confidence, rationale: String(parsed.rationale ?? ""), flagged };
+}
+
 export interface CursorAgentJudgeOptions {
   command?: string;
   model?: string;
@@ -144,6 +207,14 @@ export function createCursorAgentJudge(options: CursorAgentJudgeOptions = {}): D
       const res = await run(command, args, timeoutMs, options.cwd);
       if (res.code !== 0) throw new Error(`cursor-agent exited ${res.code}`);
       return parseJudgeOutput(res.stdout, candidates);
+    },
+    async reviewSession(actions: string[], context: JudgeContext): Promise<SessionReviewResult | null> {
+      const prompt = buildSessionReviewPrompt(actions, context);
+      const args = ["-p", prompt, "--output-format", "json", "--trust"];
+      if (options.model) args.push("--model", options.model);
+      const res = await run(command, args, timeoutMs, options.cwd);
+      if (res.code !== 0) return null;
+      return parseSessionReviewOutput(res.stdout);
     },
   };
 }

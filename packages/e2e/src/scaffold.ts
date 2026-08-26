@@ -7,6 +7,8 @@ import {
   defaultConfig,
   defaultState,
   getGuardianPaths,
+  guardianRuleContent,
+  GUARDIAN_RULE_RELATIVE_PATH,
   nowIso,
   parseConfig,
   writeJsonAtomic,
@@ -77,6 +79,9 @@ export async function scaffoldWorkspace(opts: ScaffoldOptions = {}): Promise<E2E
   if (opts.oldFormatFixture) {
     await fs.cp(path.join(FIXTURES, opts.oldFormatFixture), root, { recursive: true });
   } else {
+    const rulePath = path.join(root, GUARDIAN_RULE_RELATIVE_PATH);
+    await fs.mkdir(path.dirname(rulePath), { recursive: true });
+    await fs.writeFile(rulePath, guardianRuleContent(), "utf8");
     await fs.mkdir(paths.telemetryDir, { recursive: true });
     const criteria = criteriaFromTexts(opts.successCriteria ?? ["add() has a working implementation and a test"]);
     await writeJsonAtomic(paths.contract, {

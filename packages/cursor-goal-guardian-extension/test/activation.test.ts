@@ -80,6 +80,30 @@ describe("activation surface", () => {
     expect(recorded.watchers).toContain(".cursor/goal-guardian/telemetry/audit.jsonl");
   });
 
+  it("setup writes the session-anchoring rule; uninstall removes it", async () => {
+    const { runSetup, runUninstall } = await import("../src/setup.js");
+    const { GUARDIAN_RULE_RELATIVE_PATH } = await import("@goal-guardian/core");
+    const { responses } = await import("./mocks/vscode.js");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-setup-"));
+    cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
+
+    responses.inputBox = ["Ship it", "criterion one; criterion two", "no new deps"];
+    responses.quickPick = ["No"];
+    await runSetup(root, makeContext(root) as never);
+
+    const rulePath = path.join(root, GUARDIAN_RULE_RELATIVE_PATH);
+    const rule = await fs.readFile(rulePath, "utf8");
+    expect(rule).toContain("alwaysApply: true");
+    expect(rule).toContain("guardian_get_contract");
+    expect(rule).toContain("guardian_record_progress");
+    expect(await fileExists(path.join(root, ".cursor", "hooks.json"))).toBe(true);
+    expect(await fileExists(path.join(root, ".cursor", "mcp.json"))).toBe(true);
+
+    await runUninstall(root);
+    expect(await fileExists(rulePath)).toBe(false);
+    expect(await fileExists(path.join(root, ".cursor", "goal-guardian"))).toBe(false);
+  });
+
   it("v1 workspace -> auto-migrates with backups and exactly one passive notice", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-v1act-"));
     cleanups.push(() => fs.rm(root, { recursive: true, force: true }));

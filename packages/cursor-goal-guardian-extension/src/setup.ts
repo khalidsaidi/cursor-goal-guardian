@@ -8,6 +8,8 @@ import {
   ensureStateFiles,
   fileExists,
   getGuardianPaths,
+  guardianRuleContent,
+  GUARDIAN_RULE_RELATIVE_PATH,
   readJsonFile,
   writeJsonAtomic,
 } from "@goal-guardian/core";
@@ -69,6 +71,12 @@ export async function wireIntegration(root: string, context: vscode.ExtensionCon
 
 export function isGuardianHookCommand(command: unknown): boolean {
   return typeof command === "string" && /goal-guardian-hook/.test(command);
+}
+
+async function writeGuardianRule(root: string): Promise<void> {
+  const rulePath = path.join(root, GUARDIAN_RULE_RELATIVE_PATH);
+  await fs.mkdir(path.dirname(rulePath), { recursive: true });
+  await fs.writeFile(rulePath, guardianRuleContent(), "utf8");
 }
 
 /**
@@ -152,6 +160,7 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
   await writeJsonAtomic(p.migrationMarker, { from: 2, to: 2, ts: new Date().toISOString(), migratedBy: "setup" });
 
   await wireIntegration(root, context);
+  await writeGuardianRule(root);
 
   const gitignore = await vscode.window.showQuickPick(["Yes", "No"], {
     title: "Add .cursor/goal-guardian/telemetry/ to .gitignore?",
@@ -167,9 +176,10 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
   return true;
 }
 
-/** Remove everything setup created: guardian dir, hook entries, MCP server entry. */
+/** Remove everything setup created: guardian dir, rule, hook entries, MCP server entry. */
 export async function runUninstall(root: string): Promise<void> {
   await fs.rm(getGuardianPaths(root).dir, { recursive: true, force: true });
+  await fs.rm(path.join(root, GUARDIAN_RULE_RELATIVE_PATH), { force: true });
 
   const hooksPath = path.join(root, ".cursor", "hooks.json");
   const hooks = await readJsonOr<{ hooks?: Record<string, Array<{ command: string }>> } | null>(hooksPath, null);

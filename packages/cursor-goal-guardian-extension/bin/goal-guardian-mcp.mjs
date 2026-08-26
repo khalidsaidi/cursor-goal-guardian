@@ -3223,8 +3223,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path5) {
-      let input = path5;
+    function removeDotSegments(path6) {
+      let input = path6;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3423,8 +3423,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path5, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path5 && path5 !== "/" ? path5 : void 0;
+        const [path6, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path6 && path6 !== "/" ? path6 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -7476,8 +7476,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path5, errorMaps, issueData } = params;
-  const fullPath = [...path5, ...issueData.path || []];
+  const { data, path: path6, errorMaps, issueData } = params;
+  const fullPath = [...path6, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -7593,11 +7593,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path5, key) {
+  constructor(parent, value, path6, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path5;
+    this._path = path6;
     this._key = key;
   }
   get path() {
@@ -11235,10 +11235,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path5) {
-  if (!path5)
+function getElementAtPath(obj, path6) {
+  if (!path6)
     return obj;
-  return path5.reduce((acc, key) => acc?.[key], obj);
+  return path6.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -11558,11 +11558,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path5, issues) {
+function prefixIssues(path6, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path5);
+    iss.path.unshift(path6);
     return iss;
   });
 }
@@ -21056,6 +21056,10 @@ function getGuardianPaths(workspaceRoot2) {
   };
 }
 
+// packages/core/dist/rule.js
+import path2 from "node:path";
+var GUARDIAN_RULE_RELATIVE_PATH = path2.join(".cursor", "rules", "goal-guardian.mdc");
+
 // packages/core/dist/clock.js
 import crypto from "node:crypto";
 var systemClock = {
@@ -21195,11 +21199,23 @@ var configSchema = external_exports.object({
       judge: external_exports.literal("cursor-agent").default("cursor-agent"),
       batchSize: external_exports.number().int().positive().default(10),
       debounceSeconds: external_exports.number().positive().default(30),
-      sessionCallCap: external_exports.number().int().positive().default(20)
+      sessionCallCap: external_exports.number().int().positive().default(20),
+      /** Whole-tape review: the judge periodically reads recent raw actions
+       *  against the goal, catching in-vocabulary drift lexical scoring cannot. */
+      sessionReview: external_exports.object({
+        enabled: external_exports.boolean().default(true),
+        minNewActions: external_exports.number().int().positive().default(10),
+        maxActions: external_exports.number().int().positive().default(30)
+      }).strict().default({})
     }).strict().default({})
   }).strict().default({}),
   advisories: external_exports.object({
     remindWhenNoActiveTask: external_exports.boolean().default(true),
+    /** Escalation for drift that is lexically flagged, semantically CONFIRMED,
+     *  and continues after a nudge: "ask" hands the decision to the human via
+     *  the editor's confirmation UI. Never "deny" — Goal Guardian never blocks;
+     *  at most it asks the person. Off by default. */
+    escalateConfirmedDrift: external_exports.enum(["off", "ask"]).default("off"),
     shellRules: external_exports.array(policyRuleSchema).default([]),
     mcpRules: external_exports.array(policyRuleSchema).default([]),
     readRules: external_exports.array(policyRuleSchema).default([]),
@@ -21273,12 +21289,30 @@ var intentDeclaredRecordSchema = external_exports.object({
   summary: external_exports.string().min(1),
   plannedActions: external_exports.array(external_exports.string()).optional()
 }).strict();
+var actionObservedRecordSchema = external_exports.object({
+  ...base,
+  kind: external_exports.literal("action.observed"),
+  actionType: external_exports.enum(["shell", "mcp", "edit"]),
+  actionValue: external_exports.string()
+}).strict();
+var sessionReviewRecordSchema = external_exports.object({
+  ...base,
+  kind: external_exports.literal("session.review"),
+  verdict: external_exports.enum(["on_course", "off_course"]),
+  confidence: external_exports.number().min(0).max(1),
+  rationale: external_exports.string(),
+  judge: external_exports.string().min(1),
+  sampledActions: external_exports.number().int().nonnegative(),
+  flaggedActions: external_exports.array(external_exports.string())
+}).strict();
 var auditRecordSchema = external_exports.discriminatedUnion("kind", [
   hookEventRecordSchema,
   lexicalDriftRecordSchema,
   driftVerdictRecordSchema,
   policyAdvisoryRecordSchema,
-  intentDeclaredRecordSchema
+  intentDeclaredRecordSchema,
+  actionObservedRecordSchema,
+  sessionReviewRecordSchema
 ]);
 
 // packages/core/dist/schema/verdicts.js
@@ -21297,11 +21331,11 @@ var verdictCacheSchema = external_exports.object({
 // packages/core/dist/fsutil.js
 import crypto2 from "node:crypto";
 import fs from "node:fs/promises";
-import path2 from "node:path";
+import path3 from "node:path";
 async function writeJsonAtomic(filePath, value) {
-  const dir = path2.dirname(filePath);
+  const dir = path3.dirname(filePath);
   await fs.mkdir(dir, { recursive: true });
-  const tmp = path2.join(dir, `.${path2.basename(filePath)}.tmp-${crypto2.randomBytes(4).toString("hex")}`);
+  const tmp = path3.join(dir, `.${path3.basename(filePath)}.tmp-${crypto2.randomBytes(4).toString("hex")}`);
   await fs.writeFile(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
   await fs.rename(tmp, filePath);
 }
@@ -21317,7 +21351,7 @@ async function fileExists(filePath) {
   }
 }
 async function appendLine(filePath, line) {
-  await fs.mkdir(path2.dirname(filePath), { recursive: true });
+  await fs.mkdir(path3.dirname(filePath), { recursive: true });
   await fs.appendFile(filePath, line + "\n", "utf8");
 }
 
@@ -22351,11 +22385,11 @@ var qmarksTestNoExtDot = ([$0]) => {
   return (f) => f.length === len && f !== "." && f !== "..";
 };
 var defaultPlatform = typeof process === "object" && process ? typeof process.env === "object" && process.env && process.env.__MINIMATCH_TESTING_PLATFORM__ || process.platform : "posix";
-var path3 = {
+var path4 = {
   win32: { sep: "\\" },
   posix: { sep: "/" }
 };
-var sep = defaultPlatform === "win32" ? path3.win32.sep : path3.posix.sep;
+var sep = defaultPlatform === "win32" ? path4.win32.sep : path4.posix.sep;
 minimatch.sep = sep;
 var GLOBSTAR = Symbol("globstar **");
 minimatch.GLOBSTAR = GLOBSTAR;
@@ -23031,7 +23065,7 @@ function rulesFor(kind, config2) {
   const defaults2 = kind === "shell" ? defaultShellRules() : kind === "mcp" ? defaultMcpRules() : defaultReadRules();
   return [...user, ...defaults2];
 }
-function evaluatePolicy(kind, value, config2) {
+function firstMatch(kind, value, config2) {
   for (const rule of rulesFor(kind, config2)) {
     if (globMatch(kind, rule.pattern, value)) {
       return { severity: rule.severity, rule: rule.pattern, reason: rule.reason ?? "" };
@@ -23039,9 +23073,24 @@ function evaluatePolicy(kind, value, config2) {
   }
   return { severity: "ok", rule: "", reason: "" };
 }
+var SEVERITY_RANK = { ok: 0, caution: 1, alert: 2 };
+function evaluatePolicy(kind, value, config2) {
+  let best = firstMatch(kind, value, config2);
+  if (kind === "shell") {
+    const segments = value.split(/&&|;/).map((s) => s.trim()).filter(Boolean);
+    if (segments.length > 1) {
+      for (const segment of segments) {
+        const advisory = firstMatch(kind, segment, config2);
+        if (SEVERITY_RANK[advisory.severity] > SEVERITY_RANK[best.severity])
+          best = advisory;
+      }
+    }
+  }
+  return best;
+}
 
 // packages/core/dist/drift/lexical.js
-import path4 from "node:path";
+import path5 from "node:path";
 var scopeStopWords = /* @__PURE__ */ new Set([
   "about",
   "again",
@@ -23213,7 +23262,7 @@ function isNeutralReadPath(rel, extra) {
     return true;
   if (p.startsWith(".cursor/"))
     return true;
-  const base2 = path4.posix.basename(p);
+  const base2 = path5.posix.basename(p);
   if (["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "readme.md"].includes(base2))
     return true;
   if (base2 === "tsconfig.json" || /^tsconfig\..*\.json$/.test(base2))
