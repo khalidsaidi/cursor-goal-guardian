@@ -2,7 +2,7 @@
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
   "description": "Drift flight-recorder for AI coding sessions in Cursor: records what the agent did, scores it against your declared goal, and shows the tape. Advisory-only — it never blocks and never nags.",
-  "version": "1.0.0-rc.0",
+  "version": "1.0.0",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
   "galleryBanner": {

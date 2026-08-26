@@ -1,151 +1,68 @@
-# Cursor Goal Guardian (MCP + Hooks)
+# Cursor Goal Guardian
 
-This repo implements **anti-goal-drift** enforcement for Cursor by combining:
+**A drift flight-recorder for AI coding sessions in Cursor.** It records what
+the agent did, scores it against your declared goal, and shows you the tape.
+Advisory forever: it never blocks, and it never nags.
 
-- an **MCP server** that acts as a **goal authority** (the “contract” lives outside the model)
-- a **Cursor Hooks guardrail** that warns on risky/off-goal actions (advisory-only by default)
+Published on Open VSX: [khalidsaidi/cursor-goal-guardian-extension](https://open-vsx.org/extension/khalidsaidi/cursor-goal-guardian-extension)
 
-Why this works in practice:
-- The model gets **runtime guidance** when it drifts without interrupting flow.
-- The goal contract is **external and canonical** (stored on disk).
-- The agent can use permits when needed: **check step → get permit → perform action → commit result**.
-- Execution can be tied to Redux state: missing/invalid active task produces warnings.
+## The problem
 
-## Repo contents
+An agent's commitment to a goal lives in its context window, and context
+decays. The agent's *effective* goal silently mutates: scope creeps, tasks
+switch without justification, and after an interruption nobody can cheaply
+reconstruct what the session was for.
 
-- `packages/cursor-goal-guardian-mcp`
-  - MCP stdio server built with `@modelcontextprotocol/sdk`
-  - tools:
-    - `guardian_get_contract`
-    - `guardian_initialize_contract`
-    - `guardian_check_step`
-    - `guardian_issue_permit`
-    - `guardian_commit_result`
+## The mechanism
 
-- `packages/cursor-goal-guardian-hook`
-  - Cursor Hooks gatekeeper (stdio JSON in/out)
-  - hook events:
-    - `beforeShellExecution`
-    - `beforeMCPExecution`
-    - `beforeReadFile`
-  - audits:
-    - `afterFileEdit`, `stop`
-  - uses `fallback-chain-js` for robust fallback selection
+Move the goal and the work-state out of the model's memory and onto disk, then
+close the loop at every point where drift happens:
 
-- `.ai/` (gitignored)
-  - intended for agent scratch + runtime state
-  - runtime state files written by MCP server:
-    - `.ai/goal-guardian/checks.json`
-    - `.ai/goal-guardian/permits.json`
+| Loop point | Mechanism |
+|---|---|
+| Session start | A Cursor rule anchors every session: load the contract, record progress via MCP tools |
+| During work | Hooks (~60 ms) observe every shell/MCP/edit action; a lexical scorer flags off-vocabulary work |
+| At the moment of drift | One calm sentence per episode re-anchors the agent — context injection, not ceremony |
+| After the fact | An AI judge (consent-gated, your Cursor account) confirms/dismisses flagged drift AND periodically reviews the raw tape against the goal — catching in-vocabulary drift |
+| Persistent, confirmed drift | Opt-in: `permission: "ask"` hands the call to the human via Cursor's own UI |
+| Any time | The panel shows the tape: drift ↔ realignment pairs, session health, task board, AI verdict |
 
-## Local dev
+The task board is a Redux-style store: append-only action log, one pure
+reducer, deterministic replay (`state === replay(actions)`, exactly — v2 moved
+all id/timestamp generation into the actions to make that guarantee real),
+hash-guarded state, decision-gated task switches.
+
+## Repo layout (pnpm monorepo, all packages 1.0.0)
+
+```
+packages/
+  core/         @goal-guardian/core   — all logic: schemas, state machine, policy,
+                                        drift scoring, episodes, judge, telemetry, migration
+  mcp/          MCP server (5 guardian_* tools), thin adapter over core
+  hook/         Cursor hook, single ~200KB CJS bundle, p95 < 150ms budget
+  extension/    the published Cursor extension (panel, setup, rescorer host)
+  testkit/      shared test scaffolding
+  e2e/          12-scenario end-to-end suite driving real headless Cursor agents
+```
+
+## Development
 
 ```bash
 pnpm install
 pnpm -r build
-pnpm -r test
+pnpm -r test          # ~200 unit + contract tests (free, runs in CI)
+pnpm test:e2e:offline # deterministic e2e scenarios against built binaries (free)
+pnpm test:e2e         # full suite: real cursor-agent runs + a live AI judge (billed)
 ```
 
-## A/B value evaluation
+CI runs build, typecheck, unit/contract tests, the free e2e scenarios, and a
+version-sync check. The billable suite runs manually before releases.
 
-Use the built-in evaluator to compare `with_cgg` vs `without_cgg` on the same task set:
+Release: `pnpm package:vsix` builds the VSIX; `OVSX_TOKEN=... pnpm publish:ovsx`
+publishes to Open VSX (Cursor's registry — no other marketplace).
 
-```bash
-pnpm eval:ab
-```
+## History
 
-This computes:
-- scope drift incidents per task
-- rework caused by misunderstanding
-- time to resume after context switch
-- task completion vs original success criteria
-- unplanned task switches
-
-See `examples/ab-study/README.md` for the input format.
-
-For real-run evidence (blinded operator/judge workflow), use:
-
-```bash
-node scripts/scaffold-live-react-env.js \
-  --env /tmp/cgg-live-react-env \
-  --study /tmp/cgg-live-react-20 \
-  --tasks examples/ab-live-react/task_set_20.json
-# ... run both arms and fill runs.blinded.json ...
-node scripts/unblind-live-ab.js --study /tmp/cgg-live-react-20 --evaluate
-```
-
-See `examples/ab-live-react/README.md` for protocol and rubric.
-
-## Validation included (user-facing)
-
-These checks are included in the repo and were run as part of release validation:
-
-- Full automated test suite:
-  - `pnpm -r test`
-  - covers extension state store + cleanup, hook CLI/policy behavior, MCP preview behavior.
-- Full build verification:
-  - `pnpm -r build`
-- A/B evaluator (sample study):
-  - `pnpm eval:ab`
-- Live blinded A/B protocol assets:
-  - `examples/ab-live-react/task_set_20.json`
-  - `scripts/scaffold-live-react-env.js`, `scripts/init-live-ab.js`, `scripts/unblind-live-ab.js`
-- Panel replay demo from the real 20-task set:
-  - `pnpm panel:demo:20tasks`
-  - generates a long WebM in `artifacts/panel-demo/` (gitignored) and a docs GIF preview.
-
-### Panel demo (animated)
-
-This animation is generated from the real 20-task panel replay:
-
-![Goal Guardian panel demo (20-task replay)](docs/media/goal-guardian-panel-demo-20tasks.gif)
-
-To regenerate:
-
-```bash
-pnpm panel:demo:20tasks
-ffmpeg -y -ss 4 -t 24 -i artifacts/panel-demo/goal-guardian-panel-demo-20tasks.webm \
-  -vf "fps=8,scale=960:-1:flags=lanczos,palettegen=max_colors=96" /tmp/cgg-panel-palette.png
-ffmpeg -y -ss 4 -t 24 -i artifacts/panel-demo/goal-guardian-panel-demo-20tasks.webm \
-  -i /tmp/cgg-panel-palette.png \
-  -lavfi "fps=8,scale=960:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5" \
-  docs/media/goal-guardian-panel-demo-20tasks.gif
-```
-
-## Wiring into a project
-
-1) Build this repo so the binaries are in `dist/`.
-2) Copy the example configs from `examples/cursor-project/.cursor` into your target project.
-3) Edit:
-   - `.cursor/goal-guardian/contract.json` (goal + criteria)
-   - `.cursor/goal-guardian/policy.json` (policy toggles + allow/high-risk patterns)
-   - `.cursor/mcp.json` (absolute paths to the built MCP server and workspace root)
-
-## Typical flow (agent)
-
-1) `guardian_get_contract`
-2) `guardian_check_step` with explicit mapping to success criteria IDs
-3) `guardian_issue_permit` with explicit allowed actions
-4) do the action
-5) `guardian_commit_result`
-
-## Notes
-
-- The MCP server writes runtime data to `.ai/` (gitignored) to avoid exposing permits to the model.
-- The hook defaults to **warning-first, advisory-only** for shell/MCP/read.
-- The hook can enforce Redux control checks (`enforceReduxControl: true`) and task-scope alignment (`enforceTaskScope: true`) on every shell/MCP/read action.
-- Tune scope strictness with `taskScopeSensitivity`: `strict`, `balanced` (default), or `lenient`.
-- You can set `requirePermitForShell`, `requirePermitForMcp`, and `requirePermitForRead` to `true` in `policy.json` for stricter permit recommendations.
-- Policy schema is now explicit: use `highRiskPatterns` + `HIGH_RISK` (legacy `alwaysDeny` / `HARD_BLOCK` are not recognized).
-
-## The Redux mental model for agents
-
-| Redux concept | Agent equivalent in Cursor |
-| --- | --- |
-| Store | `state.json` (single source of truth) |
-| Actions | JSON events like `{ "type": "START_TASK", "taskId": "..." }` |
-| Reducer | Deterministic function that turns `(state, action)` into `nextState` |
-| Middleware | Cursor Rules (guardrails) + checklists via Commands |
-| DevTools / time travel | `actions.jsonl` log + git history |
-
-Why it matters: agents drift when the "current plan" only lives in chat history. Treating state and actions as first-class artifacts makes drift visible, debuggable, and preventable.
+v0.4.x (permit-era) is preserved at tag `v0.4.11-final`; the old A/B evaluation
+harness lives on branch `legacy/ab-study`, to be rebuilt on v2 telemetry.
+Migration from 0.4.x workspaces is automatic, with backups.

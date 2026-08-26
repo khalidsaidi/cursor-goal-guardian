@@ -1,5 +1,61 @@
 # Changelog
 
+## 1.0.0
+
+Ground-up rewrite. Identity: a drift flight-recorder for AI coding sessions —
+it records what the agent did, scores it against the declared goal, and shows
+the tape. It never blocks, and it never nags.
+
+### Added
+- Session anchor: setup writes `.cursor/rules/goal-guardian.mdc` so every agent
+  session loads the contract and records progress unprompted (verified e2e with
+  a real, uninstructed Cursor agent).
+- New MCP tool surface: `guardian_get_contract`, `guardian_declare_intent`,
+  `guardian_record_progress` (task transitions on the tape; switching away from
+  an active task requires a decision), `guardian_check_action`,
+  `guardian_get_status`.
+- Episode-governed nudges: at most one calm sentence per drift episode per
+  cooldown; `notify` modes `quiet | balanced | vocal` (quiet injects nothing,
+  ever).
+- AI drift review (consent-gated, uses your Cursor account): a judge confirms
+  or dismisses flagged drift, and periodically reviews the raw session tape
+  against the goal — catching in-vocabulary drift lexical scoring cannot see.
+- Opt-in escalation `escalateConfirmedDrift: "ask"`: confirmed drift that
+  continues after its nudge is handed to the human via Cursor's confirmation
+  UI. The guardian itself still never denies.
+- Setup now actually wires `.cursor/hooks.json` and `.cursor/mcp.json` to the
+  bundled binaries; a doctor pass repoints them after extension updates;
+  uninstall removes everything.
+- One-shot migration from 0.4.x with `*.v1.bak` backups and a single passive
+  notice.
+
+### Changed
+- Panel rebuilt: message-based incremental updates (no more 5-second full-HTML
+  re-render), welcome/setup view, drift feed with review status, AI session
+  verdict, numeric view badge. Status bar is hidden until set up and never uses
+  an error background.
+- Auto-behaviors (auto-start task, auto-pin on save) are now opt-in and
+  default off.
+- Policy severities renamed to advisory vocabulary: `ok / caution / alert`.
+  Shell rules now match chained commands per segment (`git status && rm -rf /`
+  no longer hides behind the ok prefix) and `*` crosses `/` in commands.
+- Task↔criterion linking uses stable `criterionId`s instead of parsing
+  "SC1:"-prefixed titles.
+- State schema v2 (camelCase); ids/timestamps come from the persisted action,
+  making replay exactly deterministic.
+
+### Removed
+- The permit system (`guardian_check_step`, `guardian_issue_permit`,
+  `guardian_commit_result`, TTL tokens, warning-count escalation): it gated
+  nothing since the advisory shift and cost real ceremony.
+- Custom JS reducers (`reducer.js`) and `rules.json` knobs — invariants are the
+  product's opinion, and dynamic workspace code broke replay determinism.
+- The `.ai/goal-guardian/` split; telemetry now lives under
+  `.cursor/goal-guardian/telemetry/`.
+- `autoRevertUnauthorizedEdits` — an advisory product does not touch your
+  working tree.
+
+
 ## 0.4.11
 - Publish follow-up for advisory-only policy/docs refresh.
 - Trim panel demo GIF intro so the animation starts on visible panel content.

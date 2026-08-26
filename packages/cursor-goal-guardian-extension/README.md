@@ -1,174 +1,99 @@
-# Cursor Goal Guardian Extension
+# Cursor Goal Guardian
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/banner.png" alt="Goal Guardian Banner" width="700" />
 
-Goal Guardian is a **Redux‑based agent system**: it keeps the AI aligned by **anchoring it to explicit state** and a deterministic action log.
-It does **not** install blocking Cursor hooks.
+**A drift flight-recorder for AI coding sessions.** Goal Guardian records what
+the agent did, scores it against your declared goal, and shows you the tape.
+It never blocks, and it never nags.
 
-**In one line:** Redux‑based anti‑drift for Cursor. A real state store + action log.
+**In one line:** declare the goal once, on disk — then watch every session stay
+anchored to it, with the receipts to prove it.
 
-## Redux‑based, not chat‑based
+## Why
 
-This extension replaces “the plan in chat history” with a **Redux‑style state machine**:
+An agent's commitment to your goal lives in its context window, and context
+decays: it gets compacted, diluted by tool output, or reset. The agent's
+*effective* goal silently mutates — scope creeps, tasks switch without
+justification, and after an interruption nobody can cheaply reconstruct "what
+was I doing and why."
 
-- **Store (single source of truth):** `.cursor/goal-guardian/state.json`
-- **Actions (append‑only log):** `.cursor/goal-guardian/actions.jsonl`
-- **Reducer (deterministic updates):** `.cursor/goal-guardian/reducer.js`
-- **Rules (invariants/strictness):** `.cursor/goal-guardian/rules.json`
+Goal Guardian moves the goal and the work-state **out of the model's memory and
+onto disk**, where they cannot decay:
 
-Everything the agent does should map to an action → reducer → next state.
+- **Goal contract** — goal, success criteria, constraints (`contract.json`)
+- **Redux-style task board** — a real store with an append-only action log and
+  one pure reducer: state is always exactly `replay(actions)` (ids and
+  timestamps live in the actions, so time-travel/rebuild is deterministic);
+  task switches require a recorded decision
+- **The tape** — typed telemetry of hooks, actions, drift signals, and reviews
 
-## What it actually does (in plain English)
+## How it stays on goal
 
-When the agent works, Goal Guardian keeps a durable state loop:
-- read state
-- dispatch action
-- update state deterministically
-- keep an auditable action history
-- auto-pin edited files into context while a task is active
-- provide quick lifecycle commands for start/complete task flow
+1. **Anchor** — setup writes a Cursor rule so every agent session starts by
+   loading the contract and knows to record progress through the guardian's
+   MCP tools (`guardian_get_contract`, `guardian_declare_intent`,
+   `guardian_record_progress`, `guardian_check_action`, `guardian_get_status`).
+2. **Observe** — lightweight hooks (~60 ms) record every shell command, MCP
+   call, and file edit. A lexical scorer flags actions that share no vocabulary
+   with the active task.
+3. **Nudge, calmly** — at most **one** quiet sentence per drift episode is
+   injected into the conversation, re-anchoring the agent at the exact moment
+   it drifts. `quiet` mode records everything and says nothing.
+4. **Review with AI (with your consent)** — flagged drift is confirmed or
+   dismissed by a judge running on your Cursor account, and the judge
+   periodically reads the raw session tape against the goal — catching drift
+   that shares vocabulary with the task but serves something else. Never runs
+   without a one-time opt-in.
+5. **Show the tape** — the panel pairs each drift with its realignment, shows
+   session health, the task board, and an AI session verdict. The status bar
+   stays subtle; nothing ever uses an error state.
 
-## Why people install it
+### Advisory forever
 
-- **Stop silent scope creep** without killing momentum
-- **Make the goal visible** in a sidebar panel and status bar
-- **Maintain a single source of truth** with a Redux-style state store (anti-drift core)
+Every hook response allows. The strongest opt-in escalation
+(`escalateConfirmedDrift: "ask"`) hands *confirmed, persistent* drift to **you**
+via Cursor's own confirmation UI — the guardian itself never denies anything.
 
-## Anti-drift core (Redux loop)
+## Getting started
 
-This extension treats the agent like an app with explicit state, not a chat that “forgets”:
+1. Install from Open VSX (Cursor's registry).
+2. Open the **Goal Guardian** panel in the Explorer sidebar and click
+   **Set up this workspace** (or run `Goal Guardian: Set Up Workspace`).
+3. Declare a goal, success criteria, and constraints — each criterion becomes a
+   trackable task.
 
-- **Store:** `.cursor/goal-guardian/state.json` (single source of truth)
-- **Actions:** `.cursor/goal-guardian/actions.jsonl` (append‑only log)
-- **Reducer:** `.cursor/goal-guardian/reducer.js` (optional JS reducer)
-- **Rules:** `.cursor/goal-guardian/rules.json` (strictness + invariants)
+Until you set it up, the extension is inert: no files written, no status bar,
+no notifications.
 
-Loop: **Read state → Dispatch action → Reducer → Next state**.  
-This forces the agent to update goals/tasks/decisions in the store instead of drifting in chat history.
+## Files it owns
 
-## Redux-style state store (on by default)
-
-This extension also creates a state store so the agent's plan lives in a single, explicit file (not chat history):
-
-- Store: `.cursor/goal-guardian/state.json`
-- Actions: `.cursor/goal-guardian/actions.jsonl`
-- Reducer: `.cursor/goal-guardian/reducer.js`
-- Rules: `.cursor/goal-guardian/rules.json`
-
-Flow: read state -> dispatch action -> reducer -> next state. Files are created automatically when the extension activates.
-
-Commands:
-- **Dispatch Action (optional/manual)**
-- **Start Next Task**
-- **Complete Active Task**
-- **Rebuild State From Actions**
-- **Open State Store / Action Log / Reducer / Rules**
-
-## Quick start (1 minute)
-
-1) Open your project in Cursor  
-2) Run Command Palette -> **"Goal Guardian: Install/Configure State Files"**  
-3) Open the panel in **Explorer sidebar -> Goal Guardian** (or run **"Goal Guardian: Show Goal Panel"**)  
-4) Set a concrete goal and success criteria in `contract.json`  
-5) Work normally; Goal Guardian auto-syncs goal/tasks from contract and auto-captures edited file context
-
-## Commands
-
-- **Goal Guardian: Install/Configure State Files**
-- **Goal Guardian: Open Contract**
-- **Goal Guardian: Remove from Workspace**
-- **Goal Guardian: Dispatch Action**
-- **Goal Guardian: Start Next Task**
-- **Goal Guardian: Complete Active Task**
-- **Goal Guardian: Rebuild State From Actions**
-- **Goal Guardian: Open State Store / Action Log / Reducer / Rules**
-
-## What it writes
-
-- `.cursor/goal-guardian/contract.json`
-- `.cursor/goal-guardian/state.json`
-- `.cursor/goal-guardian/actions.jsonl`
-- `.cursor/goal-guardian/reducer.js`
-- `.cursor/goal-guardian/rules.json`
-
-## Safe install behavior
-
-- Existing files are not overwritten by default.
-- Goal Guardian state files are managed independently from your hook/MCP wiring.
-
-## What users will see when it's working
-
-- **State visibility** in the Goal Panel and status bar
-- **Deterministic task flow** through actions + reducer
-- **Automatic task bootstrapping** from success criteria in `contract.json`
-- **Automatic active-task + context capture** during normal editing
-- **No hook-based execution stopping (advisory-only)**
-
-## How it works (short version)
-
-1) Goal + constraints live in `contract.json`  
-2) Work is captured as explicit actions in `actions.jsonl`  
-3) Reducer builds a durable state in `state.json`  
-
-## State-of-the-art anti-drift workflow (recommended)
-
-1) Set goal + success criteria in `contract.json`  
-2) Goal Guardian auto-syncs state and creates criteria-based tasks  
-3) As you edit, Goal Guardian auto-starts the next todo task (if needed)  
-4) Edited files are auto-pinned into context while task is active  
-5) Use manual dispatch commands only for advanced/exception paths
-
-This creates a reproducible, auditable chain from state → action → result.
-
-## Reducer modes (JSON vs JS)
-
-`rules.json` controls the reducer behavior:
-
-- **JSON reducer (default):** safe, deterministic, invariant‑enforced
-- **JS reducer:** advanced mode for custom logic (set `"preferredReducer": "js"`)
-
-If you use the JS reducer, **you are responsible** for updating `_meta` fields and preserving schema validity.
-
-## Testing & verification
-
-Automated checks:
-
-```bash
-pnpm -r test
-pnpm -r build
+```
+.cursor/goal-guardian/
+  contract.json      # the goal contract
+  config.json        # notify mode, drift sensitivity, advisory rules
+  state.json         # event-sourced task board (hash-guarded)
+  actions.jsonl      # append-only action log
+  telemetry/         # the tape (gitignored): audit.jsonl, verdicts.json
+.cursor/rules/goal-guardian.mdc   # the session anchor
 ```
 
-Manual smoke test:
+`Goal Guardian: Remove from Workspace` deletes all of it, including the hook
+and MCP wiring.
 
-1) Run **Install/Configure**  
-2) Dispatch `SET_GOAL`, `ADD_TASKS`, `START_TASK`  
-3) Dispatch `ADD_DECISION` before switching active tasks  
-4) Run **Rebuild State From Actions**  
-5) Open Goal Panel → state and timeline stay in sync
+## Upgrading from 0.4.x
 
-## Validation evidence (included)
+Old workspaces migrate automatically on activation: files are backed up as
+`*.v1.bak`, the permit-era state is retired, and one passive notice confirms
+the upgrade. The permit system (check/permit/commit) is gone — it gated nothing
+and cost ceremony; its replacement is honest telemetry plus the decision-gated
+task switch.
 
-This repo also ships user-facing validation assets:
+## Validation
 
-- 20 real user-style React tasks: `examples/ab-live-react/task_set_20.json`
-- Blinded A/B workflow scripts:
-  - `scripts/scaffold-live-react-env.js`
-  - `scripts/init-live-ab.js`
-  - `scripts/unblind-live-ab.js`
-  - `scripts/evaluate-ab.js`
-- Long panel replay recorder:
-  - `scripts/record-panel-demo-20tasks.mjs`
-  - run with `pnpm panel:demo:20tasks`
-
-Animated preview of the panel running through the 20-task replay:
-
-<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/docs/media/goal-guardian-panel-demo-20tasks.gif" alt="Goal Guardian panel demo animation" width="960" />
-
-## Redux state screenshot
-
-<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/redux-state.png?v=0.4.11" alt="Redux state view" width="900" />
-
-## Troubleshooting
-
-- **Nothing happens:** run Install/Configure again, then reopen the workspace.
-- **Need to reset:** run "Remove from Workspace" and reinstall.
+- 190+ unit and contract tests, including a quietness contract (one nudge per
+  episode, zero in quiet mode), a hook latency budget, and migration golden
+  tests against real 0.4.x workspaces.
+- A 12-scenario end-to-end suite drives **real** headless Cursor agents against
+  the built binaries — including an uninstructed agent cooperating purely from
+  the session rule, and a live AI judge separating real drift from false
+  positives.
