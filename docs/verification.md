@@ -199,4 +199,8 @@ install. VSIX installed into the Windows-local Cursor, a local
 
 `ci/cross-platform` branch (PR #1) runs the full build + suite on
 ubuntu-latest, macos-latest, and windows-latest so darwin and win32 execute
-every shipped binary instead of being inferred from Linux.
+every shipped binary instead of being inferred from Linux. First run caught
+two real defects (a stale five-tool assertion in the packaged-binary smoke,
+and a latency budget blind to the win32 process-spawn tax); after the fixes
+all three platforms pass: build, typecheck, full suite, offline e2e with the
+packaged binaries.
