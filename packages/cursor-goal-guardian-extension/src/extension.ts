@@ -106,7 +106,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     "goalGuardian.rebuildState": async () => {
       const r = requireRoot();
       if (!r) return;
-      await rebuild(r);
+      try {
+        await rebuild(r);
+      } catch (err) {
+        void vscode.window.showWarningMessage(
+          `Goal Guardian: rebuild failed — ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       await controller.refresh();
     },
     "goalGuardian.dispatchAction": async () => {

@@ -7,8 +7,11 @@ import {
   defaultConfig,
   defaultState,
   criteriaFromTexts,
+  newId,
   nowIso,
+  replay,
   type Contract,
+  type GuardianAction,
   type GuardianConfig,
   type GuardianState,
   type Task,
@@ -51,15 +54,24 @@ export async function makeWorkspace(opts: MakeWorkspaceOptions = {}): Promise<Te
     const config: GuardianConfig = defaultConfig();
     await writeJson(paths.config, opts.config === undefined ? config : opts.config);
 
-    const state: GuardianState = defaultState();
-    state.goal = contract.goal;
-    state.successCriteria = contract.successCriteria;
-    state.constraints = contract.constraints;
-    state.tasks = (opts.tasks ?? [{ id: "t1", title: "Task 1", status: "doing" }]).map((t) => ({ ...t }));
-    state.activeTaskId = state.tasks.find((t) => t.status === "doing")?.id ?? null;
-    state.meta.lastUpdated = nowIso();
+    // Seed through a MIGRATE_IMPORT action so state === replay(actions) holds
+    // in test workspaces exactly as it does in real ones (setup/migration).
+    const { meta: _meta, ...imported } = defaultState();
+    imported.goal = contract.goal;
+    imported.successCriteria = contract.successCriteria;
+    imported.constraints = contract.constraints;
+    imported.tasks = (opts.tasks ?? [{ id: "t1", title: "Task 1", status: "doing" }]).map((t) => ({ ...t }));
+    imported.activeTaskId = imported.tasks.find((t) => t.status === "doing")?.id ?? null;
+    const action: GuardianAction = {
+      id: newId("act"),
+      ts: nowIso(),
+      actor: "system",
+      type: "MIGRATE_IMPORT",
+      payload: { state: imported },
+    };
+    const state: GuardianState = replay([action]);
+    await fs.writeFile(paths.actions, JSON.stringify(action) + "\n", "utf8");
     await writeJson(paths.state, state);
-    await fs.writeFile(paths.actions, "", "utf8");
   }
 
   return {

@@ -9,10 +9,12 @@ import {
   getGuardianPaths,
   guardianRuleContent,
   GUARDIAN_RULE_RELATIVE_PATH,
+  newId,
   nowIso,
   parseConfig,
+  replay,
   writeJsonAtomic,
-  computeHash,
+  type GuardianAction,
   type Task,
 } from "@goal-guardian/core";
 
@@ -91,16 +93,24 @@ export async function scaffoldWorkspace(opts: ScaffoldOptions = {}): Promise<E2E
       constraints: opts.constraints ?? [],
     });
     await writeJsonAtomic(paths.config, opts.config === undefined ? defaultConfig() : parseConfig(opts.config));
-    const state = defaultState();
-    state.goal = opts.goal ?? "Finish the math utilities";
-    state.successCriteria = criteria;
-    state.constraints = opts.constraints ?? [];
-    state.tasks = (opts.tasks ?? [{ id: "t1", title: criteria[0]!.text, status: "doing", criterionId: criteria[0]!.id }]).map((t) => ({ ...t }));
-    state.activeTaskId = state.tasks.find((t) => t.status === "doing")?.id ?? null;
-    state.meta.lastUpdated = nowIso();
-    state.meta.hash = computeHash(state);
-    await writeJsonAtomic(paths.state, state);
-    await fs.writeFile(paths.actions, "", "utf8");
+    // Seed via MIGRATE_IMPORT so state === replay(actions) — the same invariant
+    // real setup and migration guarantee (a directly-written state with an
+    // empty log broke live rebuild testing).
+    const { meta: _meta, ...imported } = defaultState();
+    imported.goal = opts.goal ?? "Finish the math utilities";
+    imported.successCriteria = criteria;
+    imported.constraints = opts.constraints ?? [];
+    imported.tasks = (opts.tasks ?? [{ id: "t1", title: criteria[0]!.text, status: "doing", criterionId: criteria[0]!.id }]).map((t) => ({ ...t }));
+    imported.activeTaskId = imported.tasks.find((t) => t.status === "doing")?.id ?? null;
+    const seedAction: GuardianAction = {
+      id: newId("act"),
+      ts: nowIso(),
+      actor: "system",
+      type: "MIGRATE_IMPORT",
+      payload: { state: imported },
+    };
+    await fs.writeFile(paths.actions, JSON.stringify(seedAction) + "\n", "utf8");
+    await writeJsonAtomic(paths.state, replay([seedAction]));
     await writeJsonAtomic(paths.migrationMarker, { from: 2, to: 2, ts: nowIso(), migratedBy: "e2e-scaffold" });
   }
 
