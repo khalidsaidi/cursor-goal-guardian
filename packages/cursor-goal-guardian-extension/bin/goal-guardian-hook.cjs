@@ -4665,6 +4665,9 @@ function computeHash(state) {
   const copy = { ...state, meta: { ...state.meta, hash: "" } };
   return import_node_crypto3.default.createHash("sha256").update(stableStringify(copy)).digest("hex");
 }
+function isManuallyEdited(state) {
+  return state.meta.hash !== "" && state.meta.hash !== computeHash(state);
+}
 
 // packages/core/dist/store/reducer.js
 var setGoalPayload = external_exports.object({
@@ -4696,14 +4699,18 @@ async function loadState(workspaceRoot2) {
 }
 
 // packages/core/dist/safeReaders.js
-async function readStateSafe(workspaceRoot2) {
+async function readStateReport(workspaceRoot2) {
   try {
-    return await loadState(workspaceRoot2);
+    const state = await loadState(workspaceRoot2);
+    return { state, broken: isManuallyEdited(state) };
   } catch {
     const state = defaultState();
     state.meta.hash = computeHash(state);
-    return state;
+    return { state, broken: true };
   }
+}
+async function readStateSafe(workspaceRoot2) {
+  return (await readStateReport(workspaceRoot2)).state;
 }
 async function readConfigSafe(workspaceRoot2) {
   try {

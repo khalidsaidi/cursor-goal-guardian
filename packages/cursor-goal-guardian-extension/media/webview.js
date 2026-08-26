@@ -1,7 +1,7 @@
 "use strict";
 (() => {
   // src/panel/render.ts
-  var SECTION_IDS = ["welcome", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"];
+  var SECTION_IDS = ["welcome", "repair", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"];
   function escapeHtml(value) {
     return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -37,6 +37,15 @@
       <p class="quiet">Nothing is written until you connect it. After that, just ask
       your agent for something \u2014 Guardian starts tracking automatically.</p>
       <button data-cmd="setup">Connect Guardian to this workspace</button>
+    </div>`;
+  }
+  function renderRepair(vm) {
+    if (!vm.setUp || !vm.stateBroken) return "";
+    return `
+    <div class="repair">
+      <p>The task board file doesn&rsquo;t match its record &mdash; it may have been
+      edited by hand or damaged. Your session log is intact.</p>
+      <button data-cmd="rebuildState">Rebuild the board from the record</button>
     </div>`;
   }
   function renderGoal(vm) {
@@ -141,6 +150,7 @@
   function renderSections(vm) {
     return {
       welcome: renderWelcome(vm),
+      repair: renderRepair(vm),
       goal: renderGoal(vm),
       tour: renderTour(vm),
       focus: renderFocus(vm),

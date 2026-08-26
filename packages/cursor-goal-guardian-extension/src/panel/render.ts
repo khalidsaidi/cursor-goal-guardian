@@ -10,7 +10,7 @@ import type { PanelViewModel, PanelTask, PanelDriftEntry } from "@goal-guardian/
  * the user's side of the screen: "Done when", "Boundaries", "Mark done".
  */
 
-export const SECTION_IDS = ["welcome", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"] as const;
+export const SECTION_IDS = ["welcome", "repair", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"] as const;
 export type SectionId = (typeof SECTION_IDS)[number];
 
 export function escapeHtml(value: string): string {
@@ -59,6 +59,16 @@ function renderWelcome(vm: PanelViewModel): string {
       <p class="quiet">Nothing is written until you connect it. After that, just ask
       your agent for something — Guardian starts tracking automatically.</p>
       <button data-cmd="setup">Connect Guardian to this workspace</button>
+    </div>`;
+}
+
+function renderRepair(vm: PanelViewModel): string {
+  if (!vm.setUp || !vm.stateBroken) return "";
+  return `
+    <div class="repair">
+      <p>The task board file doesn&rsquo;t match its record &mdash; it may have been
+      edited by hand or damaged. Your session log is intact.</p>
+      <button data-cmd="rebuildState">Rebuild the board from the record</button>
     </div>`;
 }
 
@@ -207,6 +217,7 @@ function renderConsent(vm: PanelViewModel): string {
 export function renderSections(vm: PanelViewModel): Record<SectionId, string> {
   return {
     welcome: renderWelcome(vm),
+    repair: renderRepair(vm),
     goal: renderGoal(vm),
     tour: renderTour(vm),
     focus: renderFocus(vm),

@@ -5,6 +5,7 @@ import {
   detectWorkspaceFormat,
   loadActions,
   readAuditTail,
+  readStateReport,
   readStateSafe,
   type PanelViewModel,
 } from "@goal-guardian/core";
@@ -100,10 +101,12 @@ export class PanelController implements vscode.WebviewViewProvider {
     if (!this.root) return buildPanelViewModel(empty);
     const format = await detectWorkspaceFormat(this.root);
     if (format !== "v2") return buildPanelViewModel(empty);
+    const report = await readStateReport(this.root);
     return buildPanelViewModel({
       ...empty,
       setUp: true,
-      state: await readStateSafe(this.root),
+      state: report.state,
+      stateBroken: report.broken,
       records: await readAuditTail(this.root),
       actions: await loadActions(this.root).catch(() => []),
     });
@@ -113,7 +116,7 @@ export class PanelController implements vscode.WebviewViewProvider {
     const nonce = crypto.randomBytes(16).toString("hex");
     const script = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "webview.js"));
     const style = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "panel.css"));
-    const sections = ["welcome", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"]
+    const sections = ["welcome", "repair", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"]
       .map((id) => `<div id="${id}"></div>`)
       .join("\n");
     return `<!DOCTYPE html>

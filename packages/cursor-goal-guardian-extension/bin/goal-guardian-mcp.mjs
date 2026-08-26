@@ -21658,14 +21658,18 @@ async function readContractSafe(workspaceRoot2) {
     return defaultContract();
   }
 }
-async function readStateSafe(workspaceRoot2) {
+async function readStateReport(workspaceRoot2) {
   try {
-    return await loadState(workspaceRoot2);
+    const state = await loadState(workspaceRoot2);
+    return { state, broken: isManuallyEdited(state) };
   } catch {
     const state = defaultState();
     state.meta.hash = computeHash(state);
-    return state;
+    return { state, broken: true };
   }
+}
+async function readStateSafe(workspaceRoot2) {
+  return (await readStateReport(workspaceRoot2)).state;
 }
 async function readConfigSafe(workspaceRoot2) {
   try {

@@ -117,6 +117,16 @@ button.link {
 .next-list span { overflow-wrap: anywhere; opacity: 0.9; }
 .done-line { margin-top: 8px; font-size: 11px; opacity: 0.6; }
 
+/* ---- repair card ---- */
+
+.repair {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--vscode-editorWarning-foreground, #d9a03f);
+  border-radius: 6px;
+}
+.repair p { margin: 0 0 10px 0; }
+
 /* ---- get started tour ---- */
 
 .tour {

@@ -43,6 +43,7 @@ export async function openCommandCenter(deps: CommandCenterDeps): Promise<void> 
     { label: `$(bell) Notifications: ${config.notify}`, description: "quiet · balanced · vocal", action: "notify" },
     { label: "$(graph) Open the session panel", action: "panel" },
     { label: "$(files) Open a guardian file…", action: "files" },
+    { label: "$(trash) Remove Guardian from this workspace…", description: "deletes everything it created", action: "remove" },
   );
 
   const picked = await vscode.window.showQuickPick(items, { title: "Goal Guardian", placeHolder: active ? `Active: ${active.title}` : "No active task" });
@@ -103,6 +104,10 @@ export async function openCommandCenter(deps: CommandCenterDeps): Promise<void> 
     }
     case "panel":
       await vscode.commands.executeCommand("goalGuardian.showPanel");
+      break;
+    case "remove":
+      // The uninstall command carries its own confirmation dialog.
+      await vscode.commands.executeCommand("goalGuardian.uninstall");
       break;
     case "files": {
       const p = getGuardianPaths(deps.root);

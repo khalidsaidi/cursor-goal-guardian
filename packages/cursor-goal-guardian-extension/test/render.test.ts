@@ -131,6 +131,14 @@ describe("panel sections", () => {
     expect(sections.tour).toContain("Type /guardian in the chat");
   });
 
+  it("damaged state shows the repair card with the one-click rebuild; healthy state shows nothing", () => {
+    const broken = renderSections(buildPanelViewModel(inputs({ stateBroken: true })));
+    expect(broken.repair).toContain('data-cmd="rebuildState"');
+    expect(broken.repair).toContain("session log is intact");
+    expect(renderSections(buildPanelViewModel(inputs())).repair).toBe("");
+    expect(renderSections(buildPanelViewModel(inputs({ setUp: false, stateBroken: true }))).repair).toBe("");
+  });
+
   it("tour disappears when dismissed and when every step is done", () => {
     expect(renderSections(buildPanelViewModel(inputs({ tourDismissed: true }))).tour).toBe("");
     const records: AuditRecord[] = [

@@ -54,6 +54,8 @@ export interface PanelViewModel {
   suggestion: string | null;
   /** The guided first-ten-minutes checklist; steps tick from the real tape. */
   tour: PanelTour;
+  /** True when state.json failed to load — the panel offers rebuild-from-record instead of quietly showing nothing. */
+  stateBroken: boolean;
 }
 
 export interface PanelInputs {
@@ -68,6 +70,8 @@ export interface PanelInputs {
   commandCenterUsed?: boolean;
   /** Host memory: the user hid the get-started tour. */
   tourDismissed?: boolean;
+  /** The on-disk state failed to load (damaged or hand-edited). */
+  stateBroken?: boolean;
 }
 
 /**
@@ -162,6 +166,7 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       sessionReview: null,
       suggestion: null,
       tour: buildTour(inputs),
+      stateBroken: inputs.stateBroken === true,
     };
   }
 
@@ -233,5 +238,6 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
     sessionReview,
     suggestion,
     tour: buildTour(inputs),
+    stateBroken: inputs.stateBroken === true,
   };
 }
