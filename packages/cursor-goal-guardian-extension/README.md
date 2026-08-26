@@ -29,21 +29,27 @@ steps, and step 4 is the whole trick.
 **1. Install** from Open VSX (you're here). Nothing happens yet — Guardian
 stays silent until invited.
 
-**2. Open the panel.** Click the target icon in the left icon bar. You'll see
-this:
+**2. Open the panel.** At the top of the file sidebar there's a small row of
+icons ending in a **∨** — click the ∨ and pick **Goal Guardian** (the target).
+It stays in the row after that. (Or press `Ctrl+Shift+P` and run "Goal
+Guardian: Show Panel".) You'll see this:
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s6-welcome.png" alt="The welcome panel" width="800" />
 
-**3. Click "Connect Guardian to this workspace."** A three-question wizard
-asks what you're building (you can Esc-skip all of it — step 4 works anyway).
+**3. Click "Connect Guardian to this workspace."** It asks three questions
+about what you're building, plus one housekeeping question — and pressing
+**Esc through all of them is completely fine** (step 4 works either way).
 Guardian writes its files into a small `.cursor/goal-guardian` folder in your
 project. You never need to open it.
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s9-setup.png" alt="The setup wizard" width="800" />
 
 **4. Ask your agent for something — like you always do.** That's the whole
-trick: your request *becomes* the goal. The agent answers with one line —
-"Tracking: … — done when …" — and gets to work. No ceremony.
+trick. If you skipped the questions, your request *becomes* the goal: the
+agent answers with one line — "Tracking: … — done when …" — writes its own
+"done when" list, and gets to work. If you typed a goal in step 3, the agent
+finds it already on the record and starts moving the board instead. Either
+way: no ceremony.
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s2-hub-tracking.png" alt="A plain request becomes a tracked goal" width="800" />
 

@@ -71,6 +71,24 @@ ID `goalGuardian.gettingStarted`, title "Get started with Goal Guardian":
 6. **The Command Center** — media: center still; completes on
    `onCommand:goalGuardian.commandCenter`
 
+## First-run dogfood (2026-08-25)
+Followed "Your first 10 minutes" to the letter in two untouched workspaces
+(headed Cursor, fresh user-level MCP state). Three gaps found and fixed in the
+README:
+1. The Guardian icon hides behind the sidebar icon row's **∨** overflow menu
+   in a fresh workspace — step 2 now points at the ∨ and offers the palette
+   fallback.
+2. The wizard is 3 questions + a .gitignore prompt — step 3 no longer says
+   "three-question".
+3. The "Tracking: …" reply only appears on the Esc-skip (empty-goal) path;
+   with a wizard-set goal the agent finds the goal on the record instead —
+   step 4 now describes both outcomes.
+Verified working with no caveats: inert install, Esc-skip wiring, skills in
+the `/` menu and hooks live with **no reload**, zero approval popups, agent
+auto-declares goal + authors criteria ("Tracking: add pause and resume to the
+kitchen timer — done when …"), checklist self-ticks, `/guardian` briefing in
+~3s, status bar item. s6-welcome.png recaptured from the live first-run.
+
 ## Execution order
 P1 tooling (ffmpeg) → P2 README rewrite to the new architecture (stills
 already staged) → P3 walkthrough contribution + step markdown files →
