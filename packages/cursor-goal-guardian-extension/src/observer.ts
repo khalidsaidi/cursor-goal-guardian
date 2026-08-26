@@ -180,13 +180,20 @@ export class Observer implements vscode.Disposable {
       const holder = fs.readFileSync(lease, "utf8").trim();
       if (holder === String(process.pid)) return true;
       if (Date.now() - stat.mtimeMs < LEASE_STALE_MS) return false; // live holder elsewhere
+      fs.rmSync(lease, { force: true }); // stale holder — clear the seat
     } catch {
       /* no lease yet */
     }
     try {
       fs.mkdirSync(path.dirname(lease), { recursive: true });
-      fs.writeFileSync(lease, String(process.pid), "utf8");
-      return true;
+      // Exclusive create is the election: both extension hosts start at the
+      // same instant after a reload, and check-then-write is a race.
+      fs.writeFileSync(lease, String(process.pid), { flag: "wx" });
+    } catch {
+      return false; // another host won the seat first
+    }
+    try {
+      return fs.readFileSync(lease, "utf8").trim() === String(process.pid);
     } catch {
       return false;
     }

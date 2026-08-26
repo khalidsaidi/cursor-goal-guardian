@@ -78,7 +78,9 @@ export async function makeWorkspace(opts: MakeWorkspaceOptions = {}): Promise<Te
     root,
     paths,
     cleanup: async () => {
-      await fs.rm(root, { recursive: true, force: true });
+      // Windows can hold a just-written file's handle for a beat, failing a
+      // recursive delete with ENOTEMPTY; retries make cleanup deterministic.
+      await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },
   };
 }
