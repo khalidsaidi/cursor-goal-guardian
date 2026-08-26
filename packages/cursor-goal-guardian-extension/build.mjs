@@ -1,4 +1,9 @@
 import { build } from "esbuild";
+import fs from "node:fs/promises";
+
+// Wipe dist/ first: stale files from older builds must never ship in the VSIX
+// (v0.x tsc output once rode along that way).
+await fs.rm("dist", { recursive: true, force: true });
 
 // Extension host bundle (CJS, vscode external).
 await build({
