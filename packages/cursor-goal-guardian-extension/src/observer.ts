@@ -204,7 +204,13 @@ export class Observer implements vscode.Disposable {
       const now = new Date();
       fs.utimesSync(this.leasePath(), now, now);
     } catch {
-      /* workspace removed — dispose will clean up */
+      // The seat vanished under us (cleanup, branch switch): retake it —
+      // this instance is still the active recorder.
+      try {
+        fs.writeFileSync(this.leasePath(), String(process.pid), "utf8");
+      } catch {
+        /* workspace removed — dispose will clean up */
+      }
     }
   }
 
