@@ -23,8 +23,8 @@ it wanders, and shows you the story. It never blocks, and it never nags.
 
 ## Your first 10 minutes
 
-You don't need to configure anything, learn any files, or read docs. Six
-steps, and step 4 is the whole trick.
+You don't need to configure anything, learn any files, or read docs. Seven
+steps, and step 5 is the whole trick.
 
 **1. Install** from Open VSX (you're here). Guardian introduces itself
 exactly once: its panel opens on its own the first time, then never
@@ -35,32 +35,44 @@ top of the file sidebar — that's where you'll glance later. You'll see this:
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s6-welcome.png" alt="The welcome panel" width="800" />
 
-**3. Click "Connect Guardian to this workspace."** It asks three questions
-about what you're building, plus one housekeeping question — and pressing
-**Esc through all of them is completely fine** (step 4 works either way).
-Guardian writes its files into a small `.cursor/goal-guardian` folder in your
-project. You never need to open it. The panel now shows a **Get started
-checklist (1 of 6 already done)** — it ticks itself from what actually happens
-in your session, the same way Guardian tracks goals. No "next" buttons.
+**3. Fill the little form — or don't.** The whole setup is right there in
+the panel: say what you're working toward in your own words, press Enter to
+add each "done when" finish line (each becomes a task on the board, the ×
+removes it), optionally add a boundary, and click **Connect Guardian**.
+Every field is optional — connecting empty is fine, step 5 works either
+way. No wizard, no separators, nothing to memorize. Guardian writes its
+files into a small `.cursor/goal-guardian` folder you never need to open.
 
-<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s13-tour.png" alt="The get-started checklist that completes from the real session" width="500" />
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s9-setup.png" alt="The in-panel connect form, filled" width="500" />
 
-<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s9-setup.png" alt="The setup wizard" width="800" />
+**4. One switch that belongs to Cursor.** On desktop, Cursor lists every
+project-configured MCP server as *Disabled* until you enable it once —
+that's Cursor's own safety rule, and Guardian walks you to it: a
+notification appears with an **Open MCP Settings** button, the exact screen
+opens, and you flip the switch next to your project's *goal-guardian* row.
+Ten seconds, once per project. The panel's **Get started checklist** — it
+ticks itself from what actually happens in your session, no "next" buttons —
+is already keeping score.
 
-**4. Ask your agent for something — like you always do.** That's the whole
-trick. If you skipped the questions, your request *becomes* the goal: the
-agent answers with one line — "Tracking: … — done when …" — writes its own
-"done when" list, and gets to work. If you typed a goal in step 3, the agent
-finds it already on the record and starts moving the board instead. Either
-way: no ceremony.
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s13-tour.png" alt="The board and get-started checklist right after connecting" width="500" />
+
+**5. Ask your agent for something — like you always do.** That's the whole
+trick. If you connected empty, your request *becomes* the goal: the agent
+answers with one line — "Tracking: … — done when …" — writes its own
+"done when" list, and gets to work. If you filled the form, the agent finds
+your goal already on the record and starts moving the board instead. Either
+way: no ceremony. And when a task says "with tests," the agent runs them
+before the box gets ticked — **done means verified**, and if something on
+your machine blocks the proof, the agent says so plainly and offers to fix
+it or record the gap. Your call.
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s2-hub-tracking.png" alt="A plain request becomes a tracked goal" width="800" />
 
-**5. Glance at the panel** any time. Your goal is the title. The lamp says
+**6. Glance at the panel** any time. Your goal is the title. The lamp says
 "on course" (or doesn't). The checklist ticks itself as the agent finishes
 things.
 
-**6. Type `/guardian` in the chat** and get a plain-language briefing of
+**7. Type `/guardian` in the chat** and get a plain-language briefing of
 where the session stands — what's done, what's left, whether anything
 wandered.
 
@@ -137,6 +149,7 @@ drift, and periodically reading the whole session to answer one question:
 | | Capability |
 |---|---|
 | **In chat** | ✓ Your request becomes the goal (with "done when" criteria) |
+| | ✓ Done means verified — the agent runs the tests/build before a task is recorded complete; a blocked proof becomes a fix-it-or-record-it choice in chat |
 | | ✓ Agent loads the goal at every session start (survives resets) |
 | | ✓ Progress recorded as tasks start/finish — by the agent itself |
 | | ✓ Your pivots documented with a reason, never lost |
@@ -145,6 +158,7 @@ drift, and periodically reading the whole session to answer one question:
 | | ✓ Six agent tools (read contract, update goal, declare intent, self-check an action, record progress, session status) |
 | | ✓ Works in Cursor's agent hub and the IDE — one-time connect approval |
 | **Watching** | ✓ Every shell command, edit, and tool call observed (~60ms, invisible) |
+| | ✓ Records on every platform — on native Windows Guardian watches at the OS level, so the tape fills even where Cursor's own hooks can't reach |
 | | ✓ Off-goal detection by vocabulary, three sensitivity levels |
 | | ✓ Risky-command advisories (ok/caution/alert — even inside `a && b` chains) |
 | | ✓ One calm nudge per detour episode · quiet/balanced/vocal modes |
@@ -158,13 +172,17 @@ drift, and periodically reading the whole session to answer one question:
 | | ✓ Task switches require a recorded reason (the machine enforces it) |
 | | ✓ Detours paired with the action that brought the session back |
 | **IDE** | ✓ Full-height session panel (goal, lamp, board, checklist, track) |
+| | ✓ Setup is a form in the panel — type, press Enter, Connect; no wizard, no separators |
+| | ✓ Introduces itself once: the panel opens on its own after install |
+| | ✓ One-click "Open MCP Settings" guidance for Cursor's per-project enable |
 | | ✓ Get-started tour that completes from the real session, not from clicks |
 | | ✓ Click-to-edit goal · per-item "check with AI" |
 | | ✓ Status bar with click-to-steer Command Center |
 | | ✓ 15 palette commands incl. guided setup and full uninstall |
 | **Trust** | ✓ Advisory forever — never blocks, opt-in "ask" at most |
 | | ✓ Automatic migration from 0.4.x with backups |
-| | ✓ 200+ tests incl. real-agent end-to-end suites and live-editor verification |
+| | ✓ Ships as self-contained native builds for all six platforms (Linux, macOS, Windows × x64/arm64) — no Node.js required |
+| | ✓ 260+ tests incl. real-agent end-to-end suites and live-editor verification |
 
 ## How it works (plain English)
 
@@ -220,8 +238,10 @@ plus decision-gated task switching.
 
 ## Validation
 
-200+ unit and contract tests (quietness contract, hook latency budget,
+260+ unit and contract tests (quietness contract, hook latency budget,
 migration goldens from real 0.4.x workspaces), a 12-scenario end-to-end suite
 driving **real** Cursor agents — including an uninstructed agent cooperating
 purely from the session rule and a live AI judge separating real drift from
-false alarms — plus live-editor verification down to the rendered panel.
+false alarms — live-editor verification down to the rendered panel, and a
+six-architecture CI matrix that compiles and *executes* the shipped binaries
+on Linux, macOS, and Windows, x64 and arm64 alike.

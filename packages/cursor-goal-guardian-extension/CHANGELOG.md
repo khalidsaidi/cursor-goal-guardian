@@ -7,6 +7,24 @@ it records what the agent did, scores it against the declared goal, and shows
 the tape. It never blocks, and it never nags.
 
 ### Added
+- Setup is a form in the panel: goal in your own words, "done when" lines
+  added with Enter (each becomes a task, × removes), boundaries, one Connect
+  button. No input boxes, no separators, no palette anywhere in the journey.
+- Guardian introduces itself exactly once: the panel opens on its own after
+  install (remote-safe — it retries until the view actually lands).
+- Cursor's one-time per-project MCP enable is guided: a notification with an
+  "Open MCP Settings" button lands you on the exact screen with the switch.
+- Done means verified: the session protocol has the agent run the proof
+  (tests, build) before recording a task complete — and when the machine
+  blocks the proof (say, a missing runtime), the agent offers to fix it or
+  record the gap, and waits for your call.
+- Recording works on native Windows: Guardian's extension observes edits and
+  every launched command at the OS level (single recorder elected per
+  workspace, editor plumbing filtered, wrappers unwrapped) — the tape fills
+  even where Cursor's own hook runtime cannot reach the workspace.
+- Ships as self-contained native binaries for all six platforms (Linux,
+  macOS, Windows × x64/arm64); wiring points at absolute paths — no Node.js,
+  no PATH assumptions, nothing to install first.
 - Get-started tour in the panel: a six-step first-ten-minutes checklist whose
   steps complete from evidence in the actual session (goal declared, task
   finished, `/guardian` used, review consented…) — never from clicking "next".
