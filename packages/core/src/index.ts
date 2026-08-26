@@ -17,3 +17,5 @@ export * from "./drift/lexical.js";
 export * from "./drift/episodes.js";
 export * from "./telemetry/pairing.js";
 export * from "./telemetry/summary.js";
+export * from "./migrate/detect.js";
+export * from "./migrate/v1-to-v2.js";
