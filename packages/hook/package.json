@@ -1,0 +1,23 @@
+{
+  "name": "@goal-guardian/hook",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "goal-guardian-hook": "dist/cli.cjs"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit && node build.mjs",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@goal-guardian/core": "workspace:*"
+  },
+  "devDependencies": {
+    "cursor-goal-guardian-testkit": "workspace:*",
+    "esbuild": "^0.25.9",
+    "tsx": "^4.7.0"
+  }
+}

@@ -1,0 +1,1 @@
+{"type":"result","subtype":"success","is_error":false,"duration_ms":2882,"duration_api_ms":2882,"result":"I cannot produce a judgement right now.","session_id":"fb5bba30-85fb-4479-98aa-a0141e4dcb33","request_id":"7f3ae705-23f7-4c56-8f49-5adbf82f8921","usage":{"inputTokens":13471,"outputTokens":51,"cacheReadTokens":4992,"cacheWriteTokens":0}}
