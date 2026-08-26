@@ -29,8 +29,15 @@ const EXPECTED_COMMANDS = [
 ];
 
 const cleanups: Array<() => Promise<void>> = [];
-beforeEach(() => recorded.reset());
+beforeEach(async () => {
+  recorded.reset();
+  // Every path through activation/doctor must stay away from the real ~/.cursor.
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), "gg-home-"));
+  process.env.GOAL_GUARDIAN_TEST_HOME = home;
+  cleanups.push(() => fs.rm(home, { recursive: true, force: true }));
+});
 afterEach(async () => {
+  delete process.env.GOAL_GUARDIAN_TEST_HOME;
   await Promise.all(cleanups.splice(0).map((fn) => fn()));
 });
 
