@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "notify": "balanced",
+  "nudgeCooldownMinutes": 10,
+  "drift": {
+    "lexical": { "enabled": true, "sensitivity": "balanced" },
+    "semantic": {
+      "judge": "cursor-agent",
+      "batchSize": 10,
+      "debounceSeconds": 30,
+      "sessionCallCap": 20,
+      "sessionReview": { "enabled": true, "minNewActions": 10, "maxActions": 30 }
+    }
+  },
+  "advisories": {
+    "remindWhenNoActiveTask": true,
+    "escalateConfirmedDrift": "off",
+    "shellRules": [],
+    "mcpRules": [],
+    "readRules": [],
+    "neutralCommands": [],
+    "neutralPaths": []
+  }
+}

@@ -1,20 +1,11 @@
 {
   "version": 1,
   "hooks": {
-    "beforeShellExecution": [
-      { "command": "cursor-goal-guardian-hook" }
-    ],
-    "beforeMCPExecution": [
-      { "command": "cursor-goal-guardian-hook" }
-    ],
-    "beforeReadFile": [
-      { "command": "cursor-goal-guardian-hook" }
-    ],
-    "afterFileEdit": [
-      { "command": "cursor-goal-guardian-hook" }
-    ],
-    "stop": [
-      { "command": "cursor-goal-guardian-hook" }
-    ]
+    "beforeShellExecution": [{ "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\"" }],
+    "beforeMCPExecution": [{ "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\"" }],
+    "beforeReadFile": [{ "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\"" }],
+    "beforeTabFileRead": [{ "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\"" }],
+    "afterFileEdit": [{ "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\"" }],
+    "afterTabFileEdit": [{ "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\"" }]
   }
 }

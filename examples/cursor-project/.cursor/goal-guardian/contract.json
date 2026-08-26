@@ -1,14 +1,10 @@
 {
-  "goal": "Build an anti-goal-drift workflow for Cursor using an MCP goal authority and advisory permits.",
-  "success_criteria": [
-    "MCP server exposes tools: guardian_get_contract, guardian_initialize_contract, guardian_check_step, guardian_issue_permit, guardian_commit_result",
-    "Cursor hooks warn on shell and MCP actions, with permit recommendations for unaligned or high-risk actions",
-    "Permits are short-lived and stored in .ai (gitignored) and cannot be read by the model",
-    "Clear README + example configs (.cursor/mcp.json and .cursor/hooks.json) are provided"
+  "schemaVersion": 2,
+  "goal": "Ship the CSV export feature for the report table",
+  "successCriteria": [
+    { "id": "sc_1", "text": "Users can export the report table as CSV" },
+    { "id": "sc_2", "text": "Export respects the currently active filters" },
+    { "id": "sc_3", "text": "Unit tests cover the CSV serializer" }
   ],
-  "constraints": [
-    "No silent scope expansion: every step must map to explicit success criteria IDs.",
-    "Prefer deterministic guidance via hooks over prompt-only guidance.",
-    "Never log to stdout inside the MCP server except JSON-RPC."
-  ]
+  "constraints": ["No new dependencies", "No changes outside src/export/"]
 }
