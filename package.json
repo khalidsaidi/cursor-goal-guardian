@@ -6,8 +6,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "dev:mcp": "pnpm --filter cursor-goal-guardian-mcp dev",
-    "dev:hook": "pnpm --filter cursor-goal-guardian-hook dev",
+    "dev:mcp": "pnpm --filter @goal-guardian/mcp dev",
+    "dev:hook": "pnpm --filter @goal-guardian/hook dev",
     "eval:ab": "node scripts/evaluate-ab.js --study examples/ab-study/sample",
     "eval:ab:live:init:help": "node scripts/init-live-ab.js --help",
     "eval:ab:live:scaffold:help": "node scripts/scaffold-live-react-env.js --help",

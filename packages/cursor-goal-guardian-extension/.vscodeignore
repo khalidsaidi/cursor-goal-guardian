@@ -4,3 +4,8 @@
 **/test/**
 node_modules/**
 .vscode/**
+src/**
+build.mjs
+vitest.config.ts
+tsconfig.json
+cursor-goal-guardian.vsix

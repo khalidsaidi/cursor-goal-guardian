@@ -1,641 +1,166 @@
 import * as vscode from "vscode";
-import * as path from "node:path";
-import * as fs from "node:fs/promises";
-import { GoalPanelProvider } from "./goalPanel.js";
-import { StatusBarManager } from "./statusBar.js";
 import {
-  ensureStateStoreFiles,
-  dispatchAction,
-  rebuildState,
-  getStatePaths,
-  loadState,
-} from "./stateStore.js";
+  detectWorkspaceFormat,
+  dispatch,
+  getGuardianPaths,
+  migrateV1toV2,
+  rebuild,
+  readStateSafe,
+  ACTION_TYPES,
+  type ActionType,
+} from "@goal-guardian/core";
+import { PanelController } from "./panel/panelController.js";
+import { RescoreService } from "./rescoreService.js";
+import { StatusBar } from "./statusBar.js";
+import { registerAutoBehaviors } from "./autoBehaviors.js";
+import { doctorIntegration, runSetup, runUninstall } from "./setup.js";
 
-const EXT_NAME = "Goal Guardian";
-type GoalGuardianContract = {
-  goal?: string;
-  success_criteria?: unknown;
-  constraints?: unknown;
-};
+/**
+ * Activation contract: in a workspace without guardian files this registers
+ * commands and views and does NOTHING else — no file writes, no status bar,
+ * no notifications. Services start only after setup, or for existing guardian
+ * workspaces (where v1 files auto-migrate with backups and one passive notice).
+ */
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
 
-function getWorkspaceRoot(): string | null {
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders || folders.length === 0) return null;
-  return folders[0]?.uri.fsPath ?? null;
-}
-
-function toWorkspaceRelativePath(workspaceRoot: string, absolutePath: string): string | null {
-  const rel = path.relative(workspaceRoot, absolutePath);
-  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
-  return rel.split(path.sep).join("/");
-}
-
-function isGuardianInternalPath(relPath: string): boolean {
-  return relPath.startsWith(".cursor/goal-guardian/");
-}
-
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureDir(dirPath: string): Promise<void> {
-  await fs.mkdir(dirPath, { recursive: true });
-}
-
-async function writeJson(filePath: string, data: unknown): Promise<void> {
-  await ensureDir(path.dirname(filePath));
-  await fs.writeFile(filePath, JSON.stringify(data, null, 2), "utf8");
-}
-
-async function openFileInEditor(filePath: string): Promise<void> {
-  try {
-    const doc = await vscode.workspace.openTextDocument(filePath);
-    await vscode.window.showTextDocument(doc, { preview: false });
-  } catch {
-    vscode.window.showErrorMessage(`${EXT_NAME}: Could not open ${filePath}`);
-  }
-}
-
-function normalizeStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const out: string[] = [];
-  for (const item of value) {
-    if (typeof item === "string") {
-      const text = item.trim();
-      if (text) out.push(text);
-      continue;
-    }
-    if (item && typeof item === "object" && "text" in item) {
-      const text = String((item as { text?: unknown }).text ?? "").trim();
-      if (text) out.push(text);
-    }
-  }
-  return out;
-}
-
-function sameStringList(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
-
-function getNextTodoTaskId(state: Awaited<ReturnType<typeof loadState>>): string | null {
-  const queueCandidate = state.queue.find((id) => state.tasks.some((t) => t.id === id && t.status === "todo"));
-  if (queueCandidate) return queueCandidate;
-  const fallback = state.tasks.find((t) => t.status === "todo");
-  return fallback?.id ?? null;
-}
-
-function buildTasksFromCriteria(criteria: string[]): Array<{ id: string; title: string }> {
-  return criteria.map((text, idx) => {
-    const id = `sc_${idx + 1}`;
-    return { id, title: `SC${idx + 1}: ${text}` };
-  });
-}
-
-async function loadContract(workspaceRoot: string): Promise<GoalGuardianContract | null> {
-  const contractPath = getStatePaths(workspaceRoot).contract;
-  try {
-    const raw = await fs.readFile(contractPath, "utf8");
-    const parsed = JSON.parse(raw) as GoalGuardianContract;
-    if (!parsed || typeof parsed !== "object") return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function ensureActiveTask(workspaceRoot: string): Promise<boolean> {
-  const state = await loadState(workspaceRoot);
-  if (state.active_task) return false;
-  const nextTaskId = getNextTodoTaskId(state);
-  if (!nextTaskId) return false;
-  await dispatchAction(workspaceRoot, {
-    actor: "agent",
-    type: "START_TASK",
-    payload: { taskId: nextTaskId },
-  });
-  return true;
-}
-
-async function autoSyncStateFromContract(workspaceRoot: string): Promise<boolean> {
-  await ensureStateStoreFiles(workspaceRoot);
-  const contract = await loadContract(workspaceRoot);
-  if (!contract) return false;
-
-  let changed = false;
-  let state = await loadState(workspaceRoot);
-
-  const goal = String(contract.goal ?? "");
-  const definitionOfDone = normalizeStringList(contract.success_criteria);
-  const constraints = normalizeStringList(contract.constraints);
-
-  const needsGoalSync =
-    state.goal !== goal ||
-    !sameStringList(state.definition_of_done, definitionOfDone) ||
-    !sameStringList(state.constraints, constraints);
-
-  if (needsGoalSync) {
-    await dispatchAction(workspaceRoot, {
-      actor: "agent",
-      type: "SET_GOAL",
-      payload: {
-        goal,
-        definition_of_done: definitionOfDone,
-        constraints,
-      },
-    });
-    changed = true;
-    state = await loadState(workspaceRoot);
-  }
-
-  if (state.tasks.length === 0 && definitionOfDone.length > 0) {
-    await dispatchAction(workspaceRoot, {
-      actor: "agent",
-      type: "ADD_TASKS",
-      payload: { tasks: buildTasksFromCriteria(definitionOfDone) },
-    });
-    changed = true;
-    state = await loadState(workspaceRoot);
-  }
-
-  if (!state.active_task) {
-    const started = await ensureActiveTask(workspaceRoot);
-    changed = changed || started;
-  }
-
-  return changed;
-}
-
-async function autoPinEditedFile(workspaceRoot: string, absolutePath: string): Promise<boolean> {
-  const relPath = toWorkspaceRelativePath(workspaceRoot, absolutePath);
-  if (!relPath) return false;
-  if (isGuardianInternalPath(relPath)) return false;
-
-  const state = await loadState(workspaceRoot);
-  if (!state.active_task) return false;
-  if (state.pinned_context.includes(relPath)) return false;
-
-  await dispatchAction(workspaceRoot, {
-    actor: "agent",
-    type: "PIN_CONTEXT",
-    payload: { path: relPath },
-  });
-  return true;
-}
-
-async function dispatchActionInteractive(workspaceRoot: string): Promise<void> {
-  await ensureStateStoreFiles(workspaceRoot);
-  const state = await loadState(workspaceRoot);
-
-  const actionTypes = [
-    "SET_GOAL",
-    "ADD_TASKS",
-    "START_TASK",
-    "COMPLETE_TASK",
-    "OPEN_QUESTION",
-    "CLOSE_QUESTION",
-    "ADD_DECISION",
-    "PIN_CONTEXT",
-    "UNPIN_CONTEXT",
-    "CUSTOM_JSON",
-  ];
-
-  let picked = await vscode.window.showQuickPick(actionTypes, {
-    placeHolder: "Select action type",
-  });
-  if (!picked) return;
-
-  let payload: Record<string, unknown> = {};
-
-  if (picked === "SET_GOAL") {
-    const goal = await vscode.window.showInputBox({ prompt: "Goal statement", value: state.goal });
-    if (goal === undefined) return;
-    const dod = await vscode.window.showInputBox({
-      prompt: "Definition of done (comma-separated)",
-      value: state.definition_of_done.join(", "),
-    });
-    const constraints = await vscode.window.showInputBox({
-      prompt: "Constraints (comma-separated)",
-      value: state.constraints.join(", "),
-    });
-    payload = {
-      goal,
-      definition_of_done: (dod ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-      constraints: (constraints ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-    };
-  } else if (picked === "ADD_TASKS") {
-    const tasks = await vscode.window.showInputBox({
-      prompt: "Tasks (comma-separated)",
-      placeHolder: "Design API, Implement handler, Add tests",
-    });
-    if (tasks === undefined) return;
-    payload = {
-      tasks: tasks.split(",").map((t) => ({ title: t.trim() })).filter((t) => t.title),
-    };
-  } else if (picked === "START_TASK" || picked === "COMPLETE_TASK") {
-    const taskId = await vscode.window.showInputBox({
-      prompt: "Task ID",
-      placeHolder: "task_...",
-    });
-    if (!taskId) return;
-    payload = { taskId };
-  } else if (picked === "OPEN_QUESTION") {
-    const text = await vscode.window.showInputBox({ prompt: "Question" });
-    if (!text) return;
-    payload = { text };
-  } else if (picked === "CLOSE_QUESTION") {
-    const qId = await vscode.window.showInputBox({ prompt: "Question ID" });
-    if (!qId) return;
-    payload = { id: qId };
-  } else if (picked === "ADD_DECISION") {
-    const text = await vscode.window.showInputBox({ prompt: "Decision text" });
-    if (!text) return;
-    const rationale = await vscode.window.showInputBox({ prompt: "Decision rationale" });
-    if (!rationale) return;
-    payload = { text, rationale };
-  } else if (picked === "PIN_CONTEXT" || picked === "UNPIN_CONTEXT") {
-    const p = await vscode.window.showInputBox({ prompt: "Path to pin/unpin" });
-    if (!p) return;
-    payload = { path: p };
-  } else if (picked === "CUSTOM_JSON") {
-    const raw = await vscode.window.showInputBox({
-      prompt: "Paste full action JSON (must include type + payload)",
-      placeHolder: "{\"type\":\"SET_GOAL\",\"payload\":{...}}",
-    });
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw);
-      const type = String(parsed.type ?? "");
-      if (!type) throw new Error("Missing type");
-      payload = parsed.payload ?? {};
-      picked = type;
-    } catch (err) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: Invalid JSON action. ${String(err)}`);
-      return;
-    }
-  }
-
-  await dispatchAction(workspaceRoot, {
-    actor: "human",
-    type: picked,
-    payload,
-  });
-}
-
-function defaultContract() {
-  return {
-    goal: "Replace this with a short, unambiguous goal statement.",
-    success_criteria: [
-      "Replace this with a concrete success criterion.",
-    ],
-    constraints: [
-      "No silent scope expansion: every step must map to explicit success criteria IDs.",
-      "Keep updates in the state store instead of chat-only planning.",
-      "Prefer small, testable tasks with explicit completion criteria.",
-    ],
-  };
-}
-
-async function installFiles(): Promise<void> {
-  const workspaceRoot = getWorkspaceRoot();
-  if (!workspaceRoot) {
-    vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
-    return;
-  }
-
-  const cursorDir = path.join(workspaceRoot, ".cursor");
-  const guardianDir = path.join(cursorDir, "goal-guardian");
-  const contractPath = path.join(guardianDir, "contract.json");
-
-  await ensureDir(guardianDir);
-
-  const changed: string[] = [];
-
-  if (!(await fileExists(contractPath))) {
-    await writeJson(contractPath, defaultContract());
-    changed.push("contract.json");
-  }
-
-  await ensureStateStoreFiles(workspaceRoot);
-
-  if (changed.length === 0) {
-    vscode.window.showInformationMessage(`${EXT_NAME}: Files already exist. Nothing changed.`);
-  } else {
-    vscode.window.showInformationMessage(`${EXT_NAME}: Wrote ${changed.join(", ")}.`);
-  }
-}
-
-async function uninstallFiles(): Promise<void> {
-  const workspaceRoot = getWorkspaceRoot();
-  if (!workspaceRoot) {
-    vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
-    return;
-  }
-
-  const cursorDir = path.join(workspaceRoot, ".cursor");
-  const guardianDir = path.join(cursorDir, "goal-guardian");
-
-  try {
-    await fs.rm(guardianDir, { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
-
-  vscode.window.showInformationMessage(`${EXT_NAME}: Removed .cursor/goal-guardian.`);
-}
-
-export function activate(_context: vscode.ExtensionContext): void {
-  const workspaceRoot = getWorkspaceRoot();
-  if (workspaceRoot) {
-    ensureStateStoreFiles(workspaceRoot).catch(() => {
-      // ignore; user can run Install/Configure to repair
-    });
-  }
-
-  const goalPanelProvider = new GoalPanelProvider(_context.extensionUri);
-  const statusBarManager = new StatusBarManager();
-
-  const panelRegistration = vscode.window.registerWebviewViewProvider(
-    GoalPanelProvider.viewType,
-    goalPanelProvider,
-  );
-
-  const installCmd = vscode.commands.registerCommand("goalGuardian.install", async () => {
-    await installFiles();
-    const root = getWorkspaceRoot();
-    if (root) {
+  const rescore = new RescoreService(context, root, undefined, () => void controller.refresh());
+  const controller = new PanelController(context, root, {
+    isSemanticConsented: () => rescore.isConsented(),
+    isSemanticAvailable: () => rescore.isAvailable(),
+    onCommand: async (command) => {
+      if (command === "enableRescore") await rescore.grantConsent();
+      else await vscode.commands.executeCommand(`goalGuardian.${command}`);
+      await controller.refresh();
+    },
+    onStartTask: async (taskId) => {
+      if (!root) return;
       try {
-        await autoSyncStateFromContract(root);
-      } catch {
-        // Best-effort sync.
+        await dispatch(root, { type: "START_TASK", actor: "human", payload: { taskId } });
+      } catch (err) {
+        void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
       }
-    }
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
+    },
+    onRescoreOne: async () => rescore.rescoreNow(),
   });
+  const statusBar = new StatusBar(context);
+  controller.onDidUpdate((vm) => statusBar.update(vm));
 
-  const openContract = vscode.commands.registerCommand("goalGuardian.openContract", async () => {
-    const root = getWorkspaceRoot();
-    if (!root) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
-      return;
-    }
-    const contractPath = path.join(root, ".cursor", "goal-guardian", "contract.json");
-    if (!(await fileExists(contractPath))) {
-      await installFiles();
-    }
-    const doc = await vscode.workspace.openTextDocument(contractPath);
-    await vscode.window.showTextDocument(doc, { preview: false });
-  });
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(PanelController.viewType, controller),
+  );
 
-  const uninstallCmd = vscode.commands.registerCommand("goalGuardian.uninstall", async () => {
-    const confirm = await vscode.window.showWarningMessage(
-      `${EXT_NAME}: Remove .cursor/goal-guardian state files?`,
-      { modal: true },
-      "Remove",
-      "Cancel",
-    );
-    if (confirm !== "Remove") return;
-    await uninstallFiles();
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-  });
-
-  const showPanelCmd = vscode.commands.registerCommand("goalGuardian.showPanel", async () => {
-    await vscode.commands.executeCommand("goalGuardian.goalPanel.focus");
-  });
-
-  const refreshCmd = vscode.commands.registerCommand("goalGuardian.refresh", async () => {
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-    vscode.window.showInformationMessage(`${EXT_NAME}: Refreshed.`);
-  });
-
-  const openStateCmd = vscode.commands.registerCommand("goalGuardian.openState", async () => {
-    const root = getWorkspaceRoot();
-    if (!root) return;
-    const p = getStatePaths(root);
-    await openFileInEditor(p.state);
-  });
-
-  const openActionsCmd = vscode.commands.registerCommand("goalGuardian.openActions", async () => {
-    const root = getWorkspaceRoot();
-    if (!root) return;
-    const p = getStatePaths(root);
-    await openFileInEditor(p.actions);
-  });
-
-  const openReducerCmd = vscode.commands.registerCommand("goalGuardian.openReducer", async () => {
-    const root = getWorkspaceRoot();
-    if (!root) return;
-    const p = getStatePaths(root);
-    await openFileInEditor(p.reducer);
-  });
-
-  const openRulesCmd = vscode.commands.registerCommand("goalGuardian.openRules", async () => {
-    const root = getWorkspaceRoot();
-    if (!root) return;
-    const p = getStatePaths(root);
-    await openFileInEditor(p.rules);
-  });
-
-  const dispatchActionCmd = vscode.commands.registerCommand("goalGuardian.dispatchAction", async () => {
-    const root = getWorkspaceRoot();
-    if (!root) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
-      return;
-    }
-    try {
-      await dispatchActionInteractive(root);
-      goalPanelProvider.refresh();
-      statusBarManager.refresh();
-    } catch (err) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: ${String(err)}`);
-    }
-  });
-
-  const startNextTaskCmd = vscode.commands.registerCommand("goalGuardian.startNextTask", async () => {
-    const root = getWorkspaceRoot();
-    if (!root) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
-      return;
-    }
-    try {
-      await ensureStateStoreFiles(root);
-      const before = await loadState(root);
-      if (before.active_task) {
-        vscode.window.showInformationMessage(`${EXT_NAME}: Active task already in progress (${before.active_task}).`);
-        return;
-      }
-      const started = await ensureActiveTask(root);
-      if (!started) {
-        vscode.window.showInformationMessage(`${EXT_NAME}: No todo task available to start.`);
-        return;
-      }
-      const after = await loadState(root);
-
-      goalPanelProvider.refresh();
-      statusBarManager.refresh();
-      vscode.window.showInformationMessage(`${EXT_NAME}: Started task ${after.active_task ?? "(unknown)"}.`);
-    } catch (err) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: ${String(err)}`);
-    }
-  });
-
-  const completeActiveTaskCmd = vscode.commands.registerCommand("goalGuardian.completeActiveTask", async () => {
-    const root = getWorkspaceRoot();
-    if (!root) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
-      return;
-    }
-    try {
-      await ensureStateStoreFiles(root);
-      const state = await loadState(root);
-      if (!state.active_task) {
-        vscode.window.showInformationMessage(`${EXT_NAME}: No active task to complete.`);
-        return;
-      }
-
-      const taskId = state.active_task;
-      await dispatchAction(root, {
-        actor: "human",
-        type: "COMPLETE_TASK",
-        payload: { taskId },
-      });
-
-      goalPanelProvider.refresh();
-      statusBarManager.refresh();
-      vscode.window.showInformationMessage(`${EXT_NAME}: Completed task ${taskId}.`);
-    } catch (err) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: ${String(err)}`);
-    }
-  });
-
-  const rebuildStateCmd = vscode.commands.registerCommand("goalGuardian.rebuildState", async () => {
-    const root = getWorkspaceRoot();
-    if (!root) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: Open a folder or workspace first.`);
-      return;
-    }
-    try {
-      await rebuildState(root);
-      goalPanelProvider.refresh();
-      statusBarManager.refresh();
-      vscode.window.showInformationMessage(`${EXT_NAME}: State rebuilt from actions.`);
-    } catch (err) {
-      vscode.window.showErrorMessage(`${EXT_NAME}: ${String(err)}`);
-    }
-  });
-
-  const contractWatcher = vscode.workspace.createFileSystemWatcher("**/goal-guardian/contract.json");
-  const syncFromContract = () => {
-    const root = getWorkspaceRoot();
-    if (!root) return;
-    autoSyncStateFromContract(root)
-      .then(() => {
-        goalPanelProvider.refresh();
-        statusBarManager.refresh();
-      })
-      .catch(() => {
-        goalPanelProvider.refresh();
-        statusBarManager.refresh();
-      });
+  const startServices = (): void => {
+    controller.startWatching();
+    rescore.start();
+    void controller.refresh();
   };
-  contractWatcher.onDidChange(syncFromContract);
-  contractWatcher.onDidCreate(syncFromContract);
-  contractWatcher.onDidDelete(() => {
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-  });
 
-  const stateWatcher = vscode.workspace.createFileSystemWatcher("**/goal-guardian/state.json");
-  stateWatcher.onDidChange(() => {
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-  });
-  stateWatcher.onDidCreate(() => {
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-  });
-  stateWatcher.onDidDelete(() => {
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-  });
+  const requireRoot = (): string | null => {
+    if (!root) void vscode.window.showWarningMessage("Goal Guardian: open a folder first.");
+    return root;
+  };
 
-  const actionsWatcher = vscode.workspace.createFileSystemWatcher("**/goal-guardian/actions.jsonl");
-  actionsWatcher.onDidChange(() => {
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-  });
-  actionsWatcher.onDidCreate(() => {
-    goalPanelProvider.refresh();
-    statusBarManager.refresh();
-  });
+  const openGuardianFile = (key: "contract" | "config" | "state" | "actions" | "audit"): (() => Promise<void>) => {
+    return async () => {
+      const r = requireRoot();
+      if (!r) return;
+      const p = getGuardianPaths(r);
+      const file = key === "audit" ? p.audit : p[key];
+      await vscode.window.showTextDocument(vscode.Uri.file(file));
+    };
+  };
 
-  const autoPinOnSave = vscode.workspace.onDidSaveTextDocument(async (doc) => {
-    if (doc.isUntitled || doc.uri.scheme !== "file") return;
-
-    const root = getWorkspaceRoot();
-    if (!root) return;
-    try {
-      const relPath = toWorkspaceRelativePath(root, doc.uri.fsPath);
-      if (!relPath || isGuardianInternalPath(relPath)) return;
-
-      const started = await ensureActiveTask(root);
-      const pinned = await autoPinEditedFile(root, doc.uri.fsPath);
-      if (started || pinned) {
-        goalPanelProvider.refresh();
-        statusBarManager.refresh();
-      }
-    } catch {
-      // Best-effort, no user interruption.
-    }
-  });
-
-  if (workspaceRoot) {
-    autoSyncStateFromContract(workspaceRoot)
-      .then((changed) => {
-        if (changed) {
-          goalPanelProvider.refresh();
-          statusBarManager.refresh();
-        }
-      })
-      .catch(() => {
-        // Best-effort bootstrap only.
+  const commands: Record<string, () => Promise<void>> = {
+    "goalGuardian.setup": async () => {
+      const r = requireRoot();
+      if (!r) return;
+      if (await runSetup(r, context)) startServices();
+    },
+    "goalGuardian.showPanel": async () => {
+      await vscode.commands.executeCommand("goalGuardian.goalPanel.focus");
+    },
+    "goalGuardian.refresh": async () => controller.refresh(),
+    "goalGuardian.openContract": openGuardianFile("contract"),
+    "goalGuardian.openConfig": openGuardianFile("config"),
+    "goalGuardian.openState": openGuardianFile("state"),
+    "goalGuardian.openActions": openGuardianFile("actions"),
+    "goalGuardian.openAuditLog": openGuardianFile("audit"),
+    "goalGuardian.startNextTask": async () => {
+      const r = requireRoot();
+      if (!r) return;
+      const state = await readStateSafe(r);
+      const next = state.tasks.find((t) => t.status === "todo");
+      if (!next) return;
+      await dispatch(r, { type: "START_TASK", actor: "human", payload: { taskId: next.id } }).catch((err) => {
+        void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
       });
+    },
+    "goalGuardian.completeActiveTask": async () => {
+      const r = requireRoot();
+      if (!r) return;
+      const state = await readStateSafe(r);
+      if (!state.activeTaskId) return;
+      await dispatch(r, { type: "COMPLETE_TASK", actor: "human", payload: { taskId: state.activeTaskId } });
+    },
+    "goalGuardian.rebuildState": async () => {
+      const r = requireRoot();
+      if (!r) return;
+      await rebuild(r);
+      await controller.refresh();
+    },
+    "goalGuardian.dispatchAction": async () => {
+      const r = requireRoot();
+      if (!r) return;
+      const type = await vscode.window.showQuickPick([...ACTION_TYPES], { title: "Action type" });
+      if (!type) return;
+      const payloadRaw = await vscode.window.showInputBox({ title: "Payload (JSON)", value: "{}" });
+      if (payloadRaw === undefined) return;
+      try {
+        await dispatch(r, { type: type as ActionType, actor: "human", payload: JSON.parse(payloadRaw) });
+      } catch (err) {
+        void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
+    "goalGuardian.rescoreDrift": async () => rescore.rescoreNow(),
+    "goalGuardian.uninstall": async () => {
+      const r = requireRoot();
+      if (!r) return;
+      const confirmed = await vscode.window.showWarningMessage(
+        "Remove Goal Guardian from this workspace? This deletes .cursor/goal-guardian and unwires the hook and MCP entries.",
+        { modal: true },
+        "Remove",
+      );
+      if (confirmed !== "Remove") return;
+      await runUninstall(r);
+      await controller.refresh();
+    },
+  };
+  for (const [id, handler] of Object.entries(commands)) {
+    context.subscriptions.push(vscode.commands.registerCommand(id, handler));
   }
 
-  _context.subscriptions.push(
-    panelRegistration,
-    statusBarManager,
-    installCmd,
-    openContract,
-    uninstallCmd,
-    showPanelCmd,
-    refreshCmd,
-    openStateCmd,
-    openActionsCmd,
-    openReducerCmd,
-    openRulesCmd,
-    dispatchActionCmd,
-    startNextTaskCmd,
-    completeActiveTaskCmd,
-    rebuildStateCmd,
-    contractWatcher,
-    stateWatcher,
-    actionsWatcher,
-    autoPinOnSave,
-  );
+  registerAutoBehaviors(context, root, async () => (root ? (await detectWorkspaceFormat(root)) === "v2" : false));
+
+  if (root) {
+    const format = await detectWorkspaceFormat(root);
+    if (format === "v1") {
+      const result = await migrateV1toV2(root, {
+        migratedBy: `cursor-goal-guardian-extension@${context.extension.packageJSON.version as string}`,
+      });
+      if (result.migrated) {
+        await doctorIntegration(root, context);
+        void vscode.window.showInformationMessage(
+          "Goal Guardian upgraded this workspace to the v2 format (backups saved as *.v1.bak).",
+        );
+      }
+      startServices();
+    } else if (format === "v2") {
+      await doctorIntegration(root, context);
+      startServices();
+    }
+    // format "none": stay inert until invited via setup.
+  }
 }
 
-export function deactivate(): void {
-  // Components are disposed via subscriptions.
-}
+export function deactivate(): void {}

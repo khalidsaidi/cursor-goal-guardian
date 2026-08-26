@@ -21,5 +21,6 @@ export * from "./drift/rescorer.js";
 export * from "./drift/cursorAgentJudge.js";
 export * from "./telemetry/pairing.js";
 export * from "./telemetry/summary.js";
+export * from "./viewmodel/panel.js";
 export * from "./migrate/detect.js";
 export * from "./migrate/v1-to-v2.js";

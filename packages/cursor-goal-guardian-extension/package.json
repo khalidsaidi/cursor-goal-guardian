@@ -1,8 +1,8 @@
 {
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
-  "description": "Goal-first Cursor: a state-driven anti-drift workspace that does not install blocking hooks.",
-  "version": "0.4.11",
+  "description": "Drift flight-recorder for AI coding sessions in Cursor: records what the agent did, scores it against your declared goal, and shows the tape. Advisory-only — it never blocks and never nags.",
+  "version": "1.0.0-rc.0",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
   "galleryBanner": {
@@ -18,10 +18,8 @@
     "vscode": "^1.85.0"
   },
   "categories": ["Other"],
-  "keywords": ["cursor", "redux", "state-machine", "workflow", "guardrail", "ai-safety"],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
+  "keywords": ["cursor", "drift", "observability", "workflow", "guardrail", "ai-safety"],
+  "activationEvents": ["onStartupFinished"],
   "main": "dist/extension.js",
   "contributes": {
     "views": {
@@ -34,58 +32,20 @@
       ]
     },
     "commands": [
-      {
-        "command": "goalGuardian.install",
-        "title": "Goal Guardian: Install/Configure State Files"
-      },
-      {
-        "command": "goalGuardian.openContract",
-        "title": "Goal Guardian: Open Contract"
-      },
-      {
-        "command": "goalGuardian.uninstall",
-        "title": "Goal Guardian: Remove from Workspace"
-      },
-      {
-        "command": "goalGuardian.showPanel",
-        "title": "Goal Guardian: Show Goal Panel"
-      },
-      {
-        "command": "goalGuardian.refresh",
-        "title": "Goal Guardian: Refresh"
-      },
-      {
-        "command": "goalGuardian.openState",
-        "title": "Goal Guardian: Open State Store"
-      },
-      {
-        "command": "goalGuardian.openActions",
-        "title": "Goal Guardian: Open Action Log"
-      },
-      {
-        "command": "goalGuardian.openReducer",
-        "title": "Goal Guardian: Open Reducer"
-      },
-      {
-        "command": "goalGuardian.openRules",
-        "title": "Goal Guardian: Open Rules"
-      },
-      {
-        "command": "goalGuardian.dispatchAction",
-        "title": "Goal Guardian: Dispatch Action"
-      },
-      {
-        "command": "goalGuardian.startNextTask",
-        "title": "Goal Guardian: Start Next Task"
-      },
-      {
-        "command": "goalGuardian.completeActiveTask",
-        "title": "Goal Guardian: Complete Active Task"
-      },
-      {
-        "command": "goalGuardian.rebuildState",
-        "title": "Goal Guardian: Rebuild State From Actions"
-      }
+      { "command": "goalGuardian.setup", "title": "Goal Guardian: Set Up Workspace" },
+      { "command": "goalGuardian.showPanel", "title": "Goal Guardian: Show Panel" },
+      { "command": "goalGuardian.refresh", "title": "Goal Guardian: Refresh", "icon": "$(refresh)" },
+      { "command": "goalGuardian.openContract", "title": "Goal Guardian: Open Contract" },
+      { "command": "goalGuardian.openConfig", "title": "Goal Guardian: Open Config" },
+      { "command": "goalGuardian.openState", "title": "Goal Guardian: Open State Store" },
+      { "command": "goalGuardian.openActions", "title": "Goal Guardian: Open Action Log" },
+      { "command": "goalGuardian.openAuditLog", "title": "Goal Guardian: Open Audit Log" },
+      { "command": "goalGuardian.startNextTask", "title": "Goal Guardian: Start Next Task" },
+      { "command": "goalGuardian.completeActiveTask", "title": "Goal Guardian: Complete Active Task" },
+      { "command": "goalGuardian.rebuildState", "title": "Goal Guardian: Rebuild State from Action Log" },
+      { "command": "goalGuardian.dispatchAction", "title": "Goal Guardian: Dispatch Action (Advanced)" },
+      { "command": "goalGuardian.rescoreDrift", "title": "Goal Guardian: Review Recent Drift with AI" },
+      { "command": "goalGuardian.uninstall", "title": "Goal Guardian: Remove from Workspace" }
     ],
     "menus": {
       "view/title": [
@@ -95,24 +55,39 @@
           "group": "navigation"
         }
       ]
+    },
+    "configuration": {
+      "title": "Goal Guardian",
+      "properties": {
+        "goalGuardian.autoStartNextTask": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically start the next todo task when you save a file and no task is active."
+        },
+        "goalGuardian.autoPinEditedFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically pin files you save to the active task's context."
+        },
+        "goalGuardian.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Goal Guardian status bar item (only appears once the workspace is set up)."
+        }
+      }
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && node ../../scripts/bundle-extension.js",
+    "build": "tsc -p tsconfig.json --noEmit && node build.mjs",
     "test": "vitest run",
-    "package": "node ../../scripts/package-extension.js",
-    "publish": "node ../../scripts/publish-extension.js"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/vscode": "^1.85.0",
-    "typescript": "^5.3.3"
+    "package": "pnpm dlx @vscode/vsce package --no-dependencies --out cursor-goal-guardian.vsix"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "ajv": "^8.17.1",
-    "fallback-chain-js": "^0.1.0",
-    "minimatch": "^9.0.3",
-    "zod": "^3.23.8"
+    "@goal-guardian/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "cursor-goal-guardian-testkit": "workspace:*",
+    "esbuild": "^0.25.9"
   }
 }

@@ -1,105 +1,35 @@
 import * as vscode from "vscode";
-import * as path from "node:path";
-import * as fs from "node:fs/promises";
-import { loadState } from "./stateStore.js";
+import type { PanelViewModel } from "@goal-guardian/core";
 
-type GoalContract = {
-  goal: string;
-  success_criteria: string[];
-  constraints: string[];
-};
+/**
+ * Calm chrome: hidden until the workspace is set up; never an error background
+ * (a missing goal is not an error). Warning tint only for confirmed drift.
+ */
+export class StatusBar {
+  private readonly item: vscode.StatusBarItem;
 
-export class StatusBarManager {
-  private _statusBarItem: vscode.StatusBarItem;
-  private _refreshInterval?: NodeJS.Timeout;
-  private _disposed = false;
-
-  constructor() {
-    this._statusBarItem = vscode.window.createStatusBarItem(
-      vscode.StatusBarAlignment.Right,
-      100
-    );
-    this._statusBarItem.command = "goalGuardian.showPanel";
-    this._statusBarItem.show();
-
-    this._update();
-
-    // Auto-refresh every 10 seconds
-    this._refreshInterval = setInterval(() => {
-      if (!this._disposed) {
-        this._update();
-      }
-    }, 10000);
+  constructor(context: vscode.ExtensionContext) {
+    this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    this.item.command = "goalGuardian.showPanel";
+    context.subscriptions.push(this.item);
   }
 
-  public refresh() {
-    this._update();
-  }
-
-  public dispose() {
-    this._disposed = true;
-    if (this._refreshInterval) {
-      clearInterval(this._refreshInterval);
-    }
-    this._statusBarItem.dispose();
-  }
-
-  private async _update() {
-    const workspaceRoot = this._getWorkspaceRoot();
-    if (!workspaceRoot) {
-      this._statusBarItem.text = "$(shield) Goal Guardian";
-      this._statusBarItem.tooltip = "Open a workspace to use Goal Guardian";
+  update(vm: PanelViewModel): void {
+    const enabled = vscode.workspace.getConfiguration("goalGuardian").get<boolean>("statusBar.enabled", true);
+    if (!vm.setUp || !enabled) {
+      this.item.hide();
       return;
     }
-
-    const contract = await this._loadContract(workspaceRoot);
-    const state = await loadState(workspaceRoot).catch(() => null);
-
-    const hasGoal = contract?.goal && contract.goal.trim().length > 0;
-
-    // Build status bar text
-    let text = "";
-    let tooltip = "";
-
-    if (!hasGoal) {
-      text = "$(shield) No Goal";
-      tooltip = "No goal set. Click to open Goal Guardian panel in Explorer.";
-    } else {
-      text = "$(shield-check) Goal Active";
-      tooltip = `Goal: ${contract!.goal}`;
-    }
-
-    if (state?.active_task) {
-      text += ` $(list-selection) ${state.active_task}`;
-      tooltip += `\nActive task: ${state.active_task}`;
-    }
-
-    this._statusBarItem.text = text;
-    this._statusBarItem.tooltip = `${tooltip}\nClick to open Goal Guardian panel (Explorer sidebar).`;
-
-    if (!hasGoal) {
-      this._statusBarItem.backgroundColor = new vscode.ThemeColor(
-        "statusBarItem.errorBackground"
-      );
-    } else {
-      this._statusBarItem.backgroundColor = undefined;
-    }
+    const task = vm.activeTask ? vm.activeTask.title : "no active task";
+    this.item.text = vm.badge > 0 ? `$(target) ${task} · ${vm.badge}⚠` : `$(target) ${task}`;
+    this.item.backgroundColor =
+      vm.badge > 0 ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;
+    const semantic = vm.semantic.consented
+      ? vm.semantic.available
+        ? "AI review on"
+        : "AI review offline"
+      : "AI review off";
+    this.item.tooltip = `Goal Guardian — ${vm.health}\nunreviewed: ${vm.semantic.pendingCount} · confirmed 24h: ${vm.counts24h.driftConfirmed} · dismissed: ${vm.counts24h.driftDismissed}\n${semantic}`;
+    this.item.show();
   }
-
-  private _getWorkspaceRoot(): string | null {
-    const folders = vscode.workspace.workspaceFolders;
-    if (!folders || folders.length === 0) return null;
-    return folders[0]?.uri.fsPath ?? null;
-  }
-
-  private async _loadContract(workspaceRoot: string): Promise<GoalContract | null> {
-    const contractPath = path.join(workspaceRoot, ".cursor", "goal-guardian", "contract.json");
-    try {
-      const raw = await fs.readFile(contractPath, "utf8");
-      return JSON.parse(raw) as GoalContract;
-    } catch {
-      return null;
-    }
-  }
-
 }
