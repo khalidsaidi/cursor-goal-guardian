@@ -84,6 +84,9 @@ function isNeutralShellCommand(cmd: string, extra: string[]): boolean {
 function isNeutralReadPath(rel: string, extra: string[]): boolean {
   const p = rel.trim().toLowerCase();
   if (!p) return true;
+  // Paths outside the workspace (../..) are editor/plugin machinery, not the
+  // user's work — never drift signal.
+  if (p.startsWith("..")) return true;
   if (p.startsWith(".cursor/")) return true;
   const base = path.posix.basename(p);
   if (["package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "readme.md"].includes(base)) return true;

@@ -99,8 +99,9 @@ button.link {
   border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.3));
   border-radius: 6px;
 }
+.now-card { flex-wrap: wrap; }
 .now-card.empty { border-style: dashed; }
-.now-title { font-weight: 600; overflow-wrap: anywhere; }
+.now-title { font-weight: 600; overflow-wrap: anywhere; min-width: 12ch; }
 .now-card button { flex-shrink: 0; }
 
 .next-list { list-style: none; padding: 0; margin: 0; }

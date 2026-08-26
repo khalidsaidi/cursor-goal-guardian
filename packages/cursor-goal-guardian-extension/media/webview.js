@@ -64,7 +64,7 @@
     const nowBlock = active ? `<div class="now-card">
          <span class="now-title">${escapeHtml(active.title)}</span>
          <button data-cmd="completeActiveTask">Mark done</button>
-       </div>` : next.length > 0 ? `<div class="now-card empty"><span class="now-title quiet">Nothing in progress</span><button data-cmd="startNextTask">Start "${escapeHtml(next[0].title.slice(0, 40))}"</button></div>` : doneCount > 0 ? `<div class="now-card empty"><span class="now-title quiet">All done \u2014 everything on the list is finished.</span></div>` : "";
+       </div>` : next.length > 0 ? `<div class="now-card empty"><span class="now-title quiet">Nothing in progress</span><button data-cmd="startNextTask">Start next task</button></div>` : doneCount > 0 ? `<div class="now-card empty"><span class="now-title quiet">All done \u2014 everything on the list is finished.</span></div>` : "";
     const nextBlock = next.length ? `<div class="eyebrow">Up next</div>
        <ul class="next-list">${next.map((t) => `<li><span>${escapeHtml(t.title)}</span><button class="link" data-task="${escapeHtml(t.id)}">Start</button></li>`).join("")}</ul>` : "";
     const doneBlock = doneCount ? `<div class="done-line">${doneCount} finished</div>` : "";

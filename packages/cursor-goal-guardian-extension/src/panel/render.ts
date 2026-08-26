@@ -94,7 +94,7 @@ function renderFocus(vm: PanelViewModel): string {
          <button data-cmd="completeActiveTask">Mark done</button>
        </div>`
     : next.length > 0
-      ? `<div class="now-card empty"><span class="now-title quiet">Nothing in progress</span><button data-cmd="startNextTask">Start "${escapeHtml(next[0]!.title.slice(0, 40))}"</button></div>`
+      ? `<div class="now-card empty"><span class="now-title quiet">Nothing in progress</span><button data-cmd="startNextTask">Start next task</button></div>`
       : doneCount > 0
         ? `<div class="now-card empty"><span class="now-title quiet">All done — everything on the list is finished.</span></div>`
         : "";

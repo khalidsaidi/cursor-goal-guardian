@@ -23309,6 +23309,8 @@ function isNeutralReadPath(rel, extra) {
   const p = rel.trim().toLowerCase();
   if (!p)
     return true;
+  if (p.startsWith(".."))
+    return true;
   if (p.startsWith(".cursor/"))
     return true;
   const base2 = path5.posix.basename(p);

@@ -132,3 +132,49 @@ task switch.
   the built binaries — including an uninstructed agent cooperating purely from
   the session rule, and a live AI judge separating real drift from false
   positives.
+
+## See it work
+
+*One real session: a web-shop checkout, driven entirely from chat.*
+
+**The session panel — the whole story at a glance.** Goal as the title, an
+instrument-style status lamp, the task board, "done when" checklist, and the
+AI verdict on the session:
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s5-session.png" width="800" alt="The session panel beside the code and agent chat" />
+
+**Your request becomes the goal.** No setup ceremony — ask for something and
+Guardian tracks it, with derived "done when" criteria:
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s2-hub-tracking.png" width="800" alt="A plain request becomes a tracked goal" />
+
+**Pivots go on the record.** Change direction in chat and the agent documents
+it instead of losing the thread:
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s3-hub-pivot.png" width="800" alt="A detour is recorded on the Goal Guardian tape" />
+
+**Ask the tape, not the model's memory.** `/guardian` briefs you from the
+session record:
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s4-hub-briefing.png" width="800" alt="/guardian briefing in the agent chat" />
+
+**Native in the chat input.** Guardian's skills live in the same `/` menu as
+everything else:
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s1-slash-menu.png" width="800" alt="Guardian skills in the slash menu" />
+
+**AI review clears false alarms — with your consent.** One opt-in, then the
+judge dismisses housekeeping and confirms real drift, with reasons:
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s12-consent.png" width="800" alt="AI review consent" />
+
+**One keystroke to steer.** The status bar opens the Command Center — switch
+task (with the why on the record), update the goal, toggle notifications:
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s7-command-center.png" width="800" alt="Command Center" />
+
+**Starts quiet, connects in one click:**
+
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s6-welcome.png" width="800" alt="Welcome state" />
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s9-setup.png" width="800" alt="Setup wizard" />
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s10-palette.png" width="800" alt="Command palette" />

@@ -6347,6 +6347,8 @@ function isNeutralReadPath(rel, extra) {
   const p = rel.trim().toLowerCase();
   if (!p)
     return true;
+  if (p.startsWith(".."))
+    return true;
   if (p.startsWith(".cursor/"))
     return true;
   const base2 = import_node_path4.default.posix.basename(p);

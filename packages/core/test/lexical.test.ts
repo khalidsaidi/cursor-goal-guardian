@@ -47,9 +47,9 @@ describe("lexical drift truth table", () => {
     }
   });
 
-  it("neutral read paths are exempt (manifests, configs, README, guardian files)", () => {
+  it("neutral read paths are exempt (manifests, configs, README, guardian files, out-of-workspace)", () => {
     const s = stateWith("Build the expense form component");
-    for (const p of ["package.json", "pnpm-lock.yaml", "tsconfig.base.json", "vite.config.ts", "README.md", ".cursor/goal-guardian/contract.json"]) {
+    for (const p of ["package.json", "pnpm-lock.yaml", "tsconfig.base.json", "vite.config.ts", "README.md", ".cursor/goal-guardian/contract.json", "../../home/user/.cursor/plugins/cache/darkmode-theme"]) {
       expect(evaluateLexicalDrift(s, config, "read", p)).toBeNull();
     }
   });
