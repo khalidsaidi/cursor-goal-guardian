@@ -161,6 +161,16 @@ describe("get-started tour", () => {
     expect(stepById(vm).steer).toBe(false);
   });
 
+  it("the rule's session-start get_contract does NOT tick the steer step; only get_status does", () => {
+    const inputs = baseInputs();
+    inputs.records = [
+      { ts: at(10), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/guardian_get_contract" },
+    ];
+    expect(stepById(buildPanelViewModel(inputs)).steer).toBe(false);
+    inputs.records.push({ ts: at(5), kind: "action.observed", actionType: "mcp", actionValue: "/guardian_get_status" });
+    expect(stepById(buildPanelViewModel(inputs)).steer).toBe(true);
+  });
+
   it("consent alone completes the review step", () => {
     const vm = buildPanelViewModel(baseInputs({ semanticConsented: true }));
     expect(stepById(vm).review).toBe(true);

@@ -100,8 +100,10 @@ function buildTour(inputs: PanelInputs): PanelTour {
       id: "steer",
       label: "Type /guardian in the chat",
       hint: "a plain-language briefing of the session",
+      // Only the briefing tool counts — the rule calls guardian_get_contract at
+      // every session start, which says nothing about the USER steering.
       done: records.some(
-        (r) => r.kind === "action.observed" && r.actionType === "mcp" && /guardian_get_(status|contract)/.test(r.actionValue),
+        (r) => r.kind === "action.observed" && r.actionType === "mcp" && r.actionValue.includes("guardian_get_status"),
       ),
     },
     {
