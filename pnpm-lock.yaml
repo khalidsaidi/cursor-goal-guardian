@@ -103,6 +103,25 @@ importers:
         specifier: ^4.7.0
         version: 4.21.0
 
+  packages/mcp:
+    dependencies:
+      '@goal-guardian/core':
+        specifier: workspace:*
+        version: link:../core
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.0.0
+        version: 1.25.3(hono@4.11.7)(zod@3.25.76)
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+    devDependencies:
+      cursor-goal-guardian-testkit:
+        specifier: workspace:*
+        version: link:../testkit
+      tsx:
+        specifier: ^4.7.0
+        version: 4.21.0
+
   packages/testkit:
     dependencies:
       '@goal-guardian/core':

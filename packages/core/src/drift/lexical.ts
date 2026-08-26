@@ -138,6 +138,21 @@ export function hasScopeOverlap(taskTerms: string[], actionTerms: string[]): boo
   return false;
 }
 
+/** The active task's scope vocabulary (title + linked criterion + goal), for agent self-checks. */
+export function taskScopeKeywords(state: GuardianState): string[] {
+  const activeTaskId = state.activeTaskId?.trim() ?? "";
+  if (!activeTaskId) return [];
+  const task = state.tasks.find((t) => t.id === activeTaskId) ?? null;
+  const title = (task?.title ?? activeTaskId).trim();
+  const criterion = task?.criterionId
+    ? state.successCriteria.find((c) => c.id === task.criterionId)?.text ?? null
+    : null;
+  const parts = [title];
+  if (criterion) parts.push(criterion);
+  if (state.goal.trim()) parts.push(state.goal);
+  return scopeTerms(parts, genericTaskTerms);
+}
+
 /**
  * Lexical drift check: does this action share any vocabulary with the active
  * task (title + linked success criterion + goal)? Null means "no drift signal"
