@@ -1,3 +1,9 @@
+/**
+ * The outcome of one pipeline run. For the Cursor hook this IS the JSON
+ * response written to stdout; the extension-side observer runs the same
+ * pipeline for its side effects and drops the messages (it has no channel
+ * into the conversation). Every outcome allows — Goal Guardian never blocks.
+ */
 export interface HookResponse {
   continue: true;
   permission: "allow" | "ask";

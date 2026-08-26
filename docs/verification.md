@@ -318,3 +318,31 @@ recorder works fully on WSL/remote and every POSIX platform.
 
 Also fixed: the packaging script recompiled only when dist-bin was missing,
 which once shipped an hour-old binary; it now always compiles fresh.
+
+## Both Windows gaps closed the way professionals close them (2026-08-26)
+
+Researched how OpenAI's Cursor extension (openai.chatgpt, installed locally)
+handles the same two problems. Finding: it does not use Cursor hooks at all
+(zero references in its bundle) and writes no workspace config — it observes
+everything from inside its own extension process. Applied that pattern:
+
+**Toggle guidance is now a guided action.** Cursor's per-project MCP enable
+is unavoidable (no per-server deep link exists in its workbench), so the
+setup and upgrade flows now show one notification with an "Open MCP
+Settings" button that runs Cursor's own `workbench.action.openMCPSettings`
+command. Verified live on native Windows: click -> MCP settings screen ->
+goal-guardian source toggle -> project server green with the guardian tools.
+
+**Recording no longer depends on Cursor's broken win32 hook runtime.** The
+hook pipeline moved into core (`runPipeline`), and the extension gained an
+in-process observer (`observer.ts`) that runs the identical pipeline —
+same tape, drift scoring, episodes, and advisories. It activates only on
+native Windows desktop, watches workspace file changes and terminal
+shell-integration executions, and stands down automatically whenever real
+hook events appear on the tape (provenance field `source:"observer"` keeps
+its own records from counting as hook liveness). Verified live on native
+Windows: an agent session produced `action.observed` records for its edits
+(src/math.ts, src/math.test.ts) AND its shell command, intent declared and
+task completed over the project MCP server, panel and status bar tracking
+throughout. In-chat nudges remain hook-only (no extension channel into the
+conversation exists); findings surface in the panel and status bar there.

@@ -1,23 +1,24 @@
-import {
-  appendAudit,
-  assignEpisode,
-  evaluateLexicalDrift,
-  evaluatePolicy,
-  loadEpisodes,
-  loadVerdicts,
-  readAuditTail,
-  saveEpisodes,
-  newId,
-  nowIso,
-  readConfigSafe,
-  readStateSafe,
-  type DriftActionType,
-  type GuardianConfig,
-  type GuardianState,
-  type HookEventName,
-  type PolicyActionKind,
-} from "@goal-guardian/core";
-import { advisoryAllow, advisoryAsk, advisoryNudge, type HookResponse } from "./respond.js";
+import { appendAudit, readAuditTail } from "../audit/log.js";
+import { assignEpisode, loadEpisodes, saveEpisodes } from "../drift/episodes.js";
+import { evaluateLexicalDrift, type DriftActionType } from "../drift/lexical.js";
+import { loadVerdicts } from "../drift/rescorer.js";
+import { evaluatePolicy } from "../policy/engine.js";
+import { newId, nowIso } from "../clock.js";
+import { readConfigSafe, readStateSafe } from "../safeReaders.js";
+import type { HookEventName } from "../schema/audit.js";
+import type { GuardianConfig } from "../schema/config.js";
+import type { GuardianState } from "../schema/state.js";
+import type { PolicyActionKind } from "../policy/engine.js";
+import { advisoryAllow, advisoryAsk, advisoryNudge, type HookResponse } from "./outcome.js";
+
+/** Where a pipeline run originated. Absent = Cursor's hook runtime; "observer"
+ * = the extension's in-process recorder (native Windows, where Cursor's hook
+ * runtime is sandboxed away from the workspace). */
+export interface PipelineMeta {
+  conversationId?: string;
+  generationId?: string;
+  source?: "observer";
+}
 
 function hasActiveDoingTask(state: GuardianState): boolean {
   if (!state.activeTaskId) return false;
@@ -29,18 +30,20 @@ function truncate(value: string, max = 60): string {
 }
 
 /**
- * One pipeline for every event. Everything is recorded; at most one calm
- * sentence is ever injected, chosen by priority: policy alert, then a new
- * drift episode, then the no-active-task reminder. Every path allows.
+ * One pipeline for every event, whoever runs it. Everything is recorded; at
+ * most one calm sentence is ever injected, chosen by priority: policy alert,
+ * then a new drift episode, then the no-active-task reminder. Every path
+ * allows.
  */
 export async function runPipeline(
   root: string,
   event: HookEventName,
   actionType: DriftActionType,
   actionValue: string,
-  ids: { conversationId?: string; generationId?: string } = {},
+  meta: PipelineMeta = {},
 ): Promise<HookResponse> {
-  await appendAudit(root, { ts: nowIso(), kind: "hook.event", event, ...ids });
+  const { source, ...ids } = meta;
+  await appendAudit(root, { ts: nowIso(), kind: "hook.event", event, ...ids, ...(source ? { source } : {}) });
 
   const config = await readConfigSafe(root);
   const state = await readStateSafe(root);
@@ -53,6 +56,7 @@ export async function runPipeline(
       kind: "action.observed",
       actionType,
       actionValue: actionValue.slice(0, 300),
+      ...(source ? { source } : {}),
     });
   }
 

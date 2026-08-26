@@ -21,6 +21,9 @@ export const hookEventRecordSchema = z
     event: hookEventNameSchema,
     conversationId: z.string().optional(),
     generationId: z.string().optional(),
+    // Absent = Cursor's hook runtime; "observer" = the extension's in-process
+    // recorder. The observer uses this to tell live hooks from its own echo.
+    source: z.literal("observer").optional(),
   })
   .strict();
 
@@ -82,6 +85,7 @@ export const actionObservedRecordSchema = z
     kind: z.literal("action.observed"),
     actionType: z.enum(["shell", "mcp", "edit"]),
     actionValue: z.string(),
+    source: z.literal("observer").optional(),
   })
   .strict();
 

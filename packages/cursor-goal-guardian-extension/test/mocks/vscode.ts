@@ -6,10 +6,12 @@ import path from "node:path";
 
 export const recorded = {
   commands: new Map<string, (...args: unknown[]) => unknown>(),
+  executed: [] as string[],
   windowMessages: [] as Array<{ kind: string; message: string }>,
   watchers: [] as string[],
   reset(): void {
     this.commands.clear();
+    this.executed.length = 0;
     this.windowMessages.length = 0;
     this.watchers.length = 0;
     workspace.workspaceFolders = undefined;
@@ -108,6 +110,7 @@ export const commands = {
     return { dispose: () => void 0 };
   },
   executeCommand: (id: string, ...args: unknown[]): Promise<unknown> => {
+    recorded.executed.push(id);
     const handler = recorded.commands.get(id);
     return Promise.resolve(handler ? handler(...args) : undefined);
   },

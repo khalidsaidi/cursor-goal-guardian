@@ -5,8 +5,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { advisoryAllow, type HookResponse } from "./respond.js";
-import { runPipeline } from "./pipeline.js";
+import { advisoryAllow, runPipeline, type HookResponse } from "@goal-guardian/core";
 
 async function readAllStdin(): Promise<string> {
   const chunks: Buffer[] = [];

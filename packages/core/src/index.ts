@@ -20,6 +20,8 @@ export * from "./drift/episodes.js";
 export * from "./drift/judge.js";
 export * from "./drift/rescorer.js";
 export * from "./drift/cursorAgentJudge.js";
+export * from "./pipeline/outcome.js";
+export * from "./pipeline/run.js";
 export * from "./telemetry/pairing.js";
 export * from "./telemetry/summary.js";
 export * from "./viewmodel/panel.js";

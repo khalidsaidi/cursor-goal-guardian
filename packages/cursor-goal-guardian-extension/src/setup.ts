@@ -222,15 +222,7 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
 
   await connectWorkspace(root, context);
 
-  // Cursor gates project-configured MCP servers behind a one-time, per-project
-  // enable (verified live on native Windows: every new project's source starts
-  // "Disabled"). Remote hosts have historically started it without the toggle,
-  // but the guidance is harmless there and vital on desktop.
-  if (vscode.env.remoteName === undefined) {
-    void vscode.window.showInformationMessage(
-      "One more step from Cursor itself: it lists this project's goal-guardian server as Disabled until you enable it once — Settings → MCP → goal-guardian → turn on this project's source.",
-    );
-  }
+  offerMcpEnableGuidance();
 
   const gitignore = await vscode.window.showQuickPick(["Yes", "No"], {
     title: "Add .cursor/goal-guardian/telemetry/ to .gitignore?",
@@ -244,6 +236,27 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
     }
   }
   return true;
+}
+
+/**
+ * Cursor gates project-configured MCP servers behind a one-time, per-project
+ * enable (verified live on native Windows: every new project's source starts
+ * "Disabled"). Guide the user straight to the switch: one button that opens
+ * Cursor's own MCP settings screen (workbench.action.openMCPSettings — no
+ * per-server deep link exists). Remote hosts have historically started the
+ * server without the toggle, so the guidance is desktop-only.
+ */
+export function offerMcpEnableGuidance(): void {
+  if (vscode.env.remoteName !== undefined) return;
+  const open = "Open MCP Settings";
+  void vscode.window
+    .showInformationMessage(
+      "One more step from Cursor itself: it lists this project's goal-guardian server as Disabled until you switch it on once. Find goal-guardian in the list and enable this project's source.",
+      open,
+    )
+    .then((choice) => {
+      if (choice === open) void vscode.commands.executeCommand("workbench.action.openMCPSettings");
+    });
 }
 
 /** Remove everything setup created: guardian dir, rule, hook entries, MCP server entry. */

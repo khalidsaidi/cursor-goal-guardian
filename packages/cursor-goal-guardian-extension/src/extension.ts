@@ -13,7 +13,8 @@ import { PanelController } from "./panel/panelController.js";
 import { RescoreService } from "./rescoreService.js";
 import { StatusBar } from "./statusBar.js";
 import { registerAutoBehaviors } from "./autoBehaviors.js";
-import { connectWorkspace, doctorIntegration, runSetup, runUninstall } from "./setup.js";
+import { connectWorkspace, doctorIntegration, offerMcpEnableGuidance, runSetup, runUninstall } from "./setup.js";
+import { Observer } from "./observer.js";
 import { openCommandCenter } from "./commandCenter.js";
 
 /**
@@ -55,13 +56,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const statusBar = new StatusBar(context);
   controller.onDidUpdate((vm) => statusBar.update(vm));
 
+  const observer = new Observer(root);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(PanelController.viewType, controller),
+    observer,
   );
 
   const startServices = (): void => {
     controller.startWatching();
     rescore.start();
+    observer.start();
     void controller.refresh();
   };
 
@@ -185,6 +189,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         void vscode.window.showInformationMessage(
           "Goal Guardian upgraded this workspace (backups saved as *.v1.bak) and connected session tracking — just ask your agent for something.",
         );
+        // Upgraders hit the same one-time per-project MCP enable as fresh setups.
+        offerMcpEnableGuidance();
       }
       startServices();
     } else if (format === "v2") {
