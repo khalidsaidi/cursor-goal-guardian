@@ -10,7 +10,8 @@ export class StatusBar {
 
   constructor(context: vscode.ExtensionContext) {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    this.item.command = "goalGuardian.showPanel";
+    // Click -> the command center (one-keystroke actions), not a sidebar jump.
+    this.item.command = "goalGuardian.commandCenter";
     context.subscriptions.push(this.item);
   }
 

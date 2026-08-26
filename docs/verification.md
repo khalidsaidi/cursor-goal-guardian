@@ -98,3 +98,21 @@ the real judge; consented state persisted per workspace), and uninstall
 (native dialog → complete removal). Webview affordances all clicked live:
 welcome setup button, task-start rows, complete/start buttons, consent card,
 and the per-item "Review with AI" button (third drift judged 0.95 on click).
+
+## Chat-first UX (v1.0 interaction model, verified live)
+
+The user's home in Cursor is the agent input — the guardian now meets them
+there instead of demanding sidebar visits:
+
+- **Conversation steering**: drift nudges carry a steering agentMessage — the
+  agent pauses and offers the choice in chat (continue + record intent, or
+  realign). Verified live: an uninstructed agent given an off-goal request
+  loaded the contract, named the conflict, and presented exactly that choice —
+  in a workspace with NO hooks and NO MCP wired, the rule alone sufficed.
+- **Dedicated full-height panel**: own Activity Bar container ("Session"
+  pane, ~1280px viewport in testing) — no more Explorer squeeze.
+- **Command Center** (status-bar click / palette): one QuickPick with live
+  context — complete/switch task (decision requirement rendered as a one-line
+  "why?" input, verified writing ADD_DECISION + START_TASK), update goal,
+  review drift with AI, notifications toggle (verified writing config.json),
+  open panel/files.

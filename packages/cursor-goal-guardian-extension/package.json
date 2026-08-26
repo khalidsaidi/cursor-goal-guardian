@@ -22,17 +22,27 @@
   "activationEvents": ["onStartupFinished"],
   "main": "dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "goalGuardian",
+          "title": "Goal Guardian",
+          "icon": "media/guardian.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "goalGuardian": [
         {
           "type": "webview",
           "id": "goalGuardian.goalPanel",
-          "name": "Goal Guardian"
+          "name": "Session"
         }
       ]
     },
     "commands": [
       { "command": "goalGuardian.setup", "title": "Goal Guardian: Set Up Workspace" },
+      { "command": "goalGuardian.commandCenter", "title": "Goal Guardian: Command Center" },
       { "command": "goalGuardian.showPanel", "title": "Goal Guardian: Show Panel" },
       { "command": "goalGuardian.refresh", "title": "Goal Guardian: Refresh", "icon": "$(refresh)" },
       { "command": "goalGuardian.openContract", "title": "Goal Guardian: Open Contract" },

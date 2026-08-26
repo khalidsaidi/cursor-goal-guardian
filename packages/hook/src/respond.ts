@@ -11,12 +11,15 @@ export function advisoryAllow(): HookResponse {
 }
 
 /**
- * The rare case: one calm sentence into the conversation. Every response is
- * still an allow — Goal Guardian never blocks.
+ * The rare case: steering delivered where the user lives — the conversation.
+ * userMessage stays one calm sentence for the human; agentMessage instructs
+ * the agent to surface the choice in chat and record the outcome. Every
+ * response is still an allow — Goal Guardian never blocks.
  */
-export function advisoryNudge(oneLiner: string): HookResponse {
-  const message = `Goal Guardian: ${oneLiner} (see panel)`;
-  return { continue: true, permission: "allow", userMessage: message, agentMessage: message };
+export function advisoryNudge(oneLiner: string, agentSteer?: string): HookResponse {
+  const userMessage = `Goal Guardian: ${oneLiner}`;
+  const agentMessage = agentSteer ? `Goal Guardian: ${agentSteer}` : userMessage;
+  return { continue: true, permission: "allow", userMessage, agentMessage };
 }
 
 /**

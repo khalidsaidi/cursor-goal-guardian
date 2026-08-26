@@ -12,6 +12,7 @@ const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 
 const EXPECTED_COMMANDS = [
   "goalGuardian.setup",
+  "goalGuardian.commandCenter",
   "goalGuardian.showPanel",
   "goalGuardian.refresh",
   "goalGuardian.openContract",

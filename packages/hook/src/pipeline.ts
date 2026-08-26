@@ -97,11 +97,17 @@ export async function runPipeline(
   if (config.notify === "quiet") return advisoryAllow();
 
   if (advisory && advisory.severity === "alert") {
-    return advisoryNudge(`heads up — "${truncate(actionValue)}" matches a high-risk pattern${advisory.reason ? `: ${advisory.reason.toLowerCase()}` : ""}`);
+    return advisoryNudge(
+      `heads up — "${truncate(actionValue)}" matches a high-risk pattern${advisory.reason ? `: ${advisory.reason.toLowerCase()}` : ""}`,
+      `"${truncate(actionValue)}" matches a high-risk pattern${advisory.reason ? ` (${advisory.reason.toLowerCase()})` : ""}. Flag it to the user in your reply and confirm before doing anything similar again.`,
+    );
   }
 
   if (drift && driftNudge) {
-    return advisoryNudge(`this looks outside "${truncate(drift.activeTaskTitle, 40)}" — worth a quick check`);
+    return advisoryNudge(
+      `this looks outside "${truncate(drift.activeTaskTitle, 40)}" — worth a quick check`,
+      `this work looks outside the active task "${truncate(drift.activeTaskTitle, 60)}". Pause and give the user the choice in chat: continue this direction (then call guardian_declare_intent with a one-line summary so it's on the record) or return to the task. Don't proceed silently.`,
+    );
   }
 
   // Opt-in escalation: the nudge for this episode is already spent AND the
@@ -143,5 +149,8 @@ async function reminderNudge(root: string, config: GuardianConfig): Promise<Hook
   const assignment = assignEpisode(episodes, { taskId: "", terms: ["no-active-task"] }, config);
   await saveEpisodes(root, assignment.store);
   if (!assignment.shouldNudge) return null;
-  return advisoryNudge("no task is active — start one so this session's work has a home");
+  return advisoryNudge(
+    "no task is active — start one so this session's work has a home",
+    "no task is active. Ask the user in chat what this session's task is, then record it with guardian_record_progress (action start_task).",
+  );
 }

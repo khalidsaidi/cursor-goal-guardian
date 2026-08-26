@@ -131,13 +131,18 @@ describe("quietness contract", () => {
     expect(observed[1]?.actionValue).toBe("some-server/do_thing");
   });
 
-  it("nudge format: one sentence, prefixed, pointing at the panel", async () => {
+  it("nudge format: calm one-liner for the human, chat-steering instruction for the agent", async () => {
     const w = await ws();
     const { response } = runHook(w.root, shellEvent("docker build -t darkmode-theme ."));
-    const msg = String(response.userMessage);
-    expect(msg).toMatch(/^Goal Guardian: /);
-    expect(msg).toMatch(/\(see panel\)$/);
-    expect(msg.length).toBeLessThan(160);
-    expect(response.agentMessage).toBe(msg);
+    const userMsg = String(response.userMessage);
+    expect(userMsg).toMatch(/^Goal Guardian: /);
+    expect(userMsg.length).toBeLessThan(160);
+    const agentMsg = String(response.agentMessage);
+    expect(agentMsg).toMatch(/^Goal Guardian: /);
+    // The steering happens in the conversation: the agent is told to offer
+    // the user the choice and put the outcome on the record.
+    expect(agentMsg).toMatch(/give the user the choice in chat/);
+    expect(agentMsg).toMatch(/guardian_declare_intent/);
+    expect(agentMsg).toMatch(/Don't proceed silently/);
   });
 });

@@ -14,6 +14,7 @@ import { RescoreService } from "./rescoreService.js";
 import { StatusBar } from "./statusBar.js";
 import { registerAutoBehaviors } from "./autoBehaviors.js";
 import { doctorIntegration, runSetup, runUninstall } from "./setup.js";
+import { openCommandCenter } from "./commandCenter.js";
 
 /**
  * Activation contract: in a workspace without guardian files this registers
@@ -129,6 +130,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     },
     "goalGuardian.rescoreDrift": async () => rescore.rescoreNow(),
+    "goalGuardian.commandCenter": async () => {
+      const r = requireRoot();
+      if (!r) return;
+      try {
+        await openCommandCenter({ root: r, rescoreNow: () => rescore.rescoreNow(), refresh: () => controller.refresh() });
+      } catch (err) {
+        void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
     "goalGuardian.uninstall": async () => {
       const r = requireRoot();
       if (!r) return;

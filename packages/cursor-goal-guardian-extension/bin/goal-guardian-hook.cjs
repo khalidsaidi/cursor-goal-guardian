@@ -245,9 +245,10 @@ var import_node_path5 = __toESM(require("node:path"), 1);
 function advisoryAllow() {
   return { continue: true, permission: "allow" };
 }
-function advisoryNudge(oneLiner) {
-  const message = `Goal Guardian: ${oneLiner} (see panel)`;
-  return { continue: true, permission: "allow", userMessage: message, agentMessage: message };
+function advisoryNudge(oneLiner, agentSteer) {
+  const userMessage = `Goal Guardian: ${oneLiner}`;
+  const agentMessage = agentSteer ? `Goal Guardian: ${agentSteer}` : userMessage;
+  return { continue: true, permission: "allow", userMessage, agentMessage };
 }
 function advisoryAsk(oneLiner) {
   const message = `Goal Guardian: ${oneLiner}`;
@@ -6567,10 +6568,16 @@ async function runPipeline(root, event, actionType, actionValue, ids2 = {}) {
   }
   if (config.notify === "quiet") return advisoryAllow();
   if (advisory && advisory.severity === "alert") {
-    return advisoryNudge(`heads up \u2014 "${truncate(actionValue)}" matches a high-risk pattern${advisory.reason ? `: ${advisory.reason.toLowerCase()}` : ""}`);
+    return advisoryNudge(
+      `heads up \u2014 "${truncate(actionValue)}" matches a high-risk pattern${advisory.reason ? `: ${advisory.reason.toLowerCase()}` : ""}`,
+      `"${truncate(actionValue)}" matches a high-risk pattern${advisory.reason ? ` (${advisory.reason.toLowerCase()})` : ""}. Flag it to the user in your reply and confirm before doing anything similar again.`
+    );
   }
   if (drift && driftNudge) {
-    return advisoryNudge(`this looks outside "${truncate(drift.activeTaskTitle, 40)}" \u2014 worth a quick check`);
+    return advisoryNudge(
+      `this looks outside "${truncate(drift.activeTaskTitle, 40)}" \u2014 worth a quick check`,
+      `this work looks outside the active task "${truncate(drift.activeTaskTitle, 60)}". Pause and give the user the choice in chat: continue this direction (then call guardian_declare_intent with a one-line summary so it's on the record) or return to the task. Don't proceed silently.`
+    );
   }
   if (drift && !driftNudge && driftEpisodeId && config.advisories.escalateConfirmedDrift === "ask") {
     if (await episodeHasConfirmedDrift(root, driftEpisodeId)) {
@@ -6600,7 +6607,10 @@ async function reminderNudge(root, config) {
   const assignment = assignEpisode(episodes, { taskId: "", terms: ["no-active-task"] }, config);
   await saveEpisodes(root, assignment.store);
   if (!assignment.shouldNudge) return null;
-  return advisoryNudge("no task is active \u2014 start one so this session's work has a home");
+  return advisoryNudge(
+    "no task is active \u2014 start one so this session's work has a home",
+    "no task is active. Ask the user in chat what this session's task is, then record it with guardian_record_progress (action start_task)."
+  );
 }
 
 // packages/hook/src/cli.ts
