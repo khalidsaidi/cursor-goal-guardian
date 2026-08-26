@@ -3222,8 +3222,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path6) {
-      let input = path6;
+    function removeDotSegments(path7) {
+      let input = path7;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3422,8 +3422,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path6, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path6 && path6 !== "/" ? path6 : void 0;
+        const [path7, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path7 && path7 !== "/" ? path7 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6776,12 +6776,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs4, exportName) {
+    function addFormats(ajv, list, fs5, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs4[f]);
+        ajv.addFormat(f, fs5[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -7475,8 +7475,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path6, errorMaps, issueData } = params;
-  const fullPath = [...path6, ...issueData.path || []];
+  const { data, path: path7, errorMaps, issueData } = params;
+  const fullPath = [...path7, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -7592,11 +7592,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path6, key) {
+  constructor(parent, value, path7, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path6;
+    this._path = path7;
     this._key = key;
   }
   get path() {
@@ -11234,10 +11234,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path6) {
-  if (!path6)
+function getElementAtPath(obj, path7) {
+  if (!path7)
     return obj;
-  return path6.reduce((acc, key) => acc?.[key], obj);
+  return path7.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -11557,11 +11557,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path6, issues) {
+function prefixIssues(path7, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path6);
+    iss.path.unshift(path7);
     return iss;
   });
 }
@@ -21034,6 +21034,11 @@ var StdioServerTransport = class {
   }
 };
 
+// packages/mcp/src/workspace.ts
+import fs4 from "node:fs";
+import path6 from "node:path";
+import { fileURLToPath } from "node:url";
+
 // packages/core/dist/paths.js
 import path from "node:path";
 function getGuardianPaths(workspaceRoot2) {
@@ -23538,8 +23543,38 @@ function summarizeSession(state, records, actions, now) {
 }
 
 // packages/mcp/src/workspace.ts
-function workspaceRoot() {
-  return process.env.GOAL_GUARDIAN_WORKSPACE_ROOT || process.env.CURSOR_WORKSPACE_ROOT || process.cwd();
+var serverRef = null;
+var cachedRoot = null;
+function setServerForRoots(server2) {
+  serverRef = server2;
+}
+function looksLikeWorkspace(p) {
+  try {
+    return fs4.existsSync(path6.join(p, ".cursor"));
+  } catch {
+    return false;
+  }
+}
+async function workspaceRoot() {
+  if (process.env.GOAL_GUARDIAN_WORKSPACE_ROOT) return process.env.GOAL_GUARDIAN_WORKSPACE_ROOT;
+  if (cachedRoot) return cachedRoot;
+  if (serverRef) {
+    try {
+      const result = await serverRef.server.listRoots(void 0, { timeout: 3e3 });
+      const first = result.roots?.[0]?.uri;
+      if (first?.startsWith("file://")) {
+        cachedRoot = fileURLToPath(first);
+        return cachedRoot;
+      }
+    } catch {
+    }
+  }
+  const envRoot = process.env.CURSOR_WORKSPACE_ROOT || process.env.WORKSPACE_FOLDER_PATHS?.split(",")[0];
+  if (envRoot && looksLikeWorkspace(envRoot)) {
+    cachedRoot = envRoot;
+    return envRoot;
+  }
+  return process.cwd();
 }
 
 // packages/mcp/src/tools/getContract.ts
@@ -23551,7 +23586,7 @@ function registerGetContract(server2) {
       inputSchema: {}
     },
     async () => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       const contract = await readContractSafe(root);
       const state = await readStateSafe(root);
       const activeTask = state.activeTaskId ? state.tasks.find((t) => t.id === state.activeTaskId) ?? null : null;
@@ -23580,7 +23615,7 @@ function registerDeclareIntent(server2) {
       }
     },
     async ({ summary, taskId, plannedActions }) => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       const intentId = newId("int");
       await appendAudit(root, {
         ts: nowIso(),
@@ -23614,7 +23649,7 @@ function registerCheckAction(server2) {
       }
     },
     async ({ action_type, action_value }) => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       const config2 = await readConfigSafe(root);
       const state = await readStateSafe(root);
       const advisory = evaluatePolicy(action_type, action_value, config2);
@@ -23644,7 +23679,7 @@ function registerGetStatus(server2) {
       inputSchema: {}
     },
     async () => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       const state = await readStateSafe(root);
       const records = await readAuditTail(root);
       const actions = await loadActions(root).catch(() => []);
@@ -23670,7 +23705,7 @@ function registerRecordProgress(server2) {
       }
     },
     async ({ action, taskId, decision }) => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       try {
         if (action === "start_task") {
           let decisionId;
@@ -23718,7 +23753,7 @@ function registerUpdateGoal(server2) {
       }
     },
     async ({ goal, add_criteria, constraints }) => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       try {
         const current = await readStateSafe(root);
         const payload = {};
@@ -23772,6 +23807,7 @@ function registerUpdateGoal(server2) {
 
 // packages/mcp/src/index.ts
 var server = new McpServer({ name: "goal-guardian", version: "1.0.0" });
+setServerForRoots(server);
 registerGetContract(server);
 registerDeclareIntent(server);
 registerCheckAction(server);

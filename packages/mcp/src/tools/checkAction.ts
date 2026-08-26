@@ -18,7 +18,7 @@ export function registerCheckAction(server: McpServer): void {
       },
     },
     async ({ action_type, action_value }) => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       const config = await readConfigSafe(root);
       const state = await readStateSafe(root);
       const advisory = evaluatePolicy(action_type, action_value, config);

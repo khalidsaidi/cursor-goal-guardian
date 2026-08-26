@@ -88,9 +88,14 @@ describe("activation surface", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-setup-"));
     cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
 
+    process.env.GOAL_GUARDIAN_TEST_HOME = root; // never touch the real ~/.cursor
     responses.inputBox = ["Ship it", "criterion one; criterion two", "no new deps"];
     responses.quickPick = ["No"];
     await runSetup(root, makeContext(root) as never);
+
+    // Hub support: the user-level MCP registration landed in the (test) home.
+    const userMcp = JSON.parse(await fs.readFile(path.join(root, ".cursor", "mcp.json"), "utf8"));
+    expect(userMcp.mcpServers["goal-guardian"]).toBeDefined();
 
     const rulePath = path.join(root, GUARDIAN_RULE_RELATIVE_PATH);
     const rule = await fs.readFile(rulePath, "utf8");

@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import {
   criteriaFromTexts,
@@ -40,6 +41,30 @@ async function readJsonOr<T>(filePath: string, fallback: T): Promise<T> {
     return (await readJsonFile(filePath)) as T;
   } catch {
     return fallback;
+  }
+}
+
+/**
+ * Cursor's agent hub loads MCP servers from the USER-level ~/.cursor/mcp.json,
+ * not the workspace one — and the server resolves its workspace via MCP roots.
+ * Registering there once makes the guardian's tools available in every hub
+ * chat. Merge-preserving; uninstall removes only our entry.
+ */
+export async function wireUserLevelMcp(context: vscode.ExtensionContext): Promise<void> {
+  const userMcpPath = path.join(process.env.GOAL_GUARDIAN_TEST_HOME ?? os.homedir(), ".cursor", "mcp.json");
+  const config = await readJsonOr<{ mcpServers?: Record<string, unknown> }>(userMcpPath, {});
+  config.mcpServers = config.mcpServers ?? {};
+  config.mcpServers["goal-guardian"] = { command: "node", args: [bundledBinPaths(context).mcp] };
+  await writeJsonAtomic(userMcpPath, config);
+}
+
+export async function unwireUserLevelMcp(): Promise<void> {
+  const userMcpPath = path.join(process.env.GOAL_GUARDIAN_TEST_HOME ?? os.homedir(), ".cursor", "mcp.json");
+  const config = await readJsonOr<{ mcpServers?: Record<string, { args?: string[] }> } | null>(userMcpPath, null);
+  const entry = config?.mcpServers?.["goal-guardian"];
+  if (config?.mcpServers && entry && entry.args?.some((a) => /goal-guardian-mcp/.test(a))) {
+    delete config.mcpServers["goal-guardian"];
+    await writeJsonAtomic(userMcpPath, config);
   }
 }
 
@@ -168,6 +193,7 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
   await writeJsonAtomic(p.migrationMarker, { from: 2, to: 2, ts: new Date().toISOString(), migratedBy: "setup" });
 
   await wireIntegration(root, context);
+  await wireUserLevelMcp(context);
   await writeGuardianRule(root);
 
   const gitignore = await vscode.window.showQuickPick(["Yes", "No"], {
@@ -188,6 +214,7 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
 export async function runUninstall(root: string): Promise<void> {
   await fs.rm(getGuardianPaths(root).dir, { recursive: true, force: true });
   await fs.rm(path.join(root, GUARDIAN_RULE_RELATIVE_PATH), { force: true });
+  await unwireUserLevelMcp();
   for (const skill of GUARDIAN_SKILLS) {
     await fs.rm(path.join(root, skill.relativeDir), { recursive: true, force: true });
   }

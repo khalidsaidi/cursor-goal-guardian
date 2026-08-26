@@ -16,7 +16,7 @@ export function registerDeclareIntent(server: McpServer): void {
       },
     },
     async ({ summary, taskId, plannedActions }) => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       const intentId = newId("int");
       await appendAudit(root, {
         ts: nowIso(),

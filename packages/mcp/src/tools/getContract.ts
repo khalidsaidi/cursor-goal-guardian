@@ -10,7 +10,7 @@ export function registerGetContract(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       const contract = await readContractSafe(root);
       const state = await readStateSafe(root);
       const activeTask = state.activeTaskId

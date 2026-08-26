@@ -19,7 +19,7 @@ export function registerUpdateGoal(server: McpServer): void {
       },
     },
     async ({ goal, add_criteria, constraints }) => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       try {
         const current = await readStateSafe(root);
         const payload: Record<string, unknown> = {};

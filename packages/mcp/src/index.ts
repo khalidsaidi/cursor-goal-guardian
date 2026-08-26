@@ -13,7 +13,10 @@ import { registerGetStatus } from "./tools/getStatus.js";
 import { registerRecordProgress } from "./tools/recordProgress.js";
 import { registerUpdateGoal } from "./tools/updateGoal.js";
 
+import { setServerForRoots } from "./workspace.js";
+
 const server = new McpServer({ name: "goal-guardian", version: "1.0.0" });
+setServerForRoots(server);
 
 registerGetContract(server);
 registerDeclareIntent(server);

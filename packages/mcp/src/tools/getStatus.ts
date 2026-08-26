@@ -11,7 +11,7 @@ export function registerGetStatus(server: McpServer): void {
       inputSchema: {},
     },
     async () => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       const state = await readStateSafe(root);
       const records = await readAuditTail(root);
       const actions = await loadActions(root).catch(() => []);

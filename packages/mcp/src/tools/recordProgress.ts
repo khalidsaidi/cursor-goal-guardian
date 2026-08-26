@@ -22,7 +22,7 @@ export function registerRecordProgress(server: McpServer): void {
       },
     },
     async ({ action, taskId, decision }) => {
-      const root = workspaceRoot();
+      const root = await workspaceRoot();
       try {
         if (action === "start_task") {
           let decisionId: string | undefined;

@@ -137,3 +137,30 @@ there instead of demanding sidebar visits:
   detours off-axis, returns on the line, chronological. Trust hierarchy
   fixed: an unreviewed lexical signal no longer outvotes a confident
   whole-tape AI verdict.
+
+## Agent-hub verification (headed, driven end-to-end)
+
+The full product arc executed in Cursor's agent-first hub UI, with screenshot
+evidence at every step:
+- /guardian and /guardian-goal appear natively in the chat input's "/" menu
+  (Cursor renders them as Repository skills with their descriptions).
+- A plain request in an empty workspace: the agent read the contract first
+  (rule anchor), and after the one-time "Connect with user-goal-guardian"
+  consent, recorded the goal + 3 derived criteria IN THE WORKSPACE via MCP
+  roots resolution, then start/complete progress — home directory clean.
+- The transcript itself surfaced two integration bugs this build fixes:
+  hub sessions load only the USER-level ~/.cursor/mcp.json (workspace
+  mcp.json is ignored), and the hub-spawned server gets no workspace env
+  and cwd=$HOME — so the server now resolves its root via the MCP roots
+  capability (regression-guarded by a contract test with a hostile cwd),
+  and setup registers the user-level entry (uninstall removes it; the
+  test home is env-isolated after a pollution incident).
+- Hooks fire in hub sessions from workspace hooks.json (17 events + drift
+  records observed live).
+- A deliberate mid-session detour request was treated per rule step 5:
+  "This is a new direction… I'll record it on the Goal Guardian tape" →
+  "Tracking: dark-theme CSS palette — done when…". User pivots get
+  recorded, not challenged.
+- /guardian briefing in-chat: "Everything on the board is done (5 of 5)…
+  no drift; session health is stable" with next moves — plain prose from
+  guardian_get_status, exactly as the skill specifies.
