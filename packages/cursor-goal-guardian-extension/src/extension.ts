@@ -13,7 +13,7 @@ import { PanelController } from "./panel/panelController.js";
 import { RescoreService } from "./rescoreService.js";
 import { StatusBar } from "./statusBar.js";
 import { registerAutoBehaviors } from "./autoBehaviors.js";
-import { connectWorkspace, doctorIntegration, offerMcpEnableGuidance, runSetup, runUninstall } from "./setup.js";
+import { applySetup, connectWorkspace, doctorIntegration, offerMcpEnableGuidance, runUninstall } from "./setup.js";
 import { Observer } from "./observer.js";
 import { openCommandCenter } from "./commandCenter.js";
 
@@ -52,6 +52,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     },
     onRescoreOne: async () => rescore.rescoreNow(),
+    onConnectSubmit: async (form) => {
+      if (!root) return;
+      try {
+        await applySetup(root, context, form);
+        startServices();
+      } catch (err) {
+        void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    },
   });
   const statusBar = new StatusBar(context);
   controller.onDidUpdate((vm) => statusBar.update(vm));
@@ -86,9 +95,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const commands: Record<string, () => Promise<void>> = {
     "goalGuardian.setup": async () => {
-      const r = requireRoot();
-      if (!r) return;
-      if (await runSetup(r, context)) startServices();
+      if (!requireRoot()) return;
+      // The connect form lives in the panel — one setup experience everywhere.
+      await vscode.commands.executeCommand("goalGuardian.goalPanel.focus");
     },
     "goalGuardian.showPanel": async () => {
       await vscode.commands.executeCommand("goalGuardian.goalPanel.focus");
@@ -196,8 +205,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     } else if (format === "v2") {
       await doctorIntegration(root, context);
       startServices();
+    } else if (!context.globalState.get<boolean>("goalGuardian.welcomed", false)) {
+      // format "none": stay inert on disk, but introduce ourselves exactly
+      // once per install — reveal the panel so the welcome card (and its
+      // Connect button) is simply on screen. Setup never requires the
+      // command palette. Never repeats: the flag is global, not per-workspace.
+      // Remote windows restore their layout late and can stomp a one-shot
+      // activation-time reveal (seen live on WSL), so verify the view actually
+      // opened and retry until it does.
+      await context.globalState.update("goalGuardian.welcomed", true);
+      void (async () => {
+        for (const delay of [0, 3_000, 8_000]) {
+          if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+          try {
+            await vscode.commands.executeCommand("goalGuardian.goalPanel.focus");
+          } catch {
+            continue; // view not registered yet — try again
+          }
+          await new Promise((r) => setTimeout(r, 500));
+          if (controller.isResolved()) return;
+        }
+      })();
     }
-    // format "none": stay inert until invited via setup.
   }
 }
 

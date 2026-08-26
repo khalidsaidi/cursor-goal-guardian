@@ -56,9 +56,29 @@ function renderWelcome(vm: PanelViewModel): string {
       <div class="lamp-row"><span class="lamp idle"></span><span class="status-word">standing by</span></div>
       <p>Guardian rides along while you work with your agent: it remembers the goal,
       notices when the session wanders, and shows you the way back.</p>
-      <p class="quiet">Nothing is written until you connect it. After that, just ask
-      your agent for something — Guardian starts tracking automatically.</p>
-      <button data-cmd="setup">Connect Guardian to this workspace</button>
+
+      <div class="su">
+        <label class="su-label" for="su-goal">What are you working toward?</label>
+        <input id="su-goal" class="su-input" type="text" spellcheck="false"
+          placeholder="One sentence — e.g. Ship the CSV exporter" />
+
+        <label class="su-label" for="su-crit">Done when&hellip;</label>
+        <div id="su-crit-list" class="su-list"></div>
+        <input id="su-crit" class="su-input" type="text" spellcheck="false" data-su-list="su-crit-list"
+          placeholder="Add a finish line, press Enter — each becomes a task" />
+
+        <label class="su-label" for="su-con">Boundaries</label>
+        <div id="su-con-list" class="su-list"></div>
+        <input id="su-con" class="su-input" type="text" spellcheck="false" data-su-list="su-con-list"
+          placeholder="Optional — e.g. No new dependencies" />
+
+        <label class="su-check"><input id="su-git" type="checkbox" checked />
+          Keep Guardian&rsquo;s machine-written files out of git</label>
+
+        <button data-setup-submit>Connect Guardian</button>
+        <p class="quiet">Everything here is optional and editable later &mdash; connect empty
+        and your first request to the agent becomes the goal.</p>
+      </div>
     </div>`;
 }
 

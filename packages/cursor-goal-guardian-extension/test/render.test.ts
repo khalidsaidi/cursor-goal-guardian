@@ -39,11 +39,16 @@ const drift = (id: string, minAgo: number): AuditRecord => ({
 });
 
 describe("panel sections", () => {
-  it("not connected: only the welcome invitation renders", () => {
+  it("not connected: only the welcome card with the in-place connect form renders", () => {
     const sections = renderSections(buildPanelViewModel(inputs({ setUp: false })));
-    expect(sections.welcome).toContain("Connect Guardian to this workspace");
-    expect(sections.welcome).toContain('data-cmd="setup"');
     expect(sections.welcome).toContain("standing by");
+    // The whole setup is a real form in the panel: goal input, list builders
+    // (no delimiters anywhere), gitignore choice, one submit.
+    expect(sections.welcome).toContain('id="su-goal"');
+    expect(sections.welcome).toContain('data-su-list="su-crit-list"');
+    expect(sections.welcome).toContain('data-su-list="su-con-list"');
+    expect(sections.welcome).toContain('id="su-git"');
+    expect(sections.welcome).toContain("data-setup-submit");
     for (const id of SECTION_IDS.filter((s) => s !== "welcome")) {
       expect(sections[id]).toBe("");
     }

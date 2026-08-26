@@ -34,9 +34,29 @@
       <div class="lamp-row"><span class="lamp idle"></span><span class="status-word">standing by</span></div>
       <p>Guardian rides along while you work with your agent: it remembers the goal,
       notices when the session wanders, and shows you the way back.</p>
-      <p class="quiet">Nothing is written until you connect it. After that, just ask
-      your agent for something \u2014 Guardian starts tracking automatically.</p>
-      <button data-cmd="setup">Connect Guardian to this workspace</button>
+
+      <div class="su">
+        <label class="su-label" for="su-goal">What are you working toward?</label>
+        <input id="su-goal" class="su-input" type="text" spellcheck="false"
+          placeholder="One sentence \u2014 e.g. Ship the CSV exporter" />
+
+        <label class="su-label" for="su-crit">Done when&hellip;</label>
+        <div id="su-crit-list" class="su-list"></div>
+        <input id="su-crit" class="su-input" type="text" spellcheck="false" data-su-list="su-crit-list"
+          placeholder="Add a finish line, press Enter \u2014 each becomes a task" />
+
+        <label class="su-label" for="su-con">Boundaries</label>
+        <div id="su-con-list" class="su-list"></div>
+        <input id="su-con" class="su-input" type="text" spellcheck="false" data-su-list="su-con-list"
+          placeholder="Optional \u2014 e.g. No new dependencies" />
+
+        <label class="su-check"><input id="su-git" type="checkbox" checked />
+          Keep Guardian&rsquo;s machine-written files out of git</label>
+
+        <button data-setup-submit>Connect Guardian</button>
+        <p class="quiet">Everything here is optional and editable later &mdash; connect empty
+        and your first request to the agent becomes the goal.</p>
+      </div>
     </div>`;
   }
   function renderRepair(vm) {
@@ -177,7 +197,61 @@
   window.addEventListener("message", (event) => {
     if (event.data?.type === "vm" && event.data.vm) apply(event.data.vm);
   });
+  function addListItem(listId, text) {
+    const value = text.trim();
+    if (!value) return;
+    const list = document.getElementById(listId);
+    if (!list) return;
+    const item = document.createElement("div");
+    item.className = "su-item";
+    item.dataset.value = value;
+    const label = document.createElement("span");
+    label.textContent = value;
+    const remove = document.createElement("button");
+    remove.className = "su-remove";
+    remove.textContent = "\xD7";
+    remove.dataset.suRemove = "1";
+    remove.title = "Remove";
+    item.append(label, remove);
+    list.appendChild(item);
+  }
+  function listValues(listId, pendingInputId) {
+    const values = [];
+    for (const el of Array.from(document.querySelectorAll(`#${listId} .su-item`))) {
+      const v = el.dataset.value ?? "";
+      if (v) values.push(v);
+    }
+    const pending = document.getElementById(pendingInputId)?.value.trim();
+    if (pending) values.push(pending);
+    return values;
+  }
+  document.addEventListener("keydown", (event) => {
+    const input = event.target;
+    if (event.key === "Enter" && input?.dataset?.suList) {
+      event.preventDefault();
+      addListItem(input.dataset.suList, input.value);
+      input.value = "";
+    }
+  });
   document.addEventListener("click", (event) => {
+    const removeBtn = event.target.closest("[data-su-remove]");
+    if (removeBtn) {
+      removeBtn.closest(".su-item")?.remove();
+      return;
+    }
+    const submit = event.target.closest("[data-setup-submit]");
+    if (submit) {
+      vscode.postMessage({
+        type: "connectSubmit",
+        form: {
+          goal: document.getElementById("su-goal")?.value ?? "",
+          criteria: listValues("su-crit-list", "su-crit"),
+          constraints: listValues("su-con-list", "su-con"),
+          gitignore: document.getElementById("su-git")?.checked ?? true
+        }
+      });
+      return;
+    }
     const target = event.target.closest("[data-cmd],[data-task],[data-rescore]");
     if (!target) return;
     if (target.dataset.cmd) vscode.postMessage({ type: "command", command: target.dataset.cmd });

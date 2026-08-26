@@ -26,13 +26,12 @@ it wanders, and shows you the story. It never blocks, and it never nags.
 You don't need to configure anything, learn any files, or read docs. Six
 steps, and step 4 is the whole trick.
 
-**1. Install** from Open VSX (you're here). Nothing happens yet — Guardian
-stays silent until invited.
+**1. Install** from Open VSX (you're here). Guardian introduces itself
+exactly once: its panel opens on its own the first time, then never
+interrupts again. Nothing is written to your project yet.
 
-**2. Open the panel.** At the top of the file sidebar there's a small row of
-icons ending in a **∨** — click the ∨ and pick **Goal Guardian** (the target).
-It stays in the row after that. (Or press `Ctrl+Shift+P` and run "Goal
-Guardian: Show Panel".) You'll see this:
+**2. That open panel is home base.** It lives behind the target icon at the
+top of the file sidebar — that's where you'll glance later. You'll see this:
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s6-welcome.png" alt="The welcome panel" width="800" />
 

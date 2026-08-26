@@ -18,6 +18,7 @@ export interface PanelDelegate {
   onCommand(command: string): Promise<void>;
   onStartTask(taskId: string): Promise<void>;
   onRescoreOne(driftId: string): Promise<void>;
+  onConnectSubmit(form: { goal: string; criteria: string[]; constraints: string[]; gitignore: boolean }): Promise<void>;
 }
 
 export class PanelController implements vscode.WebviewViewProvider {
@@ -36,6 +37,11 @@ export class PanelController implements vscode.WebviewViewProvider {
     private readonly delegate: PanelDelegate,
   ) {}
 
+  /** True once the webview has been opened by the workbench at least once. */
+  isResolved(): boolean {
+    return this.view !== null;
+  }
+
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     view.webview.options = {
@@ -44,11 +50,18 @@ export class PanelController implements vscode.WebviewViewProvider {
     };
     view.webview.html = this.shell(view.webview);
     this.context.subscriptions.push(
-      view.webview.onDidReceiveMessage(async (message: { type: string; command?: string; taskId?: string; driftId?: string }) => {
+      view.webview.onDidReceiveMessage(async (message: {
+        type: string;
+        command?: string;
+        taskId?: string;
+        driftId?: string;
+        form?: { goal: string; criteria: string[]; constraints: string[]; gitignore: boolean };
+      }) => {
         if (message.type === "ready") await this.refresh();
         else if (message.type === "command" && message.command) await this.delegate.onCommand(message.command);
         else if (message.type === "startTask" && message.taskId) await this.delegate.onStartTask(message.taskId);
         else if (message.type === "rescoreOne" && message.driftId) await this.delegate.onRescoreOne(message.driftId);
+        else if (message.type === "connectSubmit" && message.form) await this.delegate.onConnectSubmit(message.form);
       }),
       view.onDidDispose(() => {
         this.view = null;

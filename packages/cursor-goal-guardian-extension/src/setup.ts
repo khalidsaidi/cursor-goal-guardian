@@ -175,40 +175,33 @@ export async function doctorIntegration(root: string, context: vscode.ExtensionC
 }
 
 /** The invited setup flow: goal -> criteria -> constraints (all skippable), then files + wiring. */
-export async function runSetup(root: string, context: vscode.ExtensionContext): Promise<boolean> {
-  const goal = await vscode.window.showInputBox({
-    title: "Goal Guardian setup (1/3) — Goal",
-    prompt: "One unambiguous sentence: what is this session/project trying to achieve? (Esc to skip)",
-    placeHolder: "Ship the CSV export feature for the report table",
-  });
+/** What the in-panel connect form submits. Everything optional except the shape. */
+export interface SetupForm {
+  goal: string;
+  criteria: string[];
+  constraints: string[];
+  gitignore: boolean;
+}
 
-  const criteriaRaw = await vscode.window.showInputBox({
-    title: "Goal Guardian setup (2/3) — Success criteria",
-    prompt: "Separate criteria with ';' — each becomes a trackable task. (Esc to skip)",
-    placeHolder: "Users can export as CSV; Export respects filters; Serializer has tests",
-  });
-
-  const constraintsRaw = await vscode.window.showInputBox({
-    title: "Goal Guardian setup (3/3) — Constraints",
-    prompt: "Separate constraints with ';'. (Esc to skip)",
-    placeHolder: "No new dependencies; No changes outside src/export/",
-  });
-
-  const split = (raw: string | undefined): string[] =>
-    (raw ?? "")
-      .split(";")
-      .map((s) => s.trim())
-      .filter(Boolean);
+/**
+ * The invited setup: called by the panel's connect form (the only setup UI —
+ * no input boxes, no delimiters, no palette). Scaffolds files, records the
+ * goal, wires the recorder and agent tools, and offers the one Cursor-side
+ * step. Empty form values are fine: the user's first agent request becomes
+ * the goal (rule-driven).
+ */
+export async function applySetup(root: string, context: vscode.ExtensionContext, form: SetupForm): Promise<void> {
+  const clean = (values: string[]): string[] => values.map((s) => s.trim()).filter(Boolean);
 
   const p = getGuardianPaths(root);
   await ensureStateFiles(root);
   if (!(await fileExists(p.config))) await writeJsonAtomic(p.config, defaultConfig());
 
-  const criteria = criteriaFromTexts(split(criteriaRaw));
+  const criteria = criteriaFromTexts(clean(form.criteria));
   await dispatch(root, {
     type: "SET_GOAL",
     actor: "human",
-    payload: { goal: goal ?? "", successCriteria: criteria, constraints: split(constraintsRaw) },
+    payload: { goal: form.goal.trim(), successCriteria: criteria, constraints: clean(form.constraints) },
   });
   if (criteria.length > 0) {
     await dispatch(root, {
@@ -224,18 +217,13 @@ export async function runSetup(root: string, context: vscode.ExtensionContext): 
 
   offerMcpEnableGuidance();
 
-  const gitignore = await vscode.window.showQuickPick(["Yes", "No"], {
-    title: "Add .cursor/goal-guardian/telemetry/ to .gitignore?",
-    placeHolder: "Telemetry files are machine-written and per-session",
-  });
-  if (gitignore === "Yes") {
+  if (form.gitignore) {
     const giPath = path.join(root, ".gitignore");
     const existing = await fs.readFile(giPath, "utf8").catch(() => "");
     if (!existing.includes(".cursor/goal-guardian/telemetry/")) {
       await fs.writeFile(giPath, `${existing.replace(/\n?$/, "\n")}.cursor/goal-guardian/telemetry/\n`, "utf8");
     }
   }
-  return true;
 }
 
 /**
@@ -293,5 +281,15 @@ export async function runUninstall(root: string): Promise<void> {
   // ones, which is exactly the safety we want.
   for (const dir of ["rules", "skills", ""]) {
     await fs.rmdir(path.join(root, ".cursor", dir)).catch(() => undefined);
+  }
+
+  // The .gitignore line setup offered: take back exactly our line, and the
+  // file itself only when nothing else ever lived in it.
+  const giPath = path.join(root, ".gitignore");
+  const gi = await fs.readFile(giPath, "utf8").catch(() => null);
+  if (gi !== null && gi.includes(".cursor/goal-guardian/telemetry/")) {
+    const kept = gi.split("\n").filter((line) => line.trim() !== ".cursor/goal-guardian/telemetry/");
+    if (kept.every((line) => line.trim() === "")) await fs.rm(giPath, { force: true });
+    else await fs.writeFile(giPath, kept.join("\n"), "utf8");
   }
 }

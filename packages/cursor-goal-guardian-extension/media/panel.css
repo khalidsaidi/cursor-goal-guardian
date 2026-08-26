@@ -239,3 +239,64 @@ button.link {
 .welcome p { max-width: 42ch; }
 .welcome .lamp-row { margin-bottom: 12px; }
 .welcome button:not(.link) { margin-top: 6px; }
+
+/* ---- connect form: the whole setup, in place, no palette ---- */
+
+.su { margin-top: 16px; max-width: 44ch; }
+.su-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin: 14px 0 6px;
+}
+.su-label:first-child { margin-top: 0; }
+.su-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, rgba(128,128,128,0.35));
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.su-input::placeholder { color: var(--vscode-input-placeholderForeground, inherit); opacity: 0.5; }
+.su-input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.su-list:not(:empty) { display: flex; flex-direction: column; gap: 4px; margin: 0 0 6px; }
+.su-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--vscode-editor-inactiveSelectionBackground, rgba(128,128,128,0.12));
+  border-radius: 4px;
+  padding: 4px 6px 4px 9px;
+}
+.su-remove {
+  background: none;
+  padding: 0 5px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.55;
+}
+.su-remove:hover { background: none; opacity: 1; }
+.su-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 16px 0 14px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.su-check input { accent-color: var(--vscode-focusBorder); margin: 0; }
+.su [data-setup-submit] {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  padding: 6px 16px;
+}
+.su [data-setup-submit]:hover { background: var(--vscode-button-hoverBackground); }
+.su .quiet { margin-top: 10px; }

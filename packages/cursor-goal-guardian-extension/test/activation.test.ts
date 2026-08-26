@@ -70,6 +70,23 @@ describe("activation surface", () => {
     expect(await fileExists(path.join(root, ".cursor"))).toBe(false);
   });
 
+  it("introduces itself once per install: first bare-workspace activation reveals the panel, later ones don't", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-greet-"));
+    cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
+    workspace.workspaceFolders = [{ uri: { fsPath: root } }];
+
+    const context = makeContext();
+    await activate(context as never);
+    expect(recorded.executed).toContain("goalGuardian.goalPanel.focus");
+    // Still no popups and no files — the reveal is the whole introduction.
+    expect(recorded.windowMessages).toEqual([]);
+    expect(await fileExists(path.join(root, ".cursor"))).toBe(false);
+
+    recorded.executed.length = 0;
+    await activate(context as never);
+    expect(recorded.executed).not.toContain("goalGuardian.goalPanel.focus");
+  });
+
   it("no workspace folder at all -> still registers commands, still silent", async () => {
     workspace.workspaceFolders = undefined;
     await activate(makeContext() as never);
@@ -86,19 +103,24 @@ describe("activation surface", () => {
     expect(recorded.windowMessages).toEqual([]);
     expect(recorded.watchers).toContain(".cursor/goal-guardian/**");
     expect(recorded.watchers).toContain(".cursor/goal-guardian/telemetry/audit.jsonl");
+    // Connected workspaces are never auto-revealed — the introduction is for
+    // fresh installs only.
+    expect(recorded.executed).not.toContain("goalGuardian.goalPanel.focus");
   });
 
   it("setup writes the session-anchoring rule; uninstall removes it", async () => {
-    const { runSetup, runUninstall } = await import("../src/setup.js");
+    const { applySetup, runUninstall } = await import("../src/setup.js");
     const { GUARDIAN_RULE_RELATIVE_PATH } = await import("@goal-guardian/core");
-    const { responses } = await import("./mocks/vscode.js");
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-setup-"));
     cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
 
     process.env.GOAL_GUARDIAN_TEST_HOME = root; // never touch the real ~/.cursor
-    responses.inputBox = ["Ship it", "criterion one; criterion two", "no new deps"];
-    responses.quickPick = ["No"];
-    await runSetup(root, makeContext(root) as never);
+    await applySetup(root, makeContext(root) as never, {
+      goal: "Ship it",
+      criteria: ["criterion one", "criterion two"],
+      constraints: ["no new deps"],
+      gitignore: false,
+    });
 
     // Hub support: the user-level MCP registration landed in the (test) home.
     const userMcp = JSON.parse(await fs.readFile(path.join(root, ".cursor", "mcp.json"), "utf8"));
@@ -114,12 +136,39 @@ describe("activation surface", () => {
 
     await runUninstall(root);
     expect(await fileExists(rulePath)).toBe(false);
+    // The offered .gitignore line comes back out too — file and all when
+    // guardian's line was its only content (covered further below).
     expect(await fileExists(path.join(root, ".cursor", "goal-guardian"))).toBe(false);
     // No trace means no empty shells either: when nothing but guardian
     // scaffolding existed, the wiring files and folders disappear entirely.
     expect(await fileExists(path.join(root, ".cursor", "hooks.json"))).toBe(false);
     expect(await fileExists(path.join(root, ".cursor", "rules"))).toBe(false);
     expect(await fileExists(path.join(root, ".cursor", "skills"))).toBe(false);
+  });
+
+  it("gitignore round-trip: setup's offered line is removed on uninstall; other lines survive", async () => {
+    const { applySetup, runUninstall } = await import("../src/setup.js");
+    const form = { goal: "Ship it", criteria: ["one"], constraints: [], gitignore: true };
+
+    // Case 1: setup created the file -> uninstall deletes it entirely.
+    const fresh = await fs.mkdtemp(path.join(os.tmpdir(), "gg-gi1-"));
+    cleanups.push(() => fs.rm(fresh, { recursive: true, force: true }));
+    process.env.GOAL_GUARDIAN_TEST_HOME = fresh;
+    await applySetup(fresh, makeContext(fresh) as never, form);
+    expect(await fs.readFile(path.join(fresh, ".gitignore"), "utf8")).toContain(".cursor/goal-guardian/telemetry/");
+    await runUninstall(fresh);
+    expect(await fileExists(path.join(fresh, ".gitignore"))).toBe(false);
+
+    // Case 2: the user already had a .gitignore -> only our line is removed.
+    const shared = await fs.mkdtemp(path.join(os.tmpdir(), "gg-gi2-"));
+    cleanups.push(() => fs.rm(shared, { recursive: true, force: true }));
+    process.env.GOAL_GUARDIAN_TEST_HOME = shared;
+    await fs.writeFile(path.join(shared, ".gitignore"), "node_modules/\n", "utf8");
+    await applySetup(shared, makeContext(shared) as never, form);
+    await runUninstall(shared);
+    const gi = await fs.readFile(path.join(shared, ".gitignore"), "utf8");
+    expect(gi).toContain("node_modules/");
+    expect(gi).not.toContain("goal-guardian");
   });
 
   it("v1 workspace -> auto-migrates with backups and exactly one passive notice", async () => {

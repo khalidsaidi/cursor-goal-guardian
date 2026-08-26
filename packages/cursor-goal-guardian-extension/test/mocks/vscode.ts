@@ -116,23 +116,29 @@ export const commands = {
   },
 };
 
+function memento(): { get<T>(key: string, fallback: T): T; update(key: string, value: unknown): Promise<void> } {
+  const store = new Map<string, unknown>();
+  return {
+    get: <T,>(key: string, fallback: T): T => (store.has(key) ? (store.get(key) as T) : fallback),
+    update: (key: string, value: unknown): Promise<void> => {
+      store.set(key, value);
+      return Promise.resolve();
+    },
+  };
+}
+
 export function makeContext(extensionPath = "/tmp/gg-ext"): {
   subscriptions: Array<{ dispose(): void }>;
-  workspaceState: { get<T>(key: string, fallback: T): T; update(key: string, value: unknown): Promise<void> };
+  workspaceState: ReturnType<typeof memento>;
+  globalState: ReturnType<typeof memento>;
   extensionPath: string;
   extensionUri: { fsPath: string };
   extension: { packageJSON: { version: string } };
 } {
-  const store = new Map<string, unknown>();
   return {
     subscriptions: [],
-    workspaceState: {
-      get: <T,>(key: string, fallback: T): T => (store.has(key) ? (store.get(key) as T) : fallback),
-      update: (key: string, value: unknown): Promise<void> => {
-        store.set(key, value);
-        return Promise.resolve();
-      },
-    },
+    workspaceState: memento(),
+    globalState: memento(),
     extensionPath,
     extensionUri: { fsPath: extensionPath },
     extension: { packageJSON: { version: "1.0.0-rc.0" } },
