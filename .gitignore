@@ -6,6 +6,9 @@ coverage/
 
 # Agent scratch + runtime state (must not pollute app code)
 .ai/
+# ...but committed v1 migration fixtures deliberately contain .ai trees:
+!fixtures/**/.ai/
+!fixtures/**/.ai/**
 
 # Local Cursor logs (optional)
 .cursor/*.log

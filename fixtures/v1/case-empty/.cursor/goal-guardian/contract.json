@@ -1,0 +1,11 @@
+{
+  "goal": "Replace this with a short, unambiguous goal statement.",
+  "success_criteria": [
+    "Replace this with a concrete success criterion."
+  ],
+  "constraints": [
+    "No silent scope expansion: every step must map to explicit success criteria IDs.",
+    "Keep updates in the state store instead of chat-only planning.",
+    "Prefer small, testable tasks with explicit completion criteria."
+  ]
+}

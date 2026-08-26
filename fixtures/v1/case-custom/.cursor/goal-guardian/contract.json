@@ -1,0 +1,9 @@
+{
+  "goal": "Fix the flaky login integration test",
+  "success_criteria": [
+    "login.spec.ts passes 20 consecutive runs"
+  ],
+  "constraints": [
+    "Do not change production auth code"
+  ]
+}

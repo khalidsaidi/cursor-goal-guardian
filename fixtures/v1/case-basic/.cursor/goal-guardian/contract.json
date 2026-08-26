@@ -1,0 +1,12 @@
+{
+  "goal": "Ship the CSV export feature for the report table",
+  "success_criteria": [
+    "Users can export the report table as CSV",
+    "Export respects the currently active filters",
+    "Unit tests cover the CSV serializer"
+  ],
+  "constraints": [
+    "No new dependencies",
+    "No changes outside src/export/"
+  ]
+}

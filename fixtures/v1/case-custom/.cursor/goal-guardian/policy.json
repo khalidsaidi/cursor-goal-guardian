@@ -1,0 +1,40 @@
+{
+  "enforceReduxControl": false,
+  "enforceTaskScope": true,
+  "taskScopeSensitivity": "strict",
+  "requirePermitForShell": true,
+  "requirePermitForMcp": false,
+  "requirePermitForRead": false,
+  "autoRevertUnauthorizedEdits": false,
+  "warningConfig": {
+    "maxWarningsBeforeBlock": 2,
+    "warningResetMinutes": 10
+  },
+  "alwaysAllow": {
+    "shell": [
+      "git status*"
+    ],
+    "mcp": [],
+    "read": [
+      "docs/**"
+    ]
+  },
+  "highRiskPatterns": {
+    "shell": [
+      "rm -rf *"
+    ],
+    "mcp": [
+      "deploy/*"
+    ],
+    "read": [
+      "**/*.pem"
+    ]
+  },
+  "shellRules": [
+    {
+      "pattern": "npm publish*",
+      "severity": "HIGH_RISK",
+      "reason": "publishing is out of scope"
+    }
+  ]
+}

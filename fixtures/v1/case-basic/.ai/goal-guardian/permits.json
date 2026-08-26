@@ -1,0 +1,22 @@
+{
+  "permits": [
+    {
+      "token": "permit_5319df723b84199c5d26",
+      "step_id": "step_8d5314dc1f078e0fee46",
+      "issued_at": "2026-08-26T01:06:10.884Z",
+      "expires_at": "2026-08-26T02:06:10.884Z",
+      "allow": {
+        "shell": [
+          "pnpm test*"
+        ],
+        "mcp": [],
+        "read": [
+          "src/export/**"
+        ],
+        "write": [
+          "src/export/**"
+        ]
+      }
+    }
+  ]
+}

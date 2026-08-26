@@ -1,0 +1,2 @@
+{"ts":"2026-08-26T01:06:12.942Z","event":"beforeShellExecution"}
+{"ts":"2026-08-26T01:06:12.947Z","event":"shellPermitSuggested","command":"pnpm vitest run login.spec.ts","severity":"PERMIT_REQUIRED","reason":"No valid permit","actionType":"shell","actionValue":"pnpm vitest run login.spec.ts","suggestedAllow":"pnpm vitest run login.spec.ts"}

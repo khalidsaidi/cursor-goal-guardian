@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "goal": "Fix the flaky login integration test",
+  "definition_of_done": [
+    "login.spec.ts passes 20 consecutive runs"
+  ],
+  "constraints": [
+    "Do not change production auth code"
+  ],
+  "active_task": "t1",
+  "tasks": [
+    {
+      "id": "t1",
+      "title": "Stabilize login.spec.ts",
+      "status": "doing"
+    }
+  ],
+  "queue": [
+    "t1"
+  ],
+  "open_questions": [],
+  "decisions": [],
+  "pinned_context": [],
+  "_meta": {
+    "lastActionId": "act_eab0e6a8-e3d2-4630-8f9d-06ccb99b2111",
+    "lastUpdated": "2026-08-26T01:06:12.684Z",
+    "actionCount": 2,
+    "hash": "526494df0baf5121fd041f269c7bbff1b4e195184b6b2ec7ba59c923858501bf"
+  }
+}

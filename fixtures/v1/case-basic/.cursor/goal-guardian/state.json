@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "goal": "Ship the CSV export feature for the report table",
+  "definition_of_done": [
+    "Users can export the report table as CSV",
+    "Export respects the currently active filters",
+    "Unit tests cover the CSV serializer"
+  ],
+  "constraints": [
+    "No new dependencies",
+    "No changes outside src/export/"
+  ],
+  "active_task": "sc_1",
+  "tasks": [
+    {
+      "id": "sc_1",
+      "title": "SC1: Users can export the report table as CSV",
+      "status": "doing"
+    },
+    {
+      "id": "sc_2",
+      "title": "SC2: Export respects the currently active filters",
+      "status": "todo"
+    },
+    {
+      "id": "sc_3",
+      "title": "SC3: Unit tests cover the CSV serializer",
+      "status": "todo"
+    }
+  ],
+  "queue": [
+    "sc_1",
+    "sc_2",
+    "sc_3"
+  ],
+  "open_questions": [
+    {
+      "id": "q_b8315c0e-30c8-43d0-a490-69d14ecade0e",
+      "text": "Should exports include hidden columns?",
+      "ts": "2026-08-26T01:06:10.634Z",
+      "status": "open"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "dec_2b2e7de9-aa4b-416f-9ed2-e3c1ea0e8ddf",
+      "text": "Use a hand-rolled serializer",
+      "rationale": "No-new-dependencies constraint rules out csv libs",
+      "ts": "2026-08-26T01:06:10.626Z"
+    }
+  ],
+  "pinned_context": [
+    "src/export/csv.ts"
+  ],
+  "_meta": {
+    "lastActionId": "act_a9de50c9-d25a-4ec5-a4c3-db4e3698b876",
+    "lastUpdated": "2026-08-26T01:06:10.634Z",
+    "actionCount": 6,
+    "hash": "3e12410f5860f2d4ad197afbf825d06280ce7a09a1016cf829ec3860250facae"
+  }
+}

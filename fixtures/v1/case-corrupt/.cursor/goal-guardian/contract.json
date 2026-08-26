@@ -1,0 +1,7 @@
+{
+  "goal": "Corrupt workspace fixture",
+  "success_criteria": [
+    "n/a"
+  ],
+  "constraints": []
+}

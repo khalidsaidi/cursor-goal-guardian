@@ -1,0 +1,11 @@
+{"ts":"2026-08-26T01:06:11.132Z","event":"beforeShellExecution"}
+{"ts":"2026-08-26T01:06:11.375Z","event":"beforeShellExecution"}
+{"ts":"2026-08-26T01:06:11.379Z","event":"scopeDriftWarning","actionType":"shell","actionValue":"docker build -t darkmode-theme .","activeTaskId":"sc_1","activeTaskTitle":"SC1: Users can export the report table as CSV","taskTerms":["sc1","users","export","report","table","csv"],"actionTerms":["build","darkmode","theme"]}
+{"ts":"2026-08-26T01:06:11.605Z","event":"beforeShellExecution"}
+{"ts":"2026-08-26T01:06:11.609Z","event":"shellHighRisk","command":"rm -rf /","severity":"HIGH_RISK","reason":"Destructive filesystem command"}
+{"ts":"2026-08-26T01:06:11.836Z","event":"beforeReadFile"}
+{"ts":"2026-08-26T01:06:11.840Z","event":"readHighRisk","filePath":".env","severity":"HIGH_RISK","reason":"Environment secrets"}
+{"ts":"2026-08-26T01:06:12.115Z","event":"beforeReadFile"}
+{"ts":"2026-08-26T01:06:12.400Z","event":"afterFileEdit"}
+{"ts":"2026-08-26T01:06:12.405Z","event":"afterFileEdit","file_path":"src/export/csv.ts","has_permit":true,"write_allowed":true}
+{"ts":"2026-08-26T01:06:12.654Z","event":"stop"}

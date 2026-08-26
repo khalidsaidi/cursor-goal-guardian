@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "goal": "Replace this with a short, unambiguous goal statement.",
+  "definition_of_done": [
+    "Replace this with a concrete success criterion."
+  ],
+  "constraints": [
+    "No silent scope expansion: every step must map to explicit success criteria IDs.",
+    "Keep updates in the state store instead of chat-only planning.",
+    "Prefer small, testable tasks with explicit completion criteria."
+  ],
+  "active_task": null,
+  "tasks": [],
+  "queue": [],
+  "open_questions": [],
+  "decisions": [],
+  "pinned_context": [],
+  "_meta": {
+    "lastActionId": null,
+    "lastUpdated": "2026-08-26T01:06:10.289Z",
+    "actionCount": 0,
+    "hash": "82746839fc1a163bcb0c519785291efe77526646987ff1e0f4b51de089f1d0c7"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "checks": [
+    {
+      "step_id": "step_8d5314dc1f078e0fee46",
+      "step": "Implement the CSV serializer in src/export/csv.ts",
+      "expected_output": "src/export/csv.ts exporting serializeCsv()",
+      "maps_to": [
+        "SC1"
+      ],
+      "on_goal": true,
+      "score": 1,
+      "reason": "Step maps to valid success criteria IDs.",
+      "ts": "2026-08-26T01:06:10.880Z"
+    }
+  ]
+}
