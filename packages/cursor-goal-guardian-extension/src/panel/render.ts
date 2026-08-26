@@ -56,7 +56,8 @@ function renderWelcome(vm: PanelViewModel): string {
       <div class="lamp-row"><span class="lamp idle"></span><span class="status-word">standing by</span></div>
       <p>Guardian rides along while you work with your agent: it remembers the goal,
       notices when the session wanders, and shows you the way back.</p>
-      <p class="quiet">Nothing is written until you connect it.</p>
+      <p class="quiet">Nothing is written until you connect it. After that, just ask
+      your agent for something — Guardian starts tracking automatically.</p>
       <button data-cmd="setup">Connect Guardian to this workspace</button>
     </div>`;
 }
