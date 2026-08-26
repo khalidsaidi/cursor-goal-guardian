@@ -8,22 +8,24 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { scaffoldWorkspace } from "../src/scaffold.js";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-const EXT_BIN = path.join(REPO, "packages", "cursor-goal-guardian-extension", "bin");
-const PACKAGED_MCP = path.join(EXT_BIN, "goal-guardian-mcp.mjs");
-const PACKAGED_HOOK = path.join(EXT_BIN, "goal-guardian-hook.cjs");
+const HOST_TARGET = `${process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux"}-${process.arch === "arm64" ? "arm64" : "x64"}`;
+const EXE = process.platform === "win32" ? ".exe" : "";
+const BIN_DIR = path.join(REPO, "dist-bin", HOST_TARGET);
+const PACKAGED_MCP = path.join(BIN_DIR, `goal-guardian-mcp${EXE}`);
+const PACKAGED_HOOK = path.join(BIN_DIR, `goal-guardian-hook${EXE}`);
 
 /**
- * The VSIX ships esbuild bundles in bin/ — NOT the packages' dist/ builds the
- * other scenarios exercise. These are the artifacts real users' hooks.json and
- * mcp.json point at, so they get their own smoke (a double-shebang bug once
- * lived only here and passed every other suite).
+ * The VSIX ships self-contained native executables — NOT the packages' dist/
+ * builds the other scenarios exercise. These are the artifacts real users'
+ * hooks.json and mcp.json invoke directly, so they get their own smoke on
+ * every platform the CI matrix runs.
  */
 describe("13 [deterministic] the packaged extension binaries actually run", () => {
   beforeAll(() => {
-    execSync(`node ${path.join(REPO, "scripts", "copy-binaries.js")}`, { cwd: REPO, stdio: "ignore" });
+    execSync(`node ${path.join(REPO, "scripts", "compile-binaries.mjs")} --host-only`, { cwd: REPO, stdio: "ignore" });
     expect(fs.existsSync(PACKAGED_MCP)).toBe(true);
     expect(fs.existsSync(PACKAGED_HOOK)).toBe(true);
-  }, 120_000);
+  }, 240_000);
 
   it("packaged MCP bundle starts and serves the six guardian tools", async () => {
     const ws = await scaffoldWorkspace({});
@@ -31,8 +33,8 @@ describe("13 [deterministic] the packaged extension binaries actually run", () =
     try {
       await client.connect(
         new StdioClientTransport({
-          command: "node",
-          args: [PACKAGED_MCP],
+          command: PACKAGED_MCP,
+          args: [],
           env: { ...process.env, GOAL_GUARDIAN_WORKSPACE_ROOT: ws.root } as Record<string, string>,
           stderr: "ignore",
         }),
@@ -62,7 +64,7 @@ describe("13 [deterministic] the packaged extension binaries actually run", () =
   it("packaged hook bundle answers allow and writes the tape", async () => {
     const ws = await scaffoldWorkspace({});
     try {
-      const res = spawnSync(process.execPath, [PACKAGED_HOOK], {
+      const res = spawnSync(PACKAGED_HOOK, [], {
         input: JSON.stringify({
           hook_event_name: "beforeShellExecution",
           command: "git status",

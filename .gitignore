@@ -22,3 +22,5 @@ coverage/
 
 # Generated panel demo recordings/screenshots
 artifacts/panel-demo/
+dist-bin/
+packages/cursor-goal-guardian-extension/bin/

@@ -14,7 +14,6 @@ import { RescoreService } from "./rescoreService.js";
 import { StatusBar } from "./statusBar.js";
 import { registerAutoBehaviors } from "./autoBehaviors.js";
 import { connectWorkspace, doctorIntegration, runSetup, runUninstall } from "./setup.js";
-import { ensureRuntime } from "./runtime.js";
 import { openCommandCenter } from "./commandCenter.js";
 
 /**
@@ -180,26 +179,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (result.migrated) {
         // An 0.4.x workspace is an existing opt-in: finish the connection so
         // the upgraded user actually gets the recorder, the agent tools, and
-        // the session rule — not just transformed files. If no runtime exists
-        // here, the same one-time offer applies; declining leaves the data
-        // migrated and connection one Setup away.
-        const runtimeExe = await ensureRuntime(context, { interactive: true });
-        if (runtimeExe) {
-          await connectWorkspace(root, context, runtimeExe);
-          await doctorIntegration(root, context, runtimeExe);
-          void vscode.window.showInformationMessage(
-            "Goal Guardian upgraded this workspace (backups saved as *.v1.bak) and connected session tracking — just ask your agent for something.",
-          );
-        } else {
-          void vscode.window.showInformationMessage(
-            "Goal Guardian upgraded this workspace's files (backups saved as *.v1.bak). Run \"Goal Guardian: Set Up Workspace\" to finish connecting.",
-          );
-        }
+        // the session rule — not just transformed files.
+        await connectWorkspace(root, context);
+        await doctorIntegration(root, context);
+        void vscode.window.showInformationMessage(
+          "Goal Guardian upgraded this workspace (backups saved as *.v1.bak) and connected session tracking — just ask your agent for something.",
+        );
       }
       startServices();
     } else if (format === "v2") {
-      const runtimeExe = await ensureRuntime(context, { interactive: false });
-      if (runtimeExe) await doctorIntegration(root, context, runtimeExe);
+      await doctorIntegration(root, context);
       startServices();
     }
     // format "none": stay inert until invited via setup.
