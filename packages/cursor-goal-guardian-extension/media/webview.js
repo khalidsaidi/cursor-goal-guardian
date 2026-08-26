@@ -37,8 +37,8 @@
 
       <div class="su">
         <label class="su-label" for="su-goal">What are you working toward?</label>
-        <input id="su-goal" class="su-input" type="text" spellcheck="false"
-          placeholder="One sentence \u2014 e.g. Ship the CSV exporter" />
+        <textarea id="su-goal" class="su-input su-goal" rows="2" spellcheck="false"
+          placeholder="In your own words \u2014 e.g. Ship the CSV exporter with filters and tests"></textarea>
 
         <label class="su-label" for="su-crit">Done when&hellip;</label>
         <div id="su-crit-list" class="su-list"></div>
@@ -225,6 +225,13 @@
     if (pending) values.push(pending);
     return values;
   }
+  document.addEventListener("input", (event) => {
+    const el = event.target;
+    if (el?.id === "su-goal") {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  });
   document.addEventListener("keydown", (event) => {
     const input = event.target;
     if (event.key === "Enter" && input?.dataset?.suList) {

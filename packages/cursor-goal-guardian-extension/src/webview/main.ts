@@ -55,6 +55,15 @@ function listValues(listId: string, pendingInputId: string): string[] {
   return values;
 }
 
+// The goal grows with the user's words — never a cramped single line.
+document.addEventListener("input", (event) => {
+  const el = event.target as HTMLTextAreaElement;
+  if (el?.id === "su-goal") {
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }
+});
+
 document.addEventListener("keydown", (event) => {
   const input = event.target as HTMLInputElement;
   if (event.key === "Enter" && input?.dataset?.suList) {

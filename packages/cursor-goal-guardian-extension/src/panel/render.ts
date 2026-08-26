@@ -59,8 +59,8 @@ function renderWelcome(vm: PanelViewModel): string {
 
       <div class="su">
         <label class="su-label" for="su-goal">What are you working toward?</label>
-        <input id="su-goal" class="su-input" type="text" spellcheck="false"
-          placeholder="One sentence — e.g. Ship the CSV exporter" />
+        <textarea id="su-goal" class="su-input su-goal" rows="2" spellcheck="false"
+          placeholder="In your own words — e.g. Ship the CSV exporter with filters and tests"></textarea>
 
         <label class="su-label" for="su-crit">Done when&hellip;</label>
         <div id="su-crit-list" class="su-list"></div>

@@ -300,3 +300,9 @@ button.link {
 }
 .su [data-setup-submit]:hover { background: var(--vscode-button-hoverBackground); }
 .su .quiet { margin-top: 10px; }
+textarea.su-goal {
+  resize: vertical;
+  min-height: 46px;
+  line-height: 1.45;
+  overflow-y: hidden;
+}
