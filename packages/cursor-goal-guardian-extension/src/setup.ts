@@ -12,13 +12,16 @@ import {
   guardianRuleContent,
   GUARDIAN_RULE_RELATIVE_PATH,
   GUARDIAN_SKILLS,
+  DONE_CHECK_RULE_RELATIVE_PATH,
+  doneCheckRuleContent,
+  readConfigSafe,
   readJsonFile,
   writeJsonAtomic,
 } from "@goal-guardian/core";
 
 /**
  * The VSIX ships self-contained native executables (per-platform targeted
- * packages, the same shipping pattern OpenAI's extension uses). Nothing else
+ * packages, the usual way for extensions that ship native tools). Nothing else
  * is required on the machine: no Node.js, no PATH, no downloads.
  */
 export function bundledBinPaths(context: vscode.ExtensionContext): { hook: string; mcp: string } {
@@ -36,7 +39,25 @@ const HOOK_EVENTS = [
   "beforeTabFileRead",
   "afterFileEdit",
   "afterTabFileEdit",
+  // Done check: output capture, the turn's final text, and the end-of-turn judge.
+  "afterShellExecution",
+  "afterAgentResponse",
+  "stop",
 ];
+
+/** Cursor's own cap on stop-hook follow-ups. Guardian's per-turn caps are the real
+ *  limit: doneCheck.maxFollowups (≤10) plus continueRounds (≤10). */
+const STOP_LOOP_LIMIT = 20;
+/** Seconds Cursor waits for the stop hook: above two test runs (≤120 s each) plus the check itself. */
+const STOP_TIMEOUT_SECONDS = 300;
+
+type HookEntry = { command: string; loop_limit?: number; timeout?: number };
+
+function hookEntry(event: string, context: vscode.ExtensionContext): HookEntry {
+  return event === "stop"
+    ? { command: hookCommand(context), loop_limit: STOP_LOOP_LIMIT, timeout: STOP_TIMEOUT_SECONDS }
+    : { command: hookCommand(context) };
+}
 
 function hookCommand(context: vscode.ExtensionContext): string {
   return `"${bundledBinPaths(context).hook}"`;
@@ -89,12 +110,12 @@ export async function wireIntegration(root: string, context: vscode.ExtensionCon
   await fs.mkdir(cursorDir, { recursive: true });
 
   const hooksPath = path.join(cursorDir, "hooks.json");
-  const hooks = await readJsonOr<{ version?: number; hooks?: Record<string, Array<{ command: string }>> }>(hooksPath, {});
+  const hooks = await readJsonOr<{ version?: number; hooks?: Record<string, Array<HookEntry>> }>(hooksPath, {});
   hooks.version = hooks.version ?? 1;
   hooks.hooks = hooks.hooks ?? {};
   for (const event of HOOK_EVENTS) {
     const entries = (hooks.hooks[event] ?? []).filter((e) => !isGuardianHookCommand(e?.command));
-    entries.push({ command: hookCommand(context) });
+    entries.push(hookEntry(event, context));
     hooks.hooks[event] = entries;
   }
   await writeJsonAtomic(hooksPath, hooks);
@@ -119,6 +140,26 @@ export async function connectWorkspace(root: string, context: vscode.ExtensionCo
   await wireIntegration(root, context);
   await wireUserLevelMcp(context);
   await writeGuardianRule(root);
+  await syncDoneCheckRule(root);
+}
+
+/**
+ * The done-check protocol exists in the agent's context only while the mode
+ * asks for it: written for advisory/enforce, removed for off. Idempotent —
+ * called on connect, on every doctor pass, and whenever config.json changes.
+ */
+export async function syncDoneCheckRule(root: string): Promise<void> {
+  const rulePath = path.join(root, DONE_CHECK_RULE_RELATIVE_PATH);
+  const mode = (await readConfigSafe(root)).doneCheck.mode;
+  if (mode === "off") {
+    await fs.rm(rulePath, { force: true });
+    return;
+  }
+  const desired = doneCheckRuleContent(mode);
+  const current = await fs.readFile(rulePath, "utf8").catch(() => null);
+  if (current === desired) return;
+  await fs.mkdir(path.dirname(rulePath), { recursive: true });
+  await fs.writeFile(rulePath, desired, "utf8");
 }
 
 async function writeGuardianRule(root: string): Promise<void> {
@@ -142,14 +183,21 @@ async function writeGuardianRule(root: string): Promise<void> {
  */
 export async function doctorIntegration(root: string, context: vscode.ExtensionContext): Promise<void> {
   const hooksPath = path.join(root, ".cursor", "hooks.json");
-  const hooks = await readJsonOr<{ hooks?: Record<string, Array<{ command: string }>> } | null>(hooksPath, null);
+  const hooks = await readJsonOr<{ hooks?: Record<string, Array<HookEntry>> } | null>(hooksPath, null);
   if (hooks?.hooks) {
     let changed = false;
     const current = hookCommand(context);
-    for (const entries of Object.values(hooks.hooks)) {
+    for (const [event, entries] of Object.entries(hooks.hooks)) {
       for (const entry of entries) {
-        if (isGuardianHookCommand(entry?.command) && entry.command !== current) {
+        if (!isGuardianHookCommand(entry?.command)) continue;
+        if (entry.command !== current) {
           entry.command = current;
+          changed = true;
+        }
+        // Stop entries from older builds: older loop cap, or a different timeout.
+        if (event === "stop" && (entry.loop_limit !== STOP_LOOP_LIMIT || entry.timeout !== STOP_TIMEOUT_SECONDS)) {
+          entry.loop_limit = STOP_LOOP_LIMIT;
+          entry.timeout = STOP_TIMEOUT_SECONDS;
           changed = true;
         }
       }
@@ -168,6 +216,19 @@ export async function doctorIntegration(root: string, context: vscode.ExtensionC
       mcp!.mcpServers!["goal-guardian"] = desired as never;
       await writeJsonAtomic(mcpPath, mcp);
     }
+  }
+
+  // Workspaces wired before the done check existed: add the new events
+  // (only where Guardian is already wired — never wire a stranger's file).
+  if (hooks?.hooks && Object.values(hooks.hooks).some((entries) => entries.some((e) => isGuardianHookCommand(e?.command)))) {
+    const missing = HOOK_EVENTS.filter((event) => !(hooks.hooks![event] ?? []).some((e) => isGuardianHookCommand(e?.command)));
+    if (missing.length > 0) {
+      for (const event of missing) {
+        hooks.hooks[event] = [...(hooks.hooks[event] ?? []), hookEntry(event, context)];
+      }
+      await writeJsonAtomic(hooksPath, hooks);
+    }
+    await syncDoneCheckRule(root);
   }
 
   // The hub reads the user-level registration; keep it fresh too.
@@ -251,6 +312,7 @@ export function offerMcpEnableGuidance(): void {
 export async function runUninstall(root: string): Promise<void> {
   await fs.rm(getGuardianPaths(root).dir, { recursive: true, force: true });
   await fs.rm(path.join(root, GUARDIAN_RULE_RELATIVE_PATH), { force: true });
+  await fs.rm(path.join(root, DONE_CHECK_RULE_RELATIVE_PATH), { force: true });
   await unwireUserLevelMcp();
   for (const skill of GUARDIAN_SKILLS) {
     await fs.rm(path.join(root, skill.relativeDir), { recursive: true, force: true });

@@ -227,8 +227,8 @@ silently writing session files into home (regression-tested).
 
 ## Self-contained binaries, verified on all three platforms (2026-08-26)
 
-Researched the shipping pattern of renowned extensions first: the OpenAI
-extension installed on this machine bundles self-contained native `codex`
+Researched the shipping pattern of established extensions first: a major
+AI extension installed on this machine bundles self-contained native
 binaries for all six platform/arch combos — no runtime dependency, no
 dialogs. Guardian now ships the same way, per-platform: the hook and MCP
 server compile to standalone executables and each platform gets a targeted
@@ -321,7 +321,7 @@ which once shipped an hour-old binary; it now always compiles fresh.
 
 ## Both Windows gaps closed the way professionals close them (2026-08-26)
 
-Researched how OpenAI's Cursor extension (openai.chatgpt, installed locally)
+Researched how an established AI extension installed locally
 handles the same two problems. Finding: it does not use Cursor hooks at all
 (zero references in its bundle) and writes no workspace config — it observes
 everything from inside its own extension process. Applied that pattern:

@@ -25,6 +25,9 @@ const EXPECTED_COMMANDS = [
   "goalGuardian.rebuildState",
   "goalGuardian.dispatchAction",
   "goalGuardian.rescoreDrift",
+  "goalGuardian.pauseGoal",
+  "goalGuardian.resumeGoal",
+  "goalGuardian.clearGoalRun",
   "goalGuardian.uninstall",
 ];
 

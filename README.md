@@ -25,6 +25,7 @@ close the loop at every point where drift happens:
 | At the moment of drift | One calm sentence per episode re-anchors the agent — context injection, not ceremony |
 | After the fact | An AI judge (consent-gated, your Cursor account) confirms/dismisses flagged drift AND periodically reviews the raw tape against the goal — catching in-vocabulary drift |
 | Persistent, confirmed drift | Opt-in: `permission: "ask"` hands the call to the human via Cursor's own UI |
+| End of turn (opt-in) | The done check: the agent's closing evidence block is checked in code against the tape — claims citing commands that never ran or output never printed are marked contradicted; `enforce` sends the agent back |
 | Any time | The panel shows the tape: drift ↔ realignment pairs, session health, task board, AI verdict |
 
 The task board is a Redux-style store: append-only action log, one pure

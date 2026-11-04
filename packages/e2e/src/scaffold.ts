@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   criteriaFromTexts,
+  DONE_CHECK_RULE_RELATIVE_PATH,
+  doneCheckRuleContent,
   defaultConfig,
   defaultState,
   getGuardianPaths,
@@ -75,6 +77,10 @@ export async function scaffoldWorkspace(opts: ScaffoldOptions = {}): Promise<E2E
       beforeMCPExecution: hookEntry,
       beforeReadFile: hookEntry,
       afterFileEdit: hookEntry,
+      // Done check — wired exactly as setup wires it (no-ops while the mode is off).
+      afterShellExecution: hookEntry,
+      afterAgentResponse: hookEntry,
+      stop: [{ ...hookEntry[0]!, loop_limit: 20, timeout: 300 }],
     },
   });
 
@@ -92,7 +98,12 @@ export async function scaffoldWorkspace(opts: ScaffoldOptions = {}): Promise<E2E
       successCriteria: criteria,
       constraints: opts.constraints ?? [],
     });
-    await writeJsonAtomic(paths.config, opts.config === undefined ? defaultConfig() : parseConfig(opts.config));
+    const config = opts.config === undefined ? defaultConfig() : parseConfig(opts.config);
+    await writeJsonAtomic(paths.config, config);
+    if (config.doneCheck.mode !== "off") {
+      const dcRule = path.join(root, DONE_CHECK_RULE_RELATIVE_PATH);
+      await fs.writeFile(dcRule, doneCheckRuleContent(config.doneCheck.mode), "utf8");
+    }
     // Seed via MIGRATE_IMPORT so state === replay(actions) — the same invariant
     // real setup and migration guarantee (a directly-written state with an
     // empty log broke live rebuild testing).

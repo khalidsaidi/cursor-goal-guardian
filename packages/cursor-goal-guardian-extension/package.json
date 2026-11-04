@@ -122,6 +122,18 @@
       {
         "command": "goalGuardian.uninstall",
         "title": "Goal Guardian: Remove from Workspace"
+      },
+      {
+        "command": "goalGuardian.pauseGoal",
+        "title": "Goal Guardian: Pause the Goal"
+      },
+      {
+        "command": "goalGuardian.resumeGoal",
+        "title": "Goal Guardian: Resume the Goal"
+      },
+      {
+        "command": "goalGuardian.clearGoalRun",
+        "title": "Goal Guardian: Stop Pursuing the Goal"
       }
     ],
     "menus": {

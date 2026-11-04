@@ -1,7 +1,7 @@
 "use strict";
 (() => {
   // src/panel/render.ts
-  var SECTION_IDS = ["welcome", "repair", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"];
+  var SECTION_IDS = ["welcome", "repair", "goal", "tour", "focus", "criteria", "donecheck", "constraints", "drift", "consent"];
   function escapeHtml(value) {
     return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -68,6 +68,28 @@
       <button data-cmd="rebuildState">Rebuild the board from the record</button>
     </div>`;
   }
+  var GOAL_PHASE = {
+    active: { cls: "pending", word: "In progress" },
+    paused: { cls: "stated", word: "Paused" },
+    blocked: { cls: "confirmed", word: "Blocked" },
+    complete: { cls: "back", word: "Done \u2014 verified" },
+    budget_limited: { cls: "confirmed", word: "Out of rounds" }
+  };
+  function renderGoalRun(vm) {
+    const g = vm.goalRun;
+    if (!g) return "";
+    const p = GOAL_PHASE[g.phase];
+    const claim = g.phase === "active" && g.claimedComplete ? `<span class="quiet">Agent says done \u2014 Guardian is checking.</span>` : "";
+    const blocker = g.blockedReason ? `<p class="dc-tests">In the way: ${escapeHtml(g.blockedReason.message)}</p>` : "";
+    const buttons = g.phase === "active" ? `<button class="link" data-cmd="pauseGoal">pause</button>` : g.phase === "complete" ? "" : `<button class="link" data-cmd="resumeGoal">resume</button>`;
+    return `<div class="goal-run">
+      <span class="chip ${p.cls}">${p.word}</span>
+      <span class="quiet">rounds ${g.roundsStarted} of ${g.maxRounds}</span>
+      ${claim}
+      ${buttons}${g.phase !== "complete" ? ` <button class="link" data-cmd="clearGoalRun" title="Stop pursuing this goal automatically">stop</button>` : ""}
+      ${blocker}
+    </div>`;
+  }
   function renderGoal(vm) {
     if (!vm.setUp) return "";
     const goal = vm.goal.trim();
@@ -82,6 +104,7 @@
         <span class="status-word">${STATUS_WORD[vm.health]}</span>
       </div>
       <p class="status-sentence">${escapeHtml(statusSentence(vm))}</p>
+      ${renderGoalRun(vm)}
       ${vm.sessionReview ? `<p class="review-line">AI read the session: ${vm.sessionReview.verdict === "on_course" ? "on course" : "off course"} (${Math.round(vm.sessionReview.confidence * 100)}%) \u2014 ${escapeHtml(vm.sessionReview.rationale)}</p>` : ""}
       ${vm.suggestion ? `<p class="suggestion">${escapeHtml(vm.suggestion)}</p>` : ""}
     </div>`;
@@ -121,6 +144,80 @@
     const items = vm.successCriteria.map((c) => `<li class="${c.done ? "done" : ""}"><span class="tick">${c.done ? "\u2713" : ""}</span>${escapeHtml(c.text)}</li>`).join("");
     return `<div class="criteria"><div class="eyebrow">Done when</div><ul>${items}</ul></div>`;
   }
+  var DONE_HEADLINE = {
+    pass: "Every line holds up against the tape.",
+    fail: "The agent's done check didn't hold up.",
+    blocked: "The agent reported itself blocked.",
+    absent: "The agent finished work without a done check.",
+    not_required: ""
+  };
+  var LINE_CHIP = {
+    backed: { cls: "back", word: "checked" },
+    stated: { cls: "stated", word: "stated" },
+    waived: { cls: "stated", word: "n/a, with reason" },
+    gap: { cls: "pending", word: "gap declared" },
+    contradicted: { cls: "confirmed", word: "contradicted" },
+    unsupported: { cls: "confirmed", word: "no evidence" },
+    missing: { cls: "confirmed", word: "missing" }
+  };
+  function lineLabel(key) {
+    if (/^\d+$/.test(key)) return `Rule ${key}`;
+    if (key === "general") return "Overall";
+    if (key === "blocked") return "Blocked";
+    if (key === "what" || key === "unblock" || key === "who") return key === "unblock" ? "Unblock" : key[0].toUpperCase() + key.slice(1);
+    return key;
+  }
+  function noteHtml(note) {
+    return escapeHtml(note).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/`/g, "");
+  }
+  function wrongButton(vm, flag, ref, line = "") {
+    const key = [flag, ref, line].join("|");
+    if (vm.markedWrong.includes(key)) return `<span class="chip stated">marked wrong</span>`;
+    return `<button class="link" data-wrong="${escapeHtml(key)}" title="Tell Guardian this flag was a false alarm">wrong flag?</button>`;
+  }
+  function renderTrackRecord(vm) {
+    const t = vm.trackRecord;
+    if (!t) return "";
+    const parts = [
+      t.fixed ? `${t.fixed} fixed by the agent` : "",
+      t.testsGreen ? `${t.testsGreen} broken test run${t.testsGreen === 1 ? "" : "s"} green again` : "",
+      t.corrected ? `${t.corrected} claim${t.corrected === 1 ? "" : "s"} corrected` : "",
+      t.ignored ? `${t.ignored} not addressed` : "",
+      t.markedWrong ? `${t.markedWrong} marked wrong by you` : ""
+    ].filter(Boolean);
+    return `<p class="dc-tests">Guardian's flags this week: ${parts.join(" \xB7 ")}.</p>`;
+  }
+  function renderDoneCheck(vm) {
+    const d = vm.doneCheck;
+    if (!vm.setUp) return "";
+    const tests = renderTests(vm.tests, vm) + renderTrackRecord(vm);
+    if (!d) return tests;
+    const lines = d.lines.map((l) => {
+      const chip = LINE_CHIP[l.status] ?? { cls: "pending", word: l.status };
+      return `<li class="${chip.cls}"><span class="dc-key">${escapeHtml(lineLabel(l.key))}</span><span class="chip ${chip.cls}">${chip.word}</span><span class="dc-note">${noteHtml(l.note)}</span></li>`;
+    }).join("");
+    const problems = d.problems.map((p) => `<li class="confirmed"><span class="dc-note">${noteHtml(p)}</span></li>`).join("");
+    const followup = d.continued ? `<p class="quiet">The goal isn't done yet (${d.open.length} "done when" item${d.open.length === 1 ? "" : "s"} still open): sent the agent back to keep going. ${wrongButton(vm, "keep_going", d.ts)}</p>` : d.followupSent ? `<p class="quiet">Sent the agent back to fix it. ${wrongButton(vm, "followup", d.ts)}</p>` : "";
+    return `<div class="donecheck ${d.verdict}">
+    <div class="eyebrow">Last done check \xB7 ${shortTime(d.ts)}</div>
+    <p class="dc-headline">${escapeHtml(DONE_HEADLINE[d.verdict])}</p>
+    ${lines || problems ? `<ul class="dc-lines">${problems}${lines}</ul>` : ""}
+    ${followup}
+  </div>${tests}`;
+  }
+  function renderTests(t, vm) {
+    if (!t) return "";
+    const cmd = `<code>${escapeHtml(t.command)}</code>`;
+    const failed = (e) => e === "timeout" ? "timed out" : `failed (exit ${e})`;
+    const headline = t.exit === 0 ? `Guardian re-ran ${cmd} itself after the last change: it passes.` : t.broke ? `Guardian re-ran ${cmd} itself: it ${failed(t.exit)} with the last turn's changes and passes without them. That turn broke it.` : t.exit === "timeout" ? `Guardian re-ran ${cmd} itself: it timed out, so it says nothing either way.` : t.baselineExit !== void 0 ? `Guardian re-ran ${cmd} itself: it ${failed(t.exit)}, but it also ${t.baselineExit === "timeout" ? "timed out" : "failed"} before the last turn's changes.` : `Guardian re-ran ${cmd} itself: it ${failed(t.exit)}.`;
+    const cls = t.exit === 0 ? "pass" : t.broke ? "fail" : "blocked";
+    const output = t.output && t.exit !== 0 ? `<details class="dc-output"><summary>Last output</summary><pre>${escapeHtml(t.output.trim().split("\n").slice(-20).join("\n"))}</pre></details>` : "";
+    return `<div class="donecheck dc-rerun ${cls}">
+    <div class="eyebrow">Tests, re-run by Guardian \xB7 ${shortTime(t.ts)}</div>
+    <p class="dc-headline">${headline}${t.broke ? ` ${wrongButton(vm, "tests_broke", t.ts)}` : ""}</p>
+    ${output}
+  </div>`;
+  }
   function renderConstraints(vm) {
     if (!vm.setUp || vm.constraints.length === 0) return "";
     return `<div class="constraints"><div class="eyebrow">Boundaries</div><ul>${vm.constraints.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul></div>`;
@@ -145,7 +242,7 @@
       return `<li class="${e.realigned ? "back" : e.status}">
             <span class="node"></span>
             <div class="entry">
-              <div class="entry-head"><span class="when">${shortTime(e.ts)}</span>${driftChip(e)}</div>
+              <div class="entry-head"><span class="when">${shortTime(e.ts)}</span>${driftChip(e)}${e.status !== "dismissed" ? wrongButton(vm, "drift", e.driftId) : ""}</div>
               <code title="${escapeHtml(e.detail)}">${escapeHtml(kind ? `${kind} \xB7 ` : "")}${escapeHtml(value.split(" \xB7 task:")[0]?.slice(0, 64) ?? "")}</code>
             </div>
           </li>`;
@@ -175,6 +272,7 @@
       tour: renderTour(vm),
       focus: renderFocus(vm),
       criteria: renderCriteria(vm),
+      donecheck: renderDoneCheck(vm),
       constraints: renderConstraints(vm),
       drift: renderDrift(vm),
       consent: renderConsent(vm)
@@ -259,11 +357,15 @@
       });
       return;
     }
-    const target = event.target.closest("[data-cmd],[data-task],[data-rescore]");
+    const target = event.target.closest("[data-cmd],[data-task],[data-rescore],[data-wrong]");
     if (!target) return;
     if (target.dataset.cmd) vscode.postMessage({ type: "command", command: target.dataset.cmd });
     else if (target.dataset.task) vscode.postMessage({ type: "startTask", taskId: target.dataset.task });
     else if (target.dataset.rescore) vscode.postMessage({ type: "rescoreOne", driftId: target.dataset.rescore });
+    else if (target.dataset.wrong) {
+      const [flag, ref, line] = target.dataset.wrong.split("|");
+      vscode.postMessage({ type: "markWrong", flag, ref, ...line ? { line } : {} });
+    }
   });
   vscode.postMessage({ type: "ready" });
 })();

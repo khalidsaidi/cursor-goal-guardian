@@ -13,6 +13,9 @@ export interface GuardianPaths {
   verdicts: string;
   episodes: string;
   migrationMarker: string;
+  shellOutput: string;
+  lastResponses: string;
+  followupChains: string;
 }
 
 export function getGuardianPaths(workspaceRoot: string): GuardianPaths {
@@ -31,6 +34,9 @@ export function getGuardianPaths(workspaceRoot: string): GuardianPaths {
     verdicts: path.join(telemetryDir, "verdicts.json"),
     episodes: path.join(telemetryDir, "episodes.json"),
     migrationMarker: path.join(dir, "migration.json"),
+    shellOutput: path.join(telemetryDir, "shell-output.jsonl"),
+    lastResponses: path.join(telemetryDir, "last-responses.json"),
+    followupChains: path.join(telemetryDir, "followup-chains.json"),
   };
 }
 

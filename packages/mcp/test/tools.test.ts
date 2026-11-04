@@ -35,15 +35,17 @@ afterAll(async () => {
 });
 
 describe("tool surface", () => {
-  it("exposes exactly the six v2 tools — the permit machinery is gone", async () => {
+  it("exposes exactly the v2 tools, goal status included — the permit machinery is gone", async () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       "guardian_check_action",
       "guardian_declare_intent",
       "guardian_get_contract",
+      "guardian_get_goal",
       "guardian_get_status",
       "guardian_record_progress",
+      "guardian_set_goal_status",
       "guardian_update_goal",
     ]);
     expect(names).not.toContain("guardian_issue_permit");
@@ -156,5 +158,19 @@ describe("robustness", () => {
     expect(outcome.isError).toBe(true);
     const alive = await callJson("guardian_get_contract");
     expect(String(alive.goal)).toContain("CSV export");
+  });
+});
+
+describe("goal status tools", () => {
+  it("the agent may claim complete (Guardian verifies), pause only on the user's word, block only after rounds", async () => {
+    const { createGoal } = await import("@goal-guardian/core");
+    const created = await createGoal(ws.root, "Ship the CSV export feature", "user", 10);
+    const got = (await callJson("guardian_get_goal")).goal as { revision: number; phase: string };
+    expect(got).toMatchObject({ revision: created.revision, phase: "active" });
+    expect(await callJson("guardian_set_goal_status", { revision: got.revision, status: "paused" })).toMatchObject({ error: expect.stringMatching(/only for when the user asked/) });
+    expect(await callJson("guardian_set_goal_status", { revision: got.revision, status: "blocked", reason: "the API key is missing" })).toMatchObject({ error: expect.stringMatching(/too early to call this blocked/) });
+    expect(await callJson("guardian_set_goal_status", { revision: 999, status: "complete" })).toMatchObject({ code: "stale-revision" });
+    const claim = await callJson("guardian_set_goal_status", { revision: got.revision, status: "complete" });
+    expect(claim).toMatchObject({ goal: { phase: "active", claimedComplete: true }, note: expect.stringMatching(/Guardian verifies it/) });
   });
 });

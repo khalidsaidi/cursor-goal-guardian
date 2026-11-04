@@ -12,6 +12,7 @@ import { registerCheckAction } from "./tools/checkAction.js";
 import { registerGetStatus } from "./tools/getStatus.js";
 import { registerRecordProgress } from "./tools/recordProgress.js";
 import { registerUpdateGoal } from "./tools/updateGoal.js";
+import { registerGoalStatus } from "./tools/goalStatus.js";
 
 import { setServerForRoots } from "./workspace.js";
 
@@ -24,6 +25,7 @@ registerCheckAction(server);
 registerGetStatus(server);
 registerRecordProgress(server);
 registerUpdateGoal(server);
+registerGoalStatus(server);
 
 // No top-level await: the entry must bundle to CJS for Node SEA (the
 // win32-arm64 executable), and CJS forbids TLA.

@@ -18,6 +18,8 @@ export interface PanelDelegate {
   onCommand(command: string): Promise<void>;
   onStartTask(taskId: string): Promise<void>;
   onRescoreOne(driftId: string): Promise<void>;
+  /** The user marked a flag a false alarm. */
+  onMarkWrong(flag: string, ref: string, line?: string): Promise<void>;
   onConnectSubmit(form: { goal: string; criteria: string[]; constraints: string[]; gitignore: boolean }): Promise<void>;
 }
 
@@ -55,6 +57,9 @@ export class PanelController implements vscode.WebviewViewProvider {
         command?: string;
         taskId?: string;
         driftId?: string;
+        flag?: string;
+        ref?: string;
+        line?: string;
         form?: { goal: string; criteria: string[]; constraints: string[]; gitignore: boolean };
       }) => {
         if (message.type === "ready") await this.refresh();
@@ -62,6 +67,10 @@ export class PanelController implements vscode.WebviewViewProvider {
         else if (message.type === "startTask" && message.taskId) await this.delegate.onStartTask(message.taskId);
         else if (message.type === "rescoreOne" && message.driftId) await this.delegate.onRescoreOne(message.driftId);
         else if (message.type === "connectSubmit" && message.form) await this.delegate.onConnectSubmit(message.form);
+        else if (message.type === "markWrong" && message.flag && message.ref) {
+          await this.delegate.onMarkWrong(message.flag, message.ref, message.line);
+          await this.refresh();
+        }
       }),
       view.onDidDispose(() => {
         this.view = null;
@@ -129,7 +138,7 @@ export class PanelController implements vscode.WebviewViewProvider {
     const nonce = crypto.randomBytes(16).toString("hex");
     const script = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "webview.js"));
     const style = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "panel.css"));
-    const sections = ["welcome", "repair", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"]
+    const sections = ["welcome", "repair", "goal", "tour", "focus", "criteria", "donecheck", "constraints", "drift", "consent"]
       .map((id) => `<div id="${id}"></div>`)
       .join("\n");
     return `<!DOCTYPE html>

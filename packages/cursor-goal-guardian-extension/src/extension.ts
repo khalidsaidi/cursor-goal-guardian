@@ -8,12 +8,19 @@ import {
   readStateSafe,
   ACTION_TYPES,
   type ActionType,
+  appendAudit,
+  clearGoal,
+  markedWrong,
+  pauseGoal,
+  readGoal,
+  resumeGoal,
+  nowIso,
 } from "@goal-guardian/core";
 import { PanelController } from "./panel/panelController.js";
 import { RescoreService } from "./rescoreService.js";
 import { StatusBar } from "./statusBar.js";
 import { registerAutoBehaviors } from "./autoBehaviors.js";
-import { applySetup, connectWorkspace, doctorIntegration, offerMcpEnableGuidance, runUninstall } from "./setup.js";
+import { applySetup, connectWorkspace, doctorIntegration, offerMcpEnableGuidance, runUninstall, syncDoneCheckRule } from "./setup.js";
 import { Observer } from "./observer.js";
 import { openCommandCenter } from "./commandCenter.js";
 
@@ -52,6 +59,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     },
     onRescoreOne: async () => rescore.rescoreNow(),
+    onMarkWrong: async (flag, ref, line) => {
+      if (!root || !["followup", "tests_broke", "drift", "keep_going", "loop"].includes(flag)) return;
+      await appendAudit(root, markedWrong({ flag: flag as "followup" | "tests_broke" | "drift" | "keep_going" | "loop", ref, ...(line ? { line } : {}), ts: nowIso() }));
+    },
     onConnectSubmit: async (form) => {
       if (!root) return;
       try {
@@ -71,8 +82,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     observer,
   );
 
+  let configWatcher: vscode.FileSystemWatcher | null = null;
   const startServices = (): void => {
     controller.startWatching();
+    // Hand-edits to config.json flip the done-check protocol in or out of the
+    // agent's context without a reload.
+    if (root && !configWatcher) {
+      configWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, ".cursor/goal-guardian/config.json"));
+      const sync = (): void => void syncDoneCheckRule(root).catch(() => undefined);
+      configWatcher.onDidChange(sync);
+      configWatcher.onDidCreate(sync);
+      context.subscriptions.push(configWatcher);
+    }
     rescore.start();
     observer.start();
     void controller.refresh();
@@ -151,6 +172,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     },
     "goalGuardian.rescoreDrift": async () => rescore.rescoreNow(),
+    // The goal run, from the panel's goal bar: the user's hand on the loop.
+    "goalGuardian.pauseGoal": async () => {
+      if (!root) return;
+      const g = await readGoal(root);
+      if (g?.phase === "active") await pauseGoal(root, g.revision, "user");
+      await controller.refresh();
+    },
+    "goalGuardian.resumeGoal": async () => {
+      if (!root) return;
+      const g = await readGoal(root);
+      if (g && g.phase !== "active" && g.phase !== "complete") await resumeGoal(root, g.revision, "user");
+      await controller.refresh();
+    },
+    "goalGuardian.clearGoalRun": async () => {
+      if (!root) return;
+      await clearGoal(root, "user");
+      await controller.refresh();
+    },
     "goalGuardian.commandCenter": async () => {
       const r = requireRoot();
       if (!r) return;

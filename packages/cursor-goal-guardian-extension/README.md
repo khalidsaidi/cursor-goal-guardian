@@ -132,11 +132,84 @@ drift, and periodically reading the whole session to answer one question:
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-review.gif" alt="Consent once; false alarms clear themselves with written reasons" width="800" />
 
+### The goal keeps going until it is really done
+
+With the done check in `enforce`, your goal and its "done when" list become
+one goal record with a status: in progress, paused, blocked, done, or out of
+rounds. The panel shows the status, the rounds used and any blocker, with
+pause, resume and stop.
+
+- **Keep going.** If the agent stops with "done when" items still open that it
+  could finish itself, Guardian sends it back for another round (at most 3 per
+  message you send, 50 over the goal's life). If what's left is yours to do,
+  like adding a key, stopping is fine.
+- **Only Guardian marks it done.** The agent's "done" is a claim. The goal is
+  done when every "done when" item has evidence, nothing is open, and the tests
+  are intact.
+- **"Blocked" gets challenged.** A first "blocked" the agent could get past is
+  sent back once. The same claim again is accepted and shown in the panel.
+- **No spinning.** Two rounds with no command and no edit stop the goal as
+  blocked, and the agent writes one last message: what's done, what's in the
+  way, what it needs from you.
+- **Loops get a nudge.** The same command 3, 5 or 8 times in a row with nothing
+  in between gets a short note to the agent. No model, never blocks.
+
+### Tests, re-run by Guardian. No model, on by default
+
+After a turn that edited files, Guardian re-runs the agent's own last test
+command (`mvn test`, `pytest`, `npm test`, whatever it was) in a throwaway
+copy of the workspace, with credentials stripped. It guesses no toolchain:
+if the agent never ran tests, nothing is re-run. Set
+`doneCheck.tests.command` to always run your own. If the tests fail,
+Guardian runs them again without the turn's changes. That tells "this turn
+broke them" from "they were already failing". The panel shows the result in
+one line, with the failing output. It runs in the background, so Cursor
+never waits for it. With the done check in `enforce`, a `## Done check` over
+tests the turn broke is sent back, unless it declares the gap. Turn it off
+with `doneCheck.tests.enabled: false`.
+
+On 123 real agent turns, the agent had run tests in 95. Guardian re-ran
+them and wrongly blamed none of the 93 honest ones (0 of 93; 95% interval
+0–4%). 4 of those had tests already failing before the turn, and it said
+so instead of blaming the turn. It caught neither misleading turn: their
+tests did not break. This check catches a different failure: a "done" over
+tests the turn broke.
+
+### Done check — the agent's claims, checked against the tape
+
+Opt-in (Command Center → **Done check**). Any turn that changed something ends
+with a short `## Done check`: seven numbered lines (one per rule: claims backed,
+no contradictions, measured not argued, stated boundaries, reproducible, gaps
+declared, numbers with intervals) plus one `sc_N.` line per "done when"
+criterion. Each line cites evidence (a command and what it printed, a
+`file:line`, or a sample size with both error rates), says `does not apply:
+<reason>`, or declares a gap: `gap: … · closes with: … · held by: …`. A turn
+that can't finish ends with `## Blocked` (what, what would unblock it, who
+holds it) instead.
+
+Guardian checks the block **in code, against the tape** — no AI call. A cited
+command that never ran in the conversation, quoted output the command never
+printed, or a `file:line` past the end of the file is marked
+**contradicted**. The panel shows the last check line by line.
+
+- `advisory` — record and show. `enforce` — a failing block sends the agent
+  back with exactly the lines to fix (Cursor's stop-hook follow-up, capped at
+  3 per turn). Still never blocks a tool call.
+- What the code check can't do: it proves evidence is *real*, not that it is
+  *relevant* — a true `sed` printout cited for "no contradictions" passes.
+- Plain Q&A turns (nothing run or edited) owe no block.
+- Native Windows: checks are recorded and shown (read from Cursor's own
+  transcript), but `enforce` can't send follow-ups, because Cursor's hook
+  sandbox can't reach the workspace there. Enforcement is verified live in
+  Cursor over WSL; Linux and macOS run the same hook path.
+
 ### Safety rails
 
 - **Never blocks.** Every check answers "allow." The strongest opt-in setting
   (`escalateConfirmedDrift: "ask"`) hands confirmed, repeated drift to *you*
-  via Cursor's own confirmation dialog — Guardian itself never denies.
+  via Cursor's own confirmation dialog — Guardian itself never denies. The
+  done check's `enforce` mode sends the agent a follow-up message; it never
+  stops a command or an edit.
 - **Never nags.** One calm sentence per detour episode, not per action.
   `quiet` mode records everything and says nothing, ever.
 - **Never surprises.** No popups except one migration notice and one AI-review
@@ -221,13 +294,14 @@ them):
   actions.jsonl      # the session log
   telemetry/         # the tape (gitignored)
 .cursor/rules/goal-guardian.mdc      # teaches the agent the protocol
+.cursor/rules/goal-guardian-done-check.mdc   # only while the done check is on
 .cursor/skills/guardian*/            # /guardian and /guardian-goal
 ```
 
 **Settings**: `goalGuardian.statusBar.enabled` ·
 `goalGuardian.autoStartNextTask` (off) · `goalGuardian.autoPinEditedFiles`
 (off). Behavior knobs (notify mode, sensitivity, AI review pacing,
-escalation) live in `config.json` — the Command Center changes the common
+escalation, `doneCheck.mode` off/advisory/enforce) live in `config.json` — the Command Center changes the common
 ones for you.
 
 ## Upgrading from 0.4.x

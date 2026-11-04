@@ -1,4 +1,6 @@
 import type { GuardianState, GuardianAction, Task } from "../schema/state.js";
+import { flagTrackRecord } from "../donecheck/outcomes.js";
+import { currentGoal } from "../goal/service.js";
 import type { AuditRecord } from "../schema/audit.js";
 import { summarizeSession, type SessionSummary } from "../telemetry/summary.js";
 import type { PairedDrift } from "../telemetry/pairing.js";
@@ -50,6 +52,39 @@ export interface PanelViewModel {
   semantic: { consented: boolean; available: boolean; pendingCount: number };
   /** Latest whole-tape judge verdict, if any. */
   sessionReview: { verdict: "on_course" | "off_course"; confidence: number; rationale: string; ts: string; flaggedActions: string[] } | null;
+  /** The latest end-of-turn done check (null until one runs, or when the mode is off). */
+  doneCheck: {
+    verdict: "pass" | "fail" | "blocked" | "absent" | "not_required";
+    ts: string;
+    lines: Array<{ key: string; status: string; note: string }>;
+    problems: string[];
+    followupSent: boolean;
+    /** "Done when" items left open that the agent holds, and whether Guardian sent it back to keep going. */
+    open: string[];
+    continued: boolean;
+  } | null;
+  /** The goal as a run: phase, rounds used of its budget, blocker, whether completion is claimed or certified. */
+  goalRun: {
+    phase: "active" | "paused" | "blocked" | "complete" | "budget_limited";
+    roundsStarted: number;
+    maxRounds: number;
+    blockedReason?: { code: string; message: string };
+    claimedComplete: boolean;
+    certified: boolean;
+  } | null;
+  /** How Guardian's flags turned out over the last 7 days (null when none has an outcome yet). */
+  trackRecord: { fixed: number; corrected: number; testsGreen: number; ignored: number; markedWrong: number } | null;
+  /** Flags the user has marked wrong ("flag|ref|line"), so the panel stops offering the button. */
+  markedWrong: string[];
+  /** Guardian's latest own re-run of the project's tests, after a turn that edited files (no model). */
+  tests: {
+    ts: string;
+    command: string;
+    exit: number | "timeout";
+    baselineExit?: number | "timeout";
+    broke: boolean;
+    output?: string;
+  } | null;
   /** One honest sentence when the tape suggests the CONTRACT (not the agent) is stale. */
   suggestion: string | null;
   /** The guided first-ten-minutes checklist; steps tick from the real tape. */
@@ -164,6 +199,11 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       badge: 0,
       semantic: { consented: inputs.semanticConsented, available: inputs.semanticAvailable, pendingCount: 0 },
       sessionReview: null,
+      doneCheck: null,
+      tests: null,
+      trackRecord: null,
+      markedWrong: [],
+      goalRun: null,
       suggestion: null,
       tour: buildTour(inputs),
       stateBroken: inputs.stateBroken === true,
@@ -194,6 +234,44 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
   for (const r of records) {
     if (r.kind === "session.review" && (!sessionReview || Date.parse(r.ts) > Date.parse(sessionReview.ts))) {
       sessionReview = { verdict: r.verdict, confidence: r.confidence, rationale: r.rationale, ts: r.ts, flaggedActions: r.flaggedActions };
+    }
+  }
+
+  // Latest turn that owed a block (not_required turns are plain Q&A — not news).
+  let doneCheck: PanelViewModel["doneCheck"] = null;
+  for (const r of records) {
+    if (r.kind === "done.check" && r.verdict !== "not_required" && (!doneCheck || Date.parse(r.ts) >= Date.parse(doneCheck.ts))) {
+      doneCheck = {
+        verdict: r.verdict,
+        ts: r.ts,
+        lines: r.lines,
+        problems: r.problems,
+        followupSent: r.followupSent,
+        open: r.open ?? [],
+        continued: r.continued === true,
+      };
+    }
+  }
+
+  const week = flagTrackRecord(records, now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const trackRecord = Object.values(week).some((n) => n > 0)
+    ? { fixed: week.fixed, corrected: week.corrected, testsGreen: week.tests_green, ignored: week.ignored, markedWrong: week.marked_wrong }
+    : null;
+  const markedWrong = records
+    .filter((r): r is Extract<AuditRecord, { kind: "flag.outcome" }> => r.kind === "flag.outcome" && r.outcome === "marked_wrong")
+    .map((r) => [r.flag, r.ref, r.line ?? ""].join("|"));
+
+  let tests: PanelViewModel["tests"] = null;
+  for (const r of records) {
+    if (r.kind === "tests.rerun" && (!tests || Date.parse(r.ts) >= Date.parse(tests.ts))) {
+      tests = {
+        ts: r.ts,
+        command: r.command,
+        exit: r.exit,
+        ...(r.baselineExit !== undefined ? { baselineExit: r.baselineExit } : {}),
+        broke: r.broke,
+        ...(r.output ? { output: r.output } : {}),
+      };
     }
   }
 
@@ -236,6 +314,16 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       pendingCount: summary.counts24h.driftPending,
     },
     sessionReview,
+    doneCheck,
+    tests,
+    trackRecord,
+    markedWrong,
+    goalRun: (() => {
+      const g = currentGoal(records);
+      return g
+        ? { phase: g.phase, roundsStarted: g.roundsStarted, maxRounds: g.maxRounds, ...(g.blockedReason ? { blockedReason: g.blockedReason } : {}), claimedComplete: g.claimedComplete === true, certified: g.certified === true }
+        : null;
+    })(),
     suggestion,
     tour: buildTour(inputs),
     stateBroken: inputs.stateBroken === true,

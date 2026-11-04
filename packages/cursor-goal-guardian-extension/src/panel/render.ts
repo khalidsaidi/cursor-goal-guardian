@@ -10,7 +10,7 @@ import type { PanelViewModel, PanelTask, PanelDriftEntry } from "@goal-guardian/
  * the user's side of the screen: "Done when", "Boundaries", "Mark done".
  */
 
-export const SECTION_IDS = ["welcome", "repair", "goal", "tour", "focus", "criteria", "constraints", "drift", "consent"] as const;
+export const SECTION_IDS = ["welcome", "repair", "goal", "tour", "focus", "criteria", "donecheck", "constraints", "drift", "consent"] as const;
 export type SectionId = (typeof SECTION_IDS)[number];
 
 export function escapeHtml(value: string): string {
@@ -92,6 +92,36 @@ function renderRepair(vm: PanelViewModel): string {
     </div>`;
 }
 
+const GOAL_PHASE: Record<NonNullable<PanelViewModel["goalRun"]>["phase"], { cls: string; word: string }> = {
+  active: { cls: "pending", word: "In progress" },
+  paused: { cls: "stated", word: "Paused" },
+  blocked: { cls: "confirmed", word: "Blocked" },
+  complete: { cls: "back", word: "Done — verified" },
+  budget_limited: { cls: "confirmed", word: "Out of rounds" },
+};
+
+/** The goal as a run: where it stands, how many keep-going rounds it used, and what is in the way. */
+function renderGoalRun(vm: PanelViewModel): string {
+  const g = vm.goalRun;
+  if (!g) return "";
+  const p = GOAL_PHASE[g.phase];
+  const claim = g.phase === "active" && g.claimedComplete ? `<span class="quiet">Agent says done — Guardian is checking.</span>` : "";
+  const blocker = g.blockedReason ? `<p class="dc-tests">In the way: ${escapeHtml(g.blockedReason.message)}</p>` : "";
+  const buttons =
+    g.phase === "active"
+      ? `<button class="link" data-cmd="pauseGoal">pause</button>`
+      : g.phase === "complete"
+        ? ""
+        : `<button class="link" data-cmd="resumeGoal">resume</button>`;
+  return `<div class="goal-run">
+      <span class="chip ${p.cls}">${p.word}</span>
+      <span class="quiet">rounds ${g.roundsStarted} of ${g.maxRounds}</span>
+      ${claim}
+      ${buttons}${g.phase !== "complete" ? ` <button class="link" data-cmd="clearGoalRun" title="Stop pursuing this goal automatically">stop</button>` : ""}
+      ${blocker}
+    </div>`;
+}
+
 function renderGoal(vm: PanelViewModel): string {
   if (!vm.setUp) return "";
   const goal = vm.goal.trim();
@@ -108,6 +138,7 @@ function renderGoal(vm: PanelViewModel): string {
         <span class="status-word">${STATUS_WORD[vm.health]}</span>
       </div>
       <p class="status-sentence">${escapeHtml(statusSentence(vm))}</p>
+      ${renderGoalRun(vm)}
       ${vm.sessionReview ? `<p class="review-line">AI read the session: ${vm.sessionReview.verdict === "on_course" ? "on course" : "off course"} (${Math.round(vm.sessionReview.confidence * 100)}%) — ${escapeHtml(vm.sessionReview.rationale)}</p>` : ""}
       ${vm.suggestion ? `<p class="suggestion">${escapeHtml(vm.suggestion)}</p>` : ""}
     </div>`;
@@ -174,6 +205,109 @@ function renderCriteria(vm: PanelViewModel): string {
   return `<div class="criteria"><div class="eyebrow">Done when</div><ul>${items}</ul></div>`;
 }
 
+const DONE_HEADLINE: Record<NonNullable<PanelViewModel["doneCheck"]>["verdict"], string> = {
+  pass: "Every line holds up against the tape.",
+  fail: "The agent's done check didn't hold up.",
+  blocked: "The agent reported itself blocked.",
+  absent: "The agent finished work without a done check.",
+  not_required: "",
+};
+
+const LINE_CHIP: Record<string, { cls: string; word: string }> = {
+  backed: { cls: "back", word: "checked" },
+  stated: { cls: "stated", word: "stated" },
+  waived: { cls: "stated", word: "n/a, with reason" },
+  gap: { cls: "pending", word: "gap declared" },
+  contradicted: { cls: "confirmed", word: "contradicted" },
+  unsupported: { cls: "confirmed", word: "no evidence" },
+  missing: { cls: "confirmed", word: "missing" },
+};
+
+function lineLabel(key: string): string {
+  if (/^\d+$/.test(key)) return `Rule ${key}`;
+  if (key === "general") return "Overall";
+  if (key === "blocked") return "Blocked";
+  if (key === "what" || key === "unblock" || key === "who") return key === "unblock" ? "Unblock" : key[0]!.toUpperCase() + key.slice(1);
+  return key;
+}
+
+/** Escape, then render `code` spans the way the chat does — notes quote commands. */
+function noteHtml(note: string): string {
+  // A note shortened mid-span leaves one unpaired backtick: drop it.
+  return escapeHtml(note).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/`/g, "");
+}
+
+/** "Wrong flag?" — the user's label on a false alarm; once given, the flag says so instead. */
+function wrongButton(vm: PanelViewModel, flag: string, ref: string, line = ""): string {
+  const key = [flag, ref, line].join("|");
+  if (vm.markedWrong.includes(key)) return `<span class="chip stated">marked wrong</span>`;
+  return `<button class="link" data-wrong="${escapeHtml(key)}" title="Tell Guardian this flag was a false alarm">wrong flag?</button>`;
+}
+
+/** How Guardian's flags turned out this week — the reason to trust it, or not. */
+function renderTrackRecord(vm: PanelViewModel): string {
+  const t = vm.trackRecord;
+  if (!t) return "";
+  const parts = [
+    t.fixed ? `${t.fixed} fixed by the agent` : "",
+    t.testsGreen ? `${t.testsGreen} broken test run${t.testsGreen === 1 ? "" : "s"} green again` : "",
+    t.corrected ? `${t.corrected} claim${t.corrected === 1 ? "" : "s"} corrected` : "",
+    t.ignored ? `${t.ignored} not addressed` : "",
+    t.markedWrong ? `${t.markedWrong} marked wrong by you` : "",
+  ].filter(Boolean);
+  return `<p class="dc-tests">Guardian's flags this week: ${parts.join(" · ")}.</p>`;
+}
+
+/** The end-of-turn check: what the agent claimed, and what the tape says about it. */
+function renderDoneCheck(vm: PanelViewModel): string {
+  const d = vm.doneCheck;
+  if (!vm.setUp) return "";
+  const tests = renderTests(vm.tests, vm) + renderTrackRecord(vm);
+  if (!d) return tests;
+  const lines = d.lines
+    .map((l) => {
+      const chip = LINE_CHIP[l.status] ?? { cls: "pending", word: l.status };
+      return `<li class="${chip.cls}"><span class="dc-key">${escapeHtml(lineLabel(l.key))}</span><span class="chip ${chip.cls}">${chip.word}</span><span class="dc-note">${noteHtml(l.note)}</span></li>`;
+    })
+    .join("");
+  const problems = d.problems.map((p) => `<li class="confirmed"><span class="dc-note">${noteHtml(p)}</span></li>`).join("");
+  const followup = d.continued
+    ? `<p class="quiet">The goal isn't done yet (${d.open.length} "done when" item${d.open.length === 1 ? "" : "s"} still open): sent the agent back to keep going. ${wrongButton(vm, "keep_going", d.ts)}</p>`
+    : d.followupSent
+      ? `<p class="quiet">Sent the agent back to fix it. ${wrongButton(vm, "followup", d.ts)}</p>`
+      : "";
+  return `<div class="donecheck ${d.verdict}">
+    <div class="eyebrow">Last done check · ${shortTime(d.ts)}</div>
+    <p class="dc-headline">${escapeHtml(DONE_HEADLINE[d.verdict])}</p>
+    ${lines || problems ? `<ul class="dc-lines">${problems}${lines}</ul>` : ""}
+    ${followup}
+  </div>${tests}`;
+}
+
+/** Guardian's own test re-run after the last editing turn: no model, just the exit codes. */
+function renderTests(t: PanelViewModel["tests"], vm: PanelViewModel): string {
+  if (!t) return "";
+  const cmd = `<code>${escapeHtml(t.command)}</code>`;
+  const failed = (e: number | "timeout"): string => (e === "timeout" ? "timed out" : `failed (exit ${e})`);
+  const headline =
+    t.exit === 0
+      ? `Guardian re-ran ${cmd} itself after the last change: it passes.`
+      : t.broke
+        ? `Guardian re-ran ${cmd} itself: it ${failed(t.exit)} with the last turn's changes and passes without them. That turn broke it.`
+        : t.exit === "timeout"
+          ? `Guardian re-ran ${cmd} itself: it timed out, so it says nothing either way.`
+          : t.baselineExit !== undefined
+            ? `Guardian re-ran ${cmd} itself: it ${failed(t.exit)}, but it also ${t.baselineExit === "timeout" ? "timed out" : "failed"} before the last turn's changes.`
+            : `Guardian re-ran ${cmd} itself: it ${failed(t.exit)}.`;
+  const cls = t.exit === 0 ? "pass" : t.broke ? "fail" : "blocked";
+  const output = t.output && t.exit !== 0 ? `<details class="dc-output"><summary>Last output</summary><pre>${escapeHtml(t.output.trim().split("\n").slice(-20).join("\n"))}</pre></details>` : "";
+  return `<div class="donecheck dc-rerun ${cls}">
+    <div class="eyebrow">Tests, re-run by Guardian · ${shortTime(t.ts)}</div>
+    <p class="dc-headline">${headline}${t.broke ? ` ${wrongButton(vm, "tests_broke", t.ts)}` : ""}</p>
+    ${output}
+  </div>`;
+}
+
 function renderConstraints(vm: PanelViewModel): string {
   if (!vm.setUp || vm.constraints.length === 0) return "";
   return `<div class="constraints"><div class="eyebrow">Boundaries</div><ul>${vm.constraints.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul></div>`;
@@ -205,7 +339,7 @@ function renderDrift(vm: PanelViewModel): string {
           return `<li class="${e.realigned ? "back" : e.status}">
             <span class="node"></span>
             <div class="entry">
-              <div class="entry-head"><span class="when">${shortTime(e.ts)}</span>${driftChip(e)}</div>
+              <div class="entry-head"><span class="when">${shortTime(e.ts)}</span>${driftChip(e)}${e.status !== "dismissed" ? wrongButton(vm, "drift", e.driftId) : ""}</div>
               <code title="${escapeHtml(e.detail)}">${escapeHtml(kind ? `${kind} · ` : "")}${escapeHtml(value.split(" · task:")[0]?.slice(0, 64) ?? "")}</code>
             </div>
           </li>`;
@@ -242,6 +376,7 @@ export function renderSections(vm: PanelViewModel): Record<SectionId, string> {
     tour: renderTour(vm),
     focus: renderFocus(vm),
     criteria: renderCriteria(vm),
+    donecheck: renderDoneCheck(vm),
     constraints: renderConstraints(vm),
     drift: renderDrift(vm),
     consent: renderConsent(vm),

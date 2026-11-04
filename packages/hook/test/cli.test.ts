@@ -112,8 +112,15 @@ describe("hook behavior (built bundle)", () => {
 
   it("unknown events get a bare allow", async () => {
     const w = await ws();
-    const { status, response } = runHook(w.root, { hook_event_name: "stop" });
+    const { status, response } = runHook(w.root, { hook_event_name: "beforeSomethingNew" });
     expect(status).toBe(0);
     expect(response).toEqual({ continue: true, permission: "allow" });
+  });
+
+  it("stop with the done check off answers an empty object (its own shape, not a permission)", async () => {
+    const w = await ws();
+    const { status, response } = runHook(w.root, { hook_event_name: "stop", status: "completed", loop_count: 0 });
+    expect(status).toBe(0);
+    expect(response).toEqual({});
   });
 });

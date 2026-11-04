@@ -1,5 +1,68 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Done check (opt-in: off / advisory / enforce). Turns that changed something
+  end with a `## Done check` or `## Blocked` block; Guardian checks it in code
+  against the session tape — commands that never ran, quoted output that was
+  never printed, and `file:line` references past the end of a file are marked
+  contradicted. The panel shows the latest check; `enforce` sends the agent
+  back with the failing lines via Cursor's stop hook. New hook events:
+  `afterShellExecution` (output capture), `afterAgentResponse`, `stop`;
+  existing workspaces pick them up automatically on the next activation.
+- Done check, real-turn fixes: quoted output counts if the session printed it
+  anywhere or a cited file contains it; a command missing from the shell tape
+  is unverified, not fabricated; quoted definitions and mispaired quotes are
+  not treated as output; a gap "held by: me" is accepted; an unbalanced code
+  fence no longer hides the block. Honest real turns falsely marked
+  "contradicted": 13 of 31 before, 0 of 23 on a fresh set after.
+- The goal keeps going until it is done (done check in `enforce`). The
+  goal and its "done when" list become one goal record with a status
+  (in progress, paused, blocked, done, out of rounds), a round budget
+  (`doneCheck.goalRounds`, 50) and a version history on the tape. When the
+  agent stops with "done when" items still open that it could finish
+  itself, Guardian sends it back for another round (at most
+  `doneCheck.continueRounds`, 3, per message you send). Each round tells
+  it to pursue the whole goal, not a smaller or easier version, to check
+  the project as it is now, and to prove every item with evidence before
+  calling it done. Only Guardian marks a goal done: every "done when"
+  item backed by evidence, nothing open, the tests intact. The agent's own
+  "done" is recorded as a claim. A first "blocked" the agent could get
+  past is challenged once. Two rounds with no command and no edit stop the
+  goal as blocked ("no progress"), and the agent writes one last message
+  saying what's done, what's in the way, and what it needs from you. At
+  the round budget it hands off instead of starting new work. If you
+  change the goal, the next round says so. The panel shows the goal's
+  status, its rounds and any blocker, with pause, resume and stop.
+  New MCP tools: `guardian_get_goal` and `guardian_set_goal_status` ("complete" is only
+  a claim, "blocked" only after three rounds, "paused" only when you
+  asked).
+- Loops are caught, with no model: the same command run 3, 5 or 8 times
+  in a row with nothing in between gets a short note to the agent (look
+  at the last result, change the approach, or wrap up). Advisory, never
+  blocking, silent in `quiet` mode. Each loop records whether the agent
+  broke it.
+- Every flag records how it turned out (`flag.outcome` on the tape, no
+  model): a send-back the agent fixed by changing files, a claim it
+  corrected without changing any, broken tests that went green again, a flag still
+  there after the agent's answer. Each flag in the panel has a "wrong
+  flag?" button. The panel shows the week's track record ("Guardian's
+  flags this week: 4 fixed by the agent · 1 marked wrong by you"). A case
+  file joins every flag with its outcome, drift nudges included.
+- Guardian re-runs your tests itself, with no model, on by default
+  (`doneCheck.tests`). After a turn that edited files, it re-runs the
+  agent's own last test command, whatever the language, in a throwaway
+  copy with credentials stripped. It guesses no toolchain: if the agent
+  ran no tests, nothing is re-run. `doneCheck.tests.command` overrides it.
+  If the tests fail, it runs them again without the turn's
+  changes, so it can tell "this turn broke them" from "already failing".
+  The panel shows the result. With the done check in `enforce`, a
+  `## Done check` over tests the turn broke fails and the agent is sent
+  back, unless the block declares the gap. In `off` and `advisory` the
+  check finishes in the background, so Cursor never waits for it. The
+  stop hook keeps a 300 s timeout and a loop cap of 20.
+
 ## 1.0.0
 
 Ground-up rewrite. Identity: a drift flight-recorder for AI coding sessions —

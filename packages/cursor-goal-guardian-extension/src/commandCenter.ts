@@ -9,6 +9,7 @@ import {
   writeJsonAtomic,
   type NotifyMode,
 } from "@goal-guardian/core";
+import { syncDoneCheckRule } from "./setup.js";
 
 export interface CommandCenterDeps {
   root: string;
@@ -41,6 +42,11 @@ export async function openCommandCenter(deps: CommandCenterDeps): Promise<void> 
     { label: "$(pencil) Update goal…", description: state.goal || "no goal declared", action: "goal" },
     { label: "$(sparkle) Review recent drift with AI", action: "rescore" },
     { label: `$(bell) Notifications: ${config.notify}`, description: "quiet · balanced · vocal", action: "notify" },
+    {
+      label: `$(checklist) Done check: ${config.doneCheck.mode}`,
+      description: "off · advisory · enforce",
+      action: "donecheck",
+    },
     { label: "$(graph) Open the session panel", action: "panel" },
     { label: "$(files) Open a guardian file…", action: "files" },
     { label: "$(trash) Remove Guardian from this workspace…", description: "deletes everything it created", action: "remove" },
@@ -102,6 +108,28 @@ export async function openCommandCenter(deps: CommandCenterDeps): Promise<void> 
       await updateNotifyMode(deps.root, mode.label as NotifyMode);
       break;
     }
+    case "donecheck": {
+      const mode = await vscode.window.showQuickPick(
+        [
+          { label: "off", description: "no end-of-turn block (default)" },
+          { label: "advisory", description: "agent ends work turns with a Done check; Guardian checks it against the tape and shows the result" },
+          {
+            label: "enforce",
+            description: "same, and a failing block sends the agent back with the lines to fix",
+            // Cursor's native-Windows hook sandbox cannot reach the workspace
+            // (docs/verification.md), so the stop hook cannot follow up there.
+            ...(process.platform === "win32" && vscode.env.remoteName === undefined
+              ? { detail: "On native Windows this records and shows like advisory: Cursor's hook sandbox can't reach the workspace to send follow-ups. Use WSL or a remote for enforcement." }
+              : {}),
+          },
+        ],
+        { title: "Done check mode" },
+      );
+      if (!mode) return;
+      await updateDoneCheckMode(deps.root, mode.label as "off" | "advisory" | "enforce");
+      await syncDoneCheckRule(deps.root);
+      break;
+    }
     case "panel":
       await vscode.commands.executeCommand("goalGuardian.showPanel");
       break;
@@ -140,3 +168,17 @@ async function updateNotifyMode(root: string, notify: NotifyMode): Promise<void>
   raw.notify = notify;
   await writeJsonAtomic(p.config, parseConfig(raw));
 }
+
+async function updateDoneCheckMode(root: string, mode: "off" | "advisory" | "enforce"): Promise<void> {
+  const p = getGuardianPaths(root);
+  let raw: Record<string, unknown>;
+  try {
+    raw = (await readJsonFile(p.config)) as Record<string, unknown>;
+  } catch {
+    raw = {};
+  }
+  const prev = raw.doneCheck && typeof raw.doneCheck === "object" ? (raw.doneCheck as Record<string, unknown>) : {};
+  raw.doneCheck = { ...prev, mode };
+  await writeJsonAtomic(p.config, parseConfig(raw));
+}
+

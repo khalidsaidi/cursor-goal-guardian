@@ -53,6 +53,37 @@ export const configSchema = z
       })
       .strict()
       .default({}),
+    /** The end-of-turn done check: the agent closes every turn that changed
+     *  something with a `## Done check` (or `## Blocked`) block, checked in code
+     *  against the tape. off = no protocol, no check; advisory = record and show
+     *  in the panel; enforce = also send the agent back (Cursor's stop-hook
+     *  follow-up) when the block is absent, malformed, or contradicted. */
+    doneCheck: z
+      .object({
+        mode: z.enum(["off", "advisory", "enforce"]).default("off"),
+        /** Follow-ups per turn before giving up (Cursor also caps at its loop_limit). */
+        maxFollowups: z.number().int().min(1).max(10).default(3),
+        /** Enforce: when a block is honest but leaves "done when" items open that the agent itself holds,
+         *  send it back to keep going — at most this many times per user turn. 0 = never. */
+        continueRounds: z.number().int().min(0).max(10).default(3),
+        /** Keep-going rounds over the goal's whole life; at the cap the goal is budget_limited and the agent wraps up. */
+        goalRounds: z.number().int().min(1).max(500).default(50),
+        /** No model: after a turn that edited files, Guardian re-runs the project's tests in a throwaway copy
+         *  (credentials stripped). A turn whose changes break tests that passed without them is flagged; in
+         *  enforce mode a "done" over broken tests sends the agent back. Runs even with mode "off". */
+        tests: z
+          .object({
+            enabled: z.boolean().default(true),
+            /** When it is not `npm test` (package.json "test" script). */
+            command: z.string().min(1).optional(),
+            /** Per run; a failing run is repeated once without the turn's changes. */
+            timeoutSeconds: z.number().int().min(5).max(120).default(60),
+          })
+          .strict()
+          .default({}),
+      })
+      .strict()
+      .default({}),
     advisories: z
       .object({
         remindWhenNoActiveTask: z.boolean().default(true),

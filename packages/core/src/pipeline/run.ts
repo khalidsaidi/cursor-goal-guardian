@@ -3,6 +3,7 @@ import { assignEpisode, loadEpisodes, saveEpisodes } from "../drift/episodes.js"
 import { evaluateLexicalDrift, type DriftActionType } from "../drift/lexical.js";
 import { loadVerdicts } from "../drift/rescorer.js";
 import { evaluatePolicy } from "../policy/engine.js";
+import { consecutiveRepeats, LOOP_THRESHOLDS, loopNudge } from "../drift/loop.js";
 import { newId, nowIso } from "../clock.js";
 import { readConfigSafe, readStateSafe } from "../safeReaders.js";
 import type { HookEventName } from "../schema/audit.js";
@@ -56,8 +57,39 @@ export async function runPipeline(
       kind: "action.observed",
       actionType,
       actionValue: actionValue.slice(0, 300),
+      ...(ids.conversationId ? { conversationId: ids.conversationId } : {}),
       ...(source ? { source } : {}),
     });
+  }
+
+  // Loops: the same command again and again with nothing in between (no model).
+  let loop: { command: string; count: number } | null = null;
+  if (actionType !== "read" && actionValue.trim()) {
+    const recent = await readAuditTail(root, 400);
+    // How the last loop flag in this conversation turned out: the agent did something else, or kept going.
+    const lastLoop = [...recent].reverse().find((r) => r.kind === "loop.repeat" && (!ids.conversationId || !r.conversationId || r.conversationId === ids.conversationId));
+    if (actionType === "shell" || actionType === "mcp") {
+      const count = consecutiveRepeats(recent, ids.conversationId, actionValue);
+      if ((LOOP_THRESHOLDS as readonly number[]).includes(count)) loop = { command: actionValue, count };
+    }
+    if (lastLoop && lastLoop.kind === "loop.repeat" && !recent.some((r) => r.kind === "flag.outcome" && r.flag === "loop" && r.ref === lastLoop.ts)) {
+      const broke = (actionType !== "shell" && actionType !== "mcp") || actionValue.trim().replace(/\s+/g, " ") !== lastLoop.command.trim().replace(/\s+/g, " ");
+      if (broke || loop) {
+        await appendAudit(root, {
+          ts: nowIso(),
+          kind: "flag.outcome",
+          ...(ids.conversationId ? { conversationId: ids.conversationId } : {}),
+          flag: "loop",
+          ref: lastLoop.ts,
+          outcome: broke ? "fixed" : "ignored",
+          editsAfter: actionType === "edit" ? 1 : 0,
+          text: `${lastLoop.command.slice(0, 200)} ×${lastLoop.count}`,
+        });
+      }
+    }
+    if (loop) {
+      await appendAudit(root, { ts: nowIso(), kind: "loop.repeat", ...(ids.conversationId ? { conversationId: ids.conversationId } : {}), command: actionValue.slice(0, 500), count: loop.count });
+    }
   }
 
   const advisory =
@@ -105,6 +137,11 @@ export async function runPipeline(
       `heads up — "${truncate(actionValue)}" matches a high-risk pattern${advisory.reason ? `: ${advisory.reason.toLowerCase()}` : ""}`,
       `"${truncate(actionValue)}" matches a high-risk pattern${advisory.reason ? ` (${advisory.reason.toLowerCase()})` : ""}. Flag it to the user in your reply and confirm before doing anything similar again.`,
     );
+  }
+
+  if (loop) {
+    const n = loopNudge(loop.command, loop.count);
+    return advisoryNudge(n.user, n.agent);
   }
 
   if (drift && driftNudge) {

@@ -3,13 +3,23 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { spawn, type ChildProcess } from "node:child_process";
-import { readAuditTail, runPipeline, type AuditRecord, type DriftActionType, type HookEventName } from "@goal-guardian/core";
+import os from "node:os";
+import {
+  lastAssistantTextFromTranscript,
+  readAuditTail,
+  readConfigSafe,
+  runDoneCheck,
+  runPipeline,
+  type AuditRecord,
+  type DriftActionType,
+  type HookEventName,
+} from "@goal-guardian/core";
 
 /**
  * In-process recorder for platforms where Cursor's hook runtime cannot reach
  * the workspace (native Windows runs hooks in a sandbox that mis-attributes
  * the workspace and blocks its filesystem). The professional pattern — the
- * one OpenAI's extension uses for everything — is to observe from your own
+ * common pattern for extensions — is to observe from your own
  * extension process instead of depending on the host's hook plumbing. This
  * observer runs the exact same core pipeline the hook binary runs, so the
  * tape, drift scoring, episodes, and advisories are identical; only the
@@ -23,6 +33,7 @@ const LIVENESS_CACHE_MS = 30_000;
 const LEASE_HEARTBEAT_MS = 10_000;
 const LEASE_STALE_MS = 30_000;
 const LEASE_RETRY_MS = 20_000;
+const TRANSCRIPT_RETRY_MS = 15_000;
 const IGNORED_SEGMENTS = new Set([".git", "node_modules", "dist", "out", "build", "coverage", ".next", ".cache"]);
 
 /** Native Windows desktop only — everywhere else Cursor's hooks work and are the richer channel. */
@@ -151,6 +162,40 @@ export function processWatchScript(): string {
   ].join("\n");
 }
 
+/**
+ * Cursor keeps each agent conversation as JSONL under
+ * ~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl, where <slug>
+ * is the workspace path with every non-alphanumeric run turned into "-"
+ * (C:\Temp\app -> c-Temp-app; the drive letter's case has varied across
+ * Cursor builds, so matching is case-insensitive).
+ */
+export function transcriptProjectSlug(root: string): string {
+  return root.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+export function findTranscriptDir(home: string, root: string): string | null {
+  const projects = path.join(home, ".cursor", "projects");
+  const want = transcriptProjectSlug(root).toLowerCase();
+  try {
+    const hit = fs.readdirSync(projects).find((d) => d.toLowerCase() === want);
+    return hit ? path.join(projects, hit, "agent-transcripts") : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A finished turn: the transcript's last line is Cursor's turn_ended marker. */
+export function endsWithTurnEnded(jsonl: string): boolean {
+  const lines = jsonl.split("\n").filter((l) => l.trim());
+  const last = lines[lines.length - 1];
+  if (!last) return false;
+  try {
+    return (JSON.parse(last) as { type?: string }).type === "turn_ended";
+  } catch {
+    return false;
+  }
+}
+
 interface ShellExecutionStartEvent {
   execution?: { commandLine?: { value?: string } };
 }
@@ -165,8 +210,15 @@ export class Observer implements vscode.Disposable {
   private started = false;
   private leaseTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private transcriptWatcher: fs.FSWatcher | null = null;
+  private transcriptRetry: ReturnType<typeof setTimeout> | null = null;
+  /** Transcript file -> how many turn_ended markers have been judged. */
+  private readonly judgedTurns = new Map<string, number>();
 
-  constructor(private readonly root: string | null) {}
+  constructor(
+    private readonly root: string | null,
+    private readonly transcriptRetryMs: number = TRANSCRIPT_RETRY_MS,
+  ) {}
 
   private leasePath(): string {
     return path.join(this.root ?? "", ".cursor", "goal-guardian", "telemetry", "observer.lock");
@@ -257,6 +309,73 @@ export class Observer implements vscode.Disposable {
     // OS-level backstop: agent tool-runners can bypass integrated terminals,
     // but nothing launches a process without the OS seeing it.
     this.startProcessWatcher();
+
+    // Done check: the hook runtime's stop event never reaches the workspace
+    // here, so judge each finished turn from Cursor's own transcript.
+    this.startTranscriptWatcher();
+  }
+
+  /**
+   * Cursor creates ~/.cursor/projects/<slug>/agent-transcripts on the FIRST
+   * chat in a workspace — usually after we activate (seen live on native
+   * Windows: activation 19:09:29, folder 19:10:04). Until it exists, retry;
+   * if the watch dies (folder deleted), re-arm the same way.
+   */
+  private startTranscriptWatcher(): void {
+    if (!this.root || this.transcriptWatcher) return;
+    const retry = (): void => {
+      this.transcriptWatcher = null;
+      this.transcriptRetry ??= setTimeout(() => {
+        this.transcriptRetry = null;
+        this.startTranscriptWatcher();
+      }, this.transcriptRetryMs);
+    };
+    const dir = findTranscriptDir(process.env.GOAL_GUARDIAN_TEST_HOME ?? os.homedir(), this.root);
+    if (!dir || !fs.existsSync(dir)) {
+      retry();
+      return;
+    }
+    // Turns already finished before we started are history, not news.
+    try {
+      for (const id of fs.readdirSync(dir)) {
+        const file = path.join(dir, id, `${id}.jsonl`);
+        if (fs.existsSync(file) && !this.judgedTurns.has(file)) this.judgedTurns.set(file, countTurnEnds(fs.readFileSync(file, "utf8")));
+      }
+    } catch {
+      /* unreadable now — new conversations still create files */
+    }
+    try {
+      this.transcriptWatcher = fs.watch(dir, { recursive: true }, (_event, name) => {
+        if (!name || !String(name).endsWith(".jsonl")) return;
+        void this.judgeTranscript(path.join(dir, String(name)));
+      });
+      this.transcriptWatcher.on("error", () => {
+        this.transcriptWatcher?.close();
+        retry();
+      });
+    } catch {
+      retry();
+    }
+  }
+
+  private async judgeTranscript(file: string): Promise<void> {
+    if (!this.root) return;
+    try {
+      const dc = (await readConfigSafe(this.root)).doneCheck;
+      if (dc.mode === "off" && !dc.tests.enabled) return;
+      if (await this.hooksAlive()) return; // the stop hook owns it
+      const jsonl = fs.readFileSync(file, "utf8");
+      if (!endsWithTurnEnded(jsonl)) return;
+      const ends = countTurnEnds(jsonl);
+      if ((this.judgedTurns.get(file) ?? 0) >= ends) return;
+      this.judgedTurns.set(file, ends);
+      const message = lastAssistantTextFromTranscript(jsonl) ?? "";
+      const conversationId = path.basename(file, ".jsonl");
+      const sinceIso = new Date(fs.statSync(file).birthtimeMs || fs.statSync(file).ctimeMs).toISOString();
+      await runDoneCheck(this.root, { message, conversationId, sinceIso, source: "observer" });
+    } catch {
+      // The recorder must never disturb the editor.
+    }
   }
 
   private startProcessWatcher(): void {
@@ -341,6 +460,10 @@ export class Observer implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.transcriptWatcher?.close();
+    this.transcriptWatcher = null;
+    if (this.transcriptRetry) clearTimeout(this.transcriptRetry);
+    this.transcriptRetry = null;
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     for (const d of this.disposables) d.dispose();
@@ -357,4 +480,10 @@ export class Observer implements vscode.Disposable {
       /* nothing to release */
     }
   }
+}
+
+function countTurnEnds(jsonl: string): number {
+  let n = 0;
+  for (const line of jsonl.split("\n")) if (line.includes('"turn_ended"')) n += 1;
+  return n;
 }
