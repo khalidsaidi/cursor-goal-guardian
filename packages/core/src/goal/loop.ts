@@ -9,10 +9,11 @@ import { appendAudit, readAuditTail, readGoalRecords } from "../audit/log.js";
 import { nowIso } from "../clock.js";
 import { readContractSafe } from "../safeReaders.js";
 import type { Contract } from "../schema/contract.js";
-import type { AuditRecord, GoalEndRecord, GoalReportRecord, GoalControlRecord, GoalRoundRecord, UserMessageRecord } from "../schema/audit.js";
+import type { AuditRecord, GoalEndRecord, GoalReportRecord, GoalControlRecord, GoalReviewRecord, GoalRoundRecord, UserMessageRecord } from "../schema/audit.js";
 import { evaluateReport, projectPath, userSaid, type GoalEvaluation } from "./evaluate.js";
 import { CLOSING, goalBlock, goalClosingMessage, goalRoundMessage } from "./prompts.js";
 import { captureGoal } from "./capture.js";
+import { MAX_REVIEWS, reviewLines, runReview } from "./review.js";
 import { readShellOutputs, readShrunkFiles, readTree, readUserPrompts, type TreeState } from "./record.js";
 
 /** Per user message. Only real progress keeps a run going this long: see NO_PROGRESS_ROUNDS. */
@@ -181,7 +182,8 @@ export async function submitGoalReport(root: string, input: GoalReportInput): Pr
   if (phase === "paused") return { accepted: false, ...none, message: "The user paused this goal. Only they can resume it. Stop goal work." };
   if (phase === "complete") return { accepted: false, ...none, message: "This goal is already closed. There's nothing to report." };
   const seq = readSequence(root, all, reportingChat(all), hash);
-  await appendAudit(root, { ts: nowIso(), kind: "goal.report", goalHash: hash, ...input });
+  const reportTs = nowIso();
+  await appendAudit(root, { ts: reportTs, kind: "goal.report", goalHash: hash, ...input });
   if (input.status === "set_aside") {
     const prompts = await readUserPrompts(root);
     if (prompts && !userSaid(input.userWords, prompts)) {
@@ -200,7 +202,27 @@ export async function submitGoalReport(root: string, input: GoalReportInput): Pr
   if (result.unproved.length || result.unclaimed.length) {
     return { accepted: false, message: "Not accepted yet: fix what's listed and report again.", unproved: result.unproved, unclaimed: result.unclaimed };
   }
+  // Guardian's record agrees. One independent review tries to prove it wrong, a limited number of times per run.
+  if (reviewsOf(seq, hash).length < MAX_REVIEWS) {
+    const outcome = await runReview(root, contract);
+    const chat = reportingChat(all);
+    await appendAudit(root, {
+      ts: nowIso(), kind: "goal.review", ...(chat ? { conversationId: chat } : {}), goalHash: hash, reportTs,
+      ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra,
+    });
+    const lines = reviewLines(outcome);
+    if (lines.length) {
+      return { accepted: false, message: REVIEW_OBJECTS, unproved: lines, unclaimed: [] };
+    }
+  }
   return { accepted: true, ...none, message: CLOSING.proved };
+}
+
+const REVIEW_OBJECTS = "Not accepted yet: an independent reviewer checked the project and objects. Fix what holds up; where it's wrong, say why with evidence. Then report again.";
+
+/** Reviews of this goal in this run, oldest first. */
+function reviewsOf(seq: Sequence, hash: string): GoalReviewRecord[] {
+  return seq.records.filter((r): r is GoalReviewRecord => r.kind === "goal.review" && r.goalHash === hash);
 }
 
 /** Nothing moved since the round before: no edit in this chat, the same files, the same open items. */
@@ -263,6 +285,7 @@ export async function runGoalStop(root: string, input: { conversationId?: string
   let unproved: string[] = [];
   let unclaimed = stillChanged(seq);
   let extras: string[] = [];
+  let reviewer: string[] = [];
   const notes: string[] = [];
   const lastRound = seq.rounds[seq.rounds.length - 1];
 
@@ -287,8 +310,15 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     // An extra the agent was already told about and still keeps is the user's call: reported, not re-argued.
     const warned = new Set(seq.rounds.flatMap((r) => r.extras));
     extras = result.extras.filter((f) => !warned.has(f));
-    if (seq.report.status === "complete" && !unproved.length && !unclaimed.length && !extras.length) {
-      await end(root, seq, conversationId, hash, "proved", { proved: result.proved, extras: result.extras, changes: seq.report.changes.map((c) => ({ file: projectPath(root, c.file), serves: c.serves })), ...(seq.report.removed?.length ? { removed: seq.report.removed } : {}) }, input.tokens);
+    const reviews = reviewsOf(seq, hash);
+    const objected = [...reviews].reverse().find((r) => r.ran && (r.fails.length || r.extra.length));
+    const latest = reviews[reviews.length - 1];
+    // The reviewer objected to this very report: that goes back as a round, like anything else that doesn't hold.
+    if (seq.report.status === "complete" && latest && latest.reportTs === seq.report.ts && objected === latest) reviewer = reviewLines(latest);
+    if (seq.report.status === "complete" && !unproved.length && !unclaimed.length && !extras.length && !reviewer.length) {
+      // Reviews ran out with an objection standing: the record decides, and the objection goes to the user.
+      const standing = objected && reviews.length >= MAX_REVIEWS && reviews.indexOf(objected) === reviews.length - 1 ? reviewLines(objected) : [];
+      await end(root, seq, conversationId, hash, "proved", { ...(standing.length ? { reviewer: standing } : {}), proved: result.proved, extras: result.extras, changes: seq.report.changes.map((c) => ({ file: projectPath(root, c.file), serves: c.serves })), ...(seq.report.removed?.length ? { removed: seq.report.removed } : {}) }, input.tokens);
       return null;
     }
   } else {
@@ -314,7 +344,8 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     return goalClosingMessage(contract.goal, contract.successCriteria, `that was the last of ${GOAL_MAX_ROUNDS} rounds.`, unproved);
   }
   const round = loopCount + 1;
-  await appendAudit(root, { ts: nowIso(), kind: "goal.round", conversationId, goalHash: hash, round, idle, ...(input.tokens ? { tokens: input.tokens } : {}), ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited });
+  notes.push(...reviewer.map((l) => `- ${l}`));
+  await appendAudit(root, { ts: nowIso(), kind: "goal.round", conversationId, goalHash: hash, round, idle, ...(reviewer.length ? { reviewer } : {}), ...(input.tokens ? { tokens: input.tokens } : {}), ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited });
   const latestMessage = (await readUserPrompts(root))?.at(-1);
   return goalRoundMessage(contract.goal, contract.successCriteria, { latestMessage, round, maxRounds: GOAL_MAX_ROUNDS, unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited, notes });
 }

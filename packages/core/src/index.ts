@@ -10,6 +10,7 @@ export * from "./contractStore.js";
 export * from "./audit/log.js";
 export * from "./goal/record.js";
 export * from "./goal/capture.js";
+export * from "./goal/review.js";
 export * from "./goal/evaluate.js";
 export * from "./goal/prompts.js";
 export * from "./goal/loop.js";

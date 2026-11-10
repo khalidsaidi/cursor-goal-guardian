@@ -63,6 +63,7 @@
       ...g.detail,
       ...g.changes.filter((c) => c.serves !== "extra").map((c) => `Changed for ${c.serves}: ${c.files.join(", ")}`),
       ...g.extras.map((f) => `Not for any done-when item, your call: ${f}`),
+      ...g.reviewer.map((l) => `Reviewer's opinion: ${l.replace(/^Reviewer: /, "")}`),
       ...g.goalFileEdited ? ["The agent edited Guardian's goal files during this run."] : []
     ];
     return `<p class="review-line">${escapeHtml(head)}</p>${lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("")}`;

@@ -33,6 +33,10 @@ No model and no assumption about language or tools. The agent names the proof; G
 - A command must be on the record, have started after the last edit, have printed the quoted line, and the project must not have changed since (`git status` and `git diff`).
 - A file must be inside the project, exist, and hold the quoted line.
 
+## Independent review
+
+When the record backs every item, one review runs before "complete" is accepted (`packages/core/src/goal/review.ts`). `cursor-agent`, on the user's own login and default model, runs headless in a throwaway copy (a shared clone with the working tree laid over it, no `.cursor`, credentials stripped except Cursor's own). It is asked to prove each item isn't done and to list changes no item needs, and answers in JSON. Its objections go back through the same loop. There are at most 2 reviews per run; after that the record decides and a standing objection goes on `goal.end` for the user. No reviewer, an error, unreadable output or more than 90 s means skipped, recorded as `goal.review` with `ran: false`. For tests, `GOAL_GUARDIAN_REVIEWER` replaces the binary and `GOAL_GUARDIAN_REVIEW_PROMPT` the prompt.
+
 ## Decisions
 
 - **Edits from another chat or Tab make proof stale.** The code really did change, and the rerun is cheap. Parallel chats can use up rounds this way; the cap ends it.

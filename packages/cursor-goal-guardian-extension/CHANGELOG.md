@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Independent review at "done"
+
+When the agent reports the goal complete and Guardian's record backs every item, one independent review runs before Guardian accepts it. A separate headless agent on your own Cursor login and default model (`cursor-agent`) works in a throwaway copy of the project. It tries to prove each "done when" item isn't really done, and lists changes no item needs. Its objections go back to the agent as part of the same loop, at most twice per run. After that the record decides, and any objection still standing is shown on the panel as the reviewer's opinion. Without `cursor-agent`, or if the review fails or takes longer than 90 seconds, it's skipped and noted, never blocking. Each review costs one agent request on your Cursor plan.
+
 ### Removed
 - AI review. Scored on real agent runs for the first time, it found no real drift, so it no
   longer runs or spends your plan. Older workspaces keep working; its old settings are ignored.

@@ -76,13 +76,14 @@ describe("goal loop panel lines", () => {
   });
 
   it("a proved goal shows its receipts, what each changed file was for, and any extra left for the user", () => {
-    const goal = renderSections(vm([{ ts: at(1), kind: "goal.end", ...base, outcome: "proved", proved: [{ criterion: "sc_1", command: "mvn verify", quote: "BUILD SUCCESS" }, { criterion: "sc_2", file: "doc.md", contains: "--csv" }], extras: ["README.md"], changes: [{ file: "src/export.ts", serves: "sc_1" }, { file: "test/export.test.ts", serves: "sc_1" }, { file: "doc.md", serves: "sc_2" }, { file: "README.md", serves: "extra" }], goalFileEdited: true }])).goal;
+    const goal = renderSections(vm([{ ts: at(1), kind: "goal.end", ...base, outcome: "proved", proved: [{ criterion: "sc_1", command: "mvn verify", quote: "BUILD SUCCESS" }, { criterion: "sc_2", file: "doc.md", contains: "--csv" }], extras: ["README.md"], changes: [{ file: "src/export.ts", serves: "sc_1" }, { file: "test/export.test.ts", serves: "sc_1" }, { file: "doc.md", serves: "sc_2" }, { file: "README.md", serves: "extra" }], reviewer: ["Reviewer: sc_2 isn't done: the flag is documented but never parsed"], goalFileEdited: true }])).goal;
     expect(goal).toMatch(/Goal proved on Guardian(&#39;|&#x27;|')s record/);
     expect(goal).toMatch(/sc_1: ran mvn verify, printed (&quot;|")BUILD SUCCESS/);
     expect(goal).toMatch(/sc_2: doc\.md contains (&quot;|")--csv/);
     expect(goal).toContain("Changed for sc_1: src/export.ts, test/export.test.ts");
     expect(goal).toContain("Changed for sc_2: doc.md");
     expect(goal).toContain("Not for any done-when item, your call: README.md");
+    expect(goal).toMatch(/Reviewer(&#39;|&#x27;|')s opinion: sc_2 isn(&#39;|&#x27;|')t done: the flag is documented but never parsed/);
     expect(goal).toContain("edited Guardian");
   });
 

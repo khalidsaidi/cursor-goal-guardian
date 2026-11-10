@@ -33,6 +33,8 @@ export interface PanelViewModel {
     extras: string[];
     /** Changed files grouped by the done-when item the agent says each serves. */
     changes: Array<{ serves: string; files: string[] }>;
+    /** The independent reviewer's objections: its opinion, for the user to weigh. */
+    reviewer: string[];
     goalFileEdited: boolean;
     rounds: number | null;
     seconds: number | null;
@@ -120,11 +122,11 @@ function buildGoalRun(records: AuditRecord[]): PanelViewModel["goalRun"] {
   for (let i = records.length - 1; i >= 0; i -= 1) {
     const r = records[i]!;
     if (r.kind === "goal.round") {
-      return { ts: r.ts, outcome: "working", round: r.round, detail: [...r.unproved], extras: r.extras, changes: [], goalFileEdited: r.goalFileEdited === true, rounds: null, seconds: null, tokens: r.tokens ?? null };
+      return { ts: r.ts, outcome: "working", round: r.round, detail: [...r.unproved], extras: r.extras, changes: [], reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: null, seconds: null, tokens: r.tokens ?? null };
     }
     if (r.kind === "goal.end") {
       const detail = r.outcome === "proved" ? (r.proved ?? []).map(proofLine) : r.reason ? [r.reason] : (r.unproved ?? []);
-      return { ts: r.ts, outcome: r.outcome, round: null, detail, extras: r.extras ?? [], changes: groupChanges(r.changes ?? []), goalFileEdited: r.goalFileEdited === true, rounds: r.rounds ?? null, seconds: r.seconds ?? null, tokens: r.tokens ?? null };
+      return { ts: r.ts, outcome: r.outcome, round: null, detail, extras: r.extras ?? [], changes: groupChanges(r.changes ?? []), reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: r.rounds ?? null, seconds: r.seconds ?? null, tokens: r.tokens ?? null };
     }
   }
   return null;

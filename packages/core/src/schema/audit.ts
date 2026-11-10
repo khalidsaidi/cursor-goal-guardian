@@ -180,11 +180,30 @@ export const goalRoundRecordSchema = z
     unproved: z.array(z.string()),
     unclaimed: z.array(z.string()),
     extras: z.array(z.string()),
+    /** What the independent reviewer objected to, sent back with this round. */
+    reviewer: z.array(z.string()).optional(),
     goalFileEdited: z.boolean().optional(),
   })
   .strict();
 
 /** How a run on the goal ended. Only "proved" means Guardian's record backs every item. */
+/** One adversarial review of a "complete" report: whether it ran, and what it objected to. */
+export const goalReviewRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.review"),
+    conversationId: z.string().optional(),
+    goalHash: z.string(),
+    /** The report it reviewed. */
+    reportTs: z.string(),
+    ran: z.boolean(),
+    reason: z.string().optional(),
+    seconds: z.number().int().nonnegative(),
+    fails: z.array(z.object({ id: z.string(), evidence: z.string() }).strict()),
+    extra: z.array(z.object({ file: z.string(), what: z.string() }).strict()),
+  })
+  .strict();
+
 export const goalEndRecordSchema = z
   .object({
     ...base,
@@ -202,6 +221,8 @@ export const goalEndRecordSchema = z
     /** Every changed file and the done-when item the agent says it serves, for the user to look over. */
     changes: z.array(z.object({ file: z.string(), serves: z.string() }).strict()).optional(),
     removed: z.array(z.string()).optional(),
+    /** The reviewer's last objections, if it still objected when its reviews ran out: the user's call. */
+    reviewer: z.array(z.string()).optional(),
     goalFileEdited: z.boolean().optional(),
     /** The agent never reported in this run, so asking again in this chat would only repeat it. */
     noReport: z.boolean().optional(),
@@ -222,6 +243,7 @@ export const auditRecordSchema = z.discriminatedUnion("kind", [
   goalSetRecordSchema,
   goalRoundRecordSchema,
   goalEndRecordSchema,
+  goalReviewRecordSchema,
 ]);
 
 export type HookEventName = z.infer<typeof hookEventNameSchema>;
@@ -236,6 +258,7 @@ export type GoalRoundRecord = z.infer<typeof goalRoundRecordSchema>;
 export type UserMessageRecord = z.infer<typeof userMessageRecordSchema>;
 export type GoalControlRecord = z.infer<typeof goalControlRecordSchema>;
 export type GoalEndRecord = z.infer<typeof goalEndRecordSchema>;
+export type GoalReviewRecord = z.infer<typeof goalReviewRecordSchema>;
 export type AuditRecord = z.infer<typeof auditRecordSchema>;
 
 export function parseAuditRecord(value: unknown): AuditRecord {
