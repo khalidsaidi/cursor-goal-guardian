@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-export { readContractSafe, readStateSafe, readConfigSafe } from "@goal-guardian/core";
+export { readContractSafe } from "@goal-guardian/core";
 
 let serverRef: McpServer | null = null;
 let cachedRoot: string | null = null;

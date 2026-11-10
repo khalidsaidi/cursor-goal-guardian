@@ -5,20 +5,21 @@ import path from "node:path";
 import {
   criteriaFromTexts,
   defaultConfig,
-  dispatch,
-  ensureStateFiles,
+  ensureGuardianFiles,
   fileExists,
   getGuardianPaths,
+  GOAL_LOOP_LIMIT,
   guardianRuleContent,
   GUARDIAN_RULE_RELATIVE_PATH,
   GUARDIAN_SKILLS,
   readJsonFile,
+  writeContract,
   writeJsonAtomic,
 } from "@goal-guardian/core";
 
 /**
  * The VSIX ships self-contained native executables (per-platform targeted
- * packages, the same shipping pattern OpenAI's extension uses). Nothing else
+ * packages). Nothing else
  * is required on the machine: no Node.js, no PATH, no downloads.
  */
 export function bundledBinPaths(context: vscode.ExtensionContext): { hook: string; mcp: string } {
@@ -32,11 +33,23 @@ export function bundledBinPaths(context: vscode.ExtensionContext): { hook: strin
 const HOOK_EVENTS = [
   "beforeShellExecution",
   "beforeMCPExecution",
-  "beforeReadFile",
-  "beforeTabFileRead",
   "afterFileEdit",
-  "afterTabFileEdit",
+  // The goal loop: the user's words, what commands printed, and the end of each turn.
+  "beforeSubmitPrompt",
+  "afterShellExecution",
+  "postToolUse",
+  "postToolUseFailure",
+  "stop",
 ];
+
+const GOAL_HOOK_EVENTS = ["beforeSubmitPrompt", "afterShellExecution", "postToolUse", "postToolUseFailure", "stop"];
+
+type HookEntry = { command: string; loop_limit?: number };
+
+/** Cursor's own cap on stop-hook follow-ups backs up Guardian's. */
+function hookEntry(event: string, context: vscode.ExtensionContext): HookEntry {
+  return event === "stop" ? { command: hookCommand(context), loop_limit: GOAL_LOOP_LIMIT } : { command: hookCommand(context) };
+}
 
 function hookCommand(context: vscode.ExtensionContext): string {
   return `"${bundledBinPaths(context).hook}"`;
@@ -89,12 +102,12 @@ export async function wireIntegration(root: string, context: vscode.ExtensionCon
   await fs.mkdir(cursorDir, { recursive: true });
 
   const hooksPath = path.join(cursorDir, "hooks.json");
-  const hooks = await readJsonOr<{ version?: number; hooks?: Record<string, Array<{ command: string }>> }>(hooksPath, {});
+  const hooks = await readJsonOr<{ version?: number; hooks?: Record<string, HookEntry[]> }>(hooksPath, {});
   hooks.version = hooks.version ?? 1;
   hooks.hooks = hooks.hooks ?? {};
   for (const event of HOOK_EVENTS) {
     const entries = (hooks.hooks[event] ?? []).filter((e) => !isGuardianHookCommand(e?.command));
-    entries.push({ command: hookCommand(context) });
+    entries.push(hookEntry(event, context));
     hooks.hooks[event] = entries;
   }
   await writeJsonAtomic(hooksPath, hooks);
@@ -141,11 +154,33 @@ async function writeGuardianRule(root: string): Promise<void> {
  * already exist; writes only when something actually differs.
  */
 export async function doctorIntegration(root: string, context: vscode.ExtensionContext): Promise<void> {
+  // The rule is the agent's instructions: an update that changes them has to reach workspaces already connected.
+  const rule = path.join(root, GUARDIAN_RULE_RELATIVE_PATH);
+  if (await fileExists(rule) && (await fs.readFile(rule, "utf8")) !== guardianRuleContent()) await fs.writeFile(rule, guardianRuleContent(), "utf8");
+
   const hooksPath = path.join(root, ".cursor", "hooks.json");
-  const hooks = await readJsonOr<{ hooks?: Record<string, Array<{ command: string }>> } | null>(hooksPath, null);
+  const hooks = await readJsonOr<{ hooks?: Record<string, HookEntry[]> } | null>(hooksPath, null);
   if (hooks?.hooks) {
     let changed = false;
+    // Reads and Tab completions (the person typing): nothing listens to them any more.
+    for (const event of ["beforeReadFile", "beforeTabFileRead", "afterTabFileEdit"]) {
+      const entries = hooks.hooks[event];
+      if (entries?.some((e) => isGuardianHookCommand(e?.command))) {
+        const others = entries.filter((e) => !isGuardianHookCommand(e?.command));
+        if (others.length) hooks.hooks[event] = others;
+        else delete hooks.hooks[event];
+        changed = true;
+      }
+    }
     const current = hookCommand(context);
+    // Workspaces wired before the goal loop existed get its hooks, if Guardian is wired at all.
+    const wired = Object.values(hooks.hooks).some((entries) => entries.some((e) => isGuardianHookCommand(e?.command)));
+    for (const event of wired ? GOAL_HOOK_EVENTS : []) {
+      if (!(hooks.hooks[event] ?? []).some((e) => isGuardianHookCommand(e?.command))) {
+        hooks.hooks[event] = [...(hooks.hooks[event] ?? []), hookEntry(event, context)];
+        changed = true;
+      }
+    }
     for (const entries of Object.values(hooks.hooks)) {
       for (const entry of entries) {
         if (isGuardianHookCommand(entry?.command) && entry.command !== current) {
@@ -194,23 +229,15 @@ export async function applySetup(root: string, context: vscode.ExtensionContext,
   const clean = (values: string[]): string[] => values.map((s) => s.trim()).filter(Boolean);
 
   const p = getGuardianPaths(root);
-  await ensureStateFiles(root);
+  await ensureGuardianFiles(root);
   if (!(await fileExists(p.config))) await writeJsonAtomic(p.config, defaultConfig());
 
-  const criteria = criteriaFromTexts(clean(form.criteria));
-  await dispatch(root, {
-    type: "SET_GOAL",
-    actor: "human",
-    payload: { goal: form.goal.trim(), successCriteria: criteria, constraints: clean(form.constraints) },
+  await writeContract(root, {
+    schemaVersion: 2,
+    goal: form.goal.trim(),
+    successCriteria: criteriaFromTexts(clean(form.criteria)),
+    constraints: clean(form.constraints),
   });
-  if (criteria.length > 0) {
-    await dispatch(root, {
-      type: "ADD_TASKS",
-      actor: "human",
-      payload: { tasks: criteria.map((c) => ({ id: c.id, title: c.text, criterionId: c.id })) },
-    });
-    await dispatch(root, { type: "START_TASK", actor: "human", payload: { taskId: criteria[0]!.id } });
-  }
   await writeJsonAtomic(p.migrationMarker, { from: 2, to: 2, ts: new Date().toISOString(), migratedBy: "setup" });
 
   await connectWorkspace(root, context);

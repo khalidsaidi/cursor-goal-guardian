@@ -1,8 +1,8 @@
-export { readAudit, auditOfKind, readState, readActions } from "cursor-goal-guardian-testkit";
+export { readAudit, auditOfKind } from "cursor-goal-guardian-testkit";
 import { readAudit, auditOfKind } from "cursor-goal-guardian-testkit";
 import type { AuditRecord } from "@goal-guardian/core";
 
-/** Wait for an audit record kind to appear — for async paths like the rescorer. */
+/** Wait for an audit record kind to appear — for async paths. */
 export async function pollForAuditKind<K extends AuditRecord["kind"]>(
   root: string,
   kind: K,

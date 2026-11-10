@@ -4,14 +4,9 @@ import {
   parseContract,
   defaultContract,
   criteriaFromTexts,
-  parseState,
-  parseAction,
-  defaultState,
   parseConfig,
   defaultConfig,
   parseAuditRecord,
-  parseVerdictCache,
-  emptyVerdictCache,
   getGuardianPaths,
   getLegacyPaths,
   newId,
@@ -44,62 +39,16 @@ describe("contract schema", () => {
   });
 });
 
-describe("state schema", () => {
-  it("round-trips a populated state", () => {
-    const s = defaultState();
-    s.goal = "Ship CSV export";
-    s.successCriteria = criteriaFromTexts(["export works"]);
-    s.tasks = [{ id: "t1", title: "export works", status: "doing", criterionId: "sc_1" }];
-    s.activeTaskId = "t1";
-    s.decisions = [{ id: "d1", text: "hand-rolled serializer", rationale: "no deps", ts: nowIso() }];
-    s.openQuestions = [{ id: "q1", text: "hidden columns?", ts: nowIso(), status: "open" }];
-    expect(parseState(JSON.parse(JSON.stringify(s)))).toEqual(s);
-  });
-
-  it("rejects v1-shaped states (active_task, _meta)", () => {
-    expect(() =>
-      parseState({ ...defaultState(), active_task: null }),
-    ).toThrow();
-  });
-
-  it("rejects invalid task status", () => {
-    const s = defaultState();
-    expect(() =>
-      parseState({ ...s, tasks: [{ id: "t1", title: "x", status: "blocked" }] }),
-    ).toThrow();
-  });
-
-  it("parses every known action type and rejects unknown ones", () => {
-    const base = { id: "a1", ts: nowIso(), actor: "agent" as const, payload: {} };
-    expect(parseAction({ ...base, type: "MIGRATE_IMPORT" }).type).toBe("MIGRATE_IMPORT");
-    expect(parseAction({ ...base, type: "SET_GOAL" }).type).toBe("SET_GOAL");
-    expect(() => parseAction({ ...base, type: "ISSUE_PERMIT" })).toThrow();
-  });
-});
-
 describe("config schema", () => {
-  it("fills every knob from an empty object", () => {
-    const c = parseConfig({});
-    expect(c.notify).toBe("balanced");
-    expect(c.nudgeCooldownMinutes).toBe(10);
-    expect(c.drift.lexical).toEqual({ enabled: true, sensitivity: "balanced" });
-    expect(c.drift.semantic.judge).toBe("cursor-agent");
-    expect(c.drift.semantic.sessionCallCap).toBe(20);
-    expect(c.advisories.remindWhenNoActiveTask).toBe(true);
-    expect(c.advisories.shellRules).toEqual([]);
-  });
-
-  it("merges a partial user config over defaults", () => {
-    const c = parseConfig({
-      notify: "quiet",
+  it("an empty config is valid, and settings for removed features are dropped", () => {
+    expect(parseConfig({})).toEqual({ schemaVersion: 2 });
+    expect(parseConfig({
+      notify: "vocal",
+      nudgeCooldownMinutes: 5,
       drift: { lexical: { sensitivity: "strict" } },
-      advisories: { shellRules: [{ pattern: "npm publish*", severity: "alert", reason: "release" }] },
-    });
-    expect(c.notify).toBe("quiet");
-    expect(c.drift.lexical.sensitivity).toBe("strict");
-    expect(c.drift.lexical.enabled).toBe(true);
-    expect(c.drift.semantic.batchSize).toBe(10);
-    expect(c.advisories.shellRules[0]?.severity).toBe("alert");
+      advisories: { shellRules: [{ pattern: "npm publish*", severity: "alert" }], neutralCommands: ["ls"] },
+      requirePermitForShell: true,
+    })).toEqual({ schemaVersion: 2 });
   });
 
   it("round-trips the default config", () => {
@@ -107,13 +56,6 @@ describe("config schema", () => {
     expect(parseConfig(JSON.parse(JSON.stringify(c)))).toEqual(c);
   });
 
-  it("rejects legacy permit-era severities and knobs", () => {
-    expect(() =>
-      parseConfig({ advisories: { shellRules: [{ pattern: "x", severity: "PERMIT_REQUIRED" }] } }),
-    ).toThrow();
-    expect(() => parseConfig({ requirePermitForShell: true })).toThrow();
-    expect(() => parseConfig({ autoRevertUnauthorizedEdits: false })).toThrow();
-  });
 });
 
 describe("audit record schema", () => {
@@ -134,15 +76,6 @@ describe("audit record schema", () => {
     },
     {
       ts: nowIso(),
-      kind: "drift.verdict",
-      driftId: "drift_1",
-      verdict: "confirmed",
-      judge: "cursor-agent",
-      confidence: 0.9,
-      rationale: "unrelated to CSV export",
-    },
-    {
-      ts: nowIso(),
       kind: "policy.advisory",
       severity: "alert",
       actionType: "shell",
@@ -152,16 +85,6 @@ describe("audit record schema", () => {
     },
     { ts: nowIso(), kind: "intent.declared", intentId: "int_1", summary: "implement serializer" },
     { ts: nowIso(), kind: "action.observed", actionType: "shell", actionValue: "pnpm test" },
-    {
-      ts: nowIso(),
-      kind: "session.review",
-      verdict: "off_course",
-      confidence: 0.8,
-      rationale: "theming spree",
-      judge: "cursor-agent",
-      sampledActions: 14,
-      flaggedActions: ["[shell] docker build"],
-    },
   ];
 
   it("round-trips every record kind", () => {
@@ -172,34 +95,6 @@ describe("audit record schema", () => {
 
   it("discriminates on kind and rejects unknown kinds", () => {
     expect(() => parseAuditRecord({ ts: nowIso(), kind: "permit.issued" })).toThrow();
-  });
-
-  it("rejects verdict confidence outside 0..1", () => {
-    expect(() =>
-      parseAuditRecord({
-        ts: nowIso(),
-        kind: "drift.verdict",
-        driftId: "d",
-        verdict: "confirmed",
-        judge: "j",
-        confidence: 1.5,
-        rationale: "",
-      }),
-    ).toThrow();
-  });
-});
-
-describe("verdict cache schema", () => {
-  it("round-trips a cache with entries", () => {
-    const cache = emptyVerdictCache();
-    cache.entries["drift_1"] = {
-      verdict: "dismissed",
-      judge: "cursor-agent",
-      confidence: 0.7,
-      rationale: "reading config is neutral",
-      ts: nowIso(),
-    };
-    expect(parseVerdictCache(JSON.parse(JSON.stringify(cache)))).toEqual(cache);
   });
 });
 

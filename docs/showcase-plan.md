@@ -15,23 +15,14 @@ demonstrated live; a curated subset becomes the store screenshots.
 | C3 | /guardian skill in "/" menu + plain-prose briefing | P4 | S1, S4 |
 | C4 | /guardian-goal skill | P4 | S1 |
 | C5 | User pivot → recorded on the tape (rule 5) | P4 | S3 |
-| C6 | Unbidden off-goal → in-chat choice (rule 4 + hook steering) | P2 | S11 |
-| C7 | 6 MCP tools (get_contract/update_goal/declare_intent/check_action/record_progress/get_status) | P2–P4 tool chips + tape | — |
+| C7 | 4 MCP tools (get_contract/update_goal/report_goal/get_status) | P2–P4 tool chips + tape | — |
 | C8 | MCP roots resolution + user-level registration + one-time Connect consent | P4 (already proven) | — |
 
 **Hooks (background)**
 | C9 | Event observation incl. raw tape (hook.event, action.observed) | all phases (tape) | — |
-| C10 | Lexical drift + episode governor (one calm nudge) | P2/P3 | S11 |
-| C11 | Policy advisories ok/caution/alert incl. chained commands | P3 (staged git reset) | S5 track |
-| C12 | No-active-task reminder | P1 (pre-goal shell) | — |
-| C13 | notify quiet/balanced/vocal + sensitivity knobs | P3 via Command Center toggle | S7 |
-| C14 | Ask-escalation (confirmed drift continues → permission:ask) | P3 attempt (optional shot) | — |
 | C15 | Never blocks / never crashes | implicit everywhere + suite | — |
 
 **State machine**
-| C16 | Event-sourced store, replay=state, snapshots | disk verification each phase | — |
-| C17 | Hash guard + rebuild recovery | P1 palette (rebuild) | — |
-| C18 | Decision-gated task switch | P3 Command Center "why?" input | S7 |
 | C19 | Contract-as-projection | disk | — |
 
 **AI review**
@@ -40,10 +31,10 @@ demonstrated live; a curated subset becomes the store screenshots.
 | C22 | Consent gating + per-item "check with AI" + rescoreDrift cmd | P3 | S5 consent |
 
 **IDE surfaces**
-| C23 | Panel: welcome / goal-as-title(edit) / lamp+sentence / Now-Next / Done when / Boundaries / Track / consent | P1+P3 | S5, S6 |
+| C23 | Panel: welcome / goal-as-title(edit) / lamp / Now-Next / Done when / Boundaries | P1+P3 | S5, S6 |
 | C24 | Status bar states + tooltip | P3 | S8 |
 | C25 | Command Center (7 actions) | P3 | S7 |
-| C26 | 15 palette commands (setup, open-files ×5, tasks, rebuild, dispatch, rescore, uninstall, center, panel, refresh) | P1 palette shot + flows | S10 |
+| C26 | 8 palette commands (setup, open-files ×3, uninstall, center, panel, refresh) | P1 palette shot + flows | S10 |
 | C27 | Setup wizard (3 steps + gitignore) wiring hooks+mcp(ws+user)+rule+skills | P1 | S9 |
 | C28 | Doctor + migration (v0.4.x auto, backups, notice) | already verified; excluded from store | — |
 | C29 | Opt-in auto-behaviors settings | shown in settings注? excluded from store | — |
@@ -51,20 +42,17 @@ demonstrated live; a curated subset becomes the store screenshots.
 
 ## Store screenshot list (images/store/)
 S1 hub-slash-menu · S2 hub-tracking · S3 hub-pivot · S4 hub-briefing ·
-S5 panel-session (money shot: goal, holding course, board, done-when,
-boundaries, track with came-back/confirmed/pending + check-with-AI, AI line)
+S5 panel-session (money shot: goal, lamp, done-when, boundaries)
 · S6 panel-welcome · S7 command-center · S8 status-bar · S9 setup-wizard ·
-S10 palette · S11 chat-choice (unbidden drift → continue-or-realign)
+S10 palette
 
 ## Execution phases
 P0 Build /tmp/webshop (realistic: src/cart.ts, prices.ts, order.ts; git).
-P1 IDE window: welcome shot → setup wizard shots → palette shot → no-task
-   reminder → rebuild/hash-guard check.
+P1 IDE window: welcome shot → setup wizard shots → palette shot →
 P2 IDE agent pane (Ctrl+Shift+L): plain checkout request → Tracking (goal on
-   disk) → plain off-goal request ("create dark-theme.css", no detour framing)
-   → expect in-chat choice → choose "stay on task" → realignment on tape.
+   disk).
 P3 Drift machinery: staged caution command via agent; Command Center flows
-   (switch-with-decision, notify toggle); consent → real judge verdicts →
+   (notify toggle); consent → real judge verdicts →
    session review → panel money shot, status bar shot.
 P4 Hub: same repo → "/" menu shot → follow-up request → Tracking shot →
    pivot request → recorded shot → /guardian briefing shot.

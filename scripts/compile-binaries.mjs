@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-// The professional shipping pattern (as used by OpenAI's extension): the
-// recorder and the MCP server are compiled into self-contained native
+// The recorder and the MCP server are compiled into self-contained native
 // executables for ALL six platform/arch combos — no Node.js, no PATH, no
 // downloads, no dialogs. Five targets compile with bun; windows-arm64 (which
 // bun cannot target) builds via official Node SEA: esbuild CJS bundle ->

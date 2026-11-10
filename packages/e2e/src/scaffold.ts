@@ -5,17 +5,12 @@ import { fileURLToPath } from "node:url";
 import {
   criteriaFromTexts,
   defaultConfig,
-  defaultState,
   getGuardianPaths,
   guardianRuleContent,
   GUARDIAN_RULE_RELATIVE_PATH,
-  newId,
   nowIso,
   parseConfig,
-  replay,
   writeJsonAtomic,
-  type GuardianAction,
-  type Task,
 } from "@goal-guardian/core";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -27,7 +22,6 @@ export interface ScaffoldOptions {
   goal?: string;
   successCriteria?: string[];
   constraints?: string[];
-  tasks?: Array<Pick<Task, "id" | "title" | "status"> & { criterionId?: string }>;
   config?: unknown;
   /** Copy a frozen v0.x fixture instead of writing v2 files (migration scenario). */
   oldFormatFixture?: string;
@@ -73,8 +67,12 @@ export async function scaffoldWorkspace(opts: ScaffoldOptions = {}): Promise<E2E
     hooks: {
       beforeShellExecution: hookEntry,
       beforeMCPExecution: hookEntry,
-      beforeReadFile: hookEntry,
       afterFileEdit: hookEntry,
+      beforeSubmitPrompt: hookEntry,
+      afterShellExecution: hookEntry,
+      postToolUse: hookEntry,
+      postToolUseFailure: hookEntry,
+      stop: [{ ...hookEntry[0]!, loop_limit: 21 }],
     },
   });
 
@@ -93,24 +91,6 @@ export async function scaffoldWorkspace(opts: ScaffoldOptions = {}): Promise<E2E
       constraints: opts.constraints ?? [],
     });
     await writeJsonAtomic(paths.config, opts.config === undefined ? defaultConfig() : parseConfig(opts.config));
-    // Seed via MIGRATE_IMPORT so state === replay(actions) — the same invariant
-    // real setup and migration guarantee (a directly-written state with an
-    // empty log broke live rebuild testing).
-    const { meta: _meta, ...imported } = defaultState();
-    imported.goal = opts.goal ?? "Finish the math utilities";
-    imported.successCriteria = criteria;
-    imported.constraints = opts.constraints ?? [];
-    imported.tasks = (opts.tasks ?? [{ id: "t1", title: criteria[0]!.text, status: "doing", criterionId: criteria[0]!.id }]).map((t) => ({ ...t }));
-    imported.activeTaskId = imported.tasks.find((t) => t.status === "doing")?.id ?? null;
-    const seedAction: GuardianAction = {
-      id: newId("act"),
-      ts: nowIso(),
-      actor: "system",
-      type: "MIGRATE_IMPORT",
-      payload: { state: imported },
-    };
-    await fs.writeFile(paths.actions, JSON.stringify(seedAction) + "\n", "utf8");
-    await writeJsonAtomic(paths.state, replay([seedAction]));
     await writeJsonAtomic(paths.migrationMarker, { from: 2, to: 2, ts: nowIso(), migratedBy: "e2e-scaffold" });
   }
 

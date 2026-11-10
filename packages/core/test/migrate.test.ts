@@ -8,11 +8,8 @@ import {
   detectWorkspaceFormat,
   getGuardianPaths,
   getLegacyPaths,
-  parseState,
   parseContract,
   parseConfig,
-  replay,
-  loadActions,
   fileExists,
   type Clock,
 } from "../src/index.js";
@@ -54,7 +51,7 @@ describe("migration goldens (real v0.4.11 workspaces)", () => {
     expect(await detectWorkspaceFormat(fresh)).toBe("none");
   });
 
-  it("case-basic: full transform — criteria ids, criterionId tasks, carried state, config mapping", async () => {
+  it("case-basic: full transform — criteria ids, carried goal, config mapping", async () => {
     const root = await fromFixture("case-basic");
     const result = await migrateV1toV2(root, { migratedBy: "test", clock });
     expect(result.migrated).toBe(true);
@@ -65,36 +62,15 @@ describe("migration goldens (real v0.4.11 workspaces)", () => {
     expect(contract.goal).toBe("Ship the CSV export feature for the report table");
     expect(contract.successCriteria.map((c) => c.id)).toEqual(["sc_1", "sc_2", "sc_3"]);
 
-    const state = parseState(JSON.parse(await fs.readFile(p.state, "utf8")));
-    expect(state.activeTaskId).toBe("sc_1");
-    const t1 = state.tasks.find((t) => t.id === "sc_1");
-    expect(t1).toMatchObject({
-      title: "Users can export the report table as CSV", // "SC1: " prefix stripped
-      status: "doing",
-      criterionId: "sc_1",
-    });
-    expect(state.decisions).toHaveLength(1);
-    expect(state.openQuestions).toHaveLength(1);
-    expect(state.pinnedContext).toEqual(["src/export/csv.ts"]);
-
-    // state === replay(actions) from action #1 (single MIGRATE_IMPORT)
-    const actions = await loadActions(root);
-    expect(actions).toHaveLength(1);
-    expect(actions[0]?.type).toBe("MIGRATE_IMPORT");
-    expect(actions[0]?.actor).toBe("system");
-    expect(replay(actions)).toEqual(state);
-
-    // config mapping: example policy was all-defaults -> no carried user rules
-    const config = parseConfig(JSON.parse(await fs.readFile(p.config, "utf8")));
-    expect(config.drift.lexical).toEqual({ enabled: true, sensitivity: "balanced" });
-    expect(config.advisories.remindWhenNoActiveTask).toBe(true);
-    expect(config.advisories.shellRules).toEqual([]);
+    expect(parseConfig(JSON.parse(await fs.readFile(p.config, "utf8")))).toEqual({ schemaVersion: 2 });
 
     // backups exist; originals of dead files and the .ai split are gone
     for (const bak of [legacy.contract, legacy.state, legacy.policy, legacy.rules, legacy.reducer, legacy.actions]) {
       expect(await fileExists(`${bak}.v1.bak`), bak).toBe(true);
     }
     expect(await fileExists(path.join(p.telemetryDir, "audit-v1.log.bak"))).toBe(true);
+    expect(await fileExists(legacy.state)).toBe(false);
+    expect(await fileExists(legacy.actions)).toBe(false);
     expect(await fileExists(legacy.policy)).toBe(false);
     expect(await fileExists(legacy.rules)).toBe(false);
     expect(await fileExists(legacy.reducer)).toBe(false);
@@ -103,38 +79,21 @@ describe("migration goldens (real v0.4.11 workspaces)", () => {
     expect(await detectWorkspaceFormat(root)).toBe("v2");
   });
 
-  it("case-custom: non-default policy carries over — sensitivity, custom rules, legacy severities", async () => {
+  it("case-custom: old policy rules aren't carried over, but the file is backed up", async () => {
     const root = await fromFixture("case-custom");
+    const legacy = getLegacyPaths(root);
     await migrateV1toV2(root, { clock });
     const p = getGuardianPaths(root);
-
-    const config = parseConfig(JSON.parse(await fs.readFile(p.config, "utf8")));
-    expect(config.drift.lexical.sensitivity).toBe("strict");
-    expect(config.advisories.remindWhenNoActiveTask).toBe(false); // enforceReduxControl: false
-    expect(config.advisories.shellRules).toContainEqual({
-      pattern: "npm publish*",
-      severity: "alert", // HIGH_RISK -> alert
-      reason: "publishing is out of scope",
-    });
-    // custom highRiskPatterns carried as alert; custom alwaysAllow as ok; v1 defaults not frozen in
-    expect(config.advisories.mcpRules).toContainEqual({ pattern: "deploy/*", severity: "alert" });
-    expect(config.advisories.readRules).toContainEqual({ pattern: "docs/**", severity: "ok" });
-    expect(config.advisories.shellRules.map((r) => r.pattern)).not.toContain("git status*");
-
-    const state = parseState(JSON.parse(await fs.readFile(p.state, "utf8")));
-    expect(state.activeTaskId).toBe("t1");
-    expect(state.tasks[0]?.title).toBe("Stabilize login.spec.ts");
-    expect(state.tasks[0]?.criterionId).toBeUndefined();
+    expect(parseConfig(JSON.parse(await fs.readFile(p.config, "utf8")))).toEqual({ schemaVersion: 2 });
+    expect(await fileExists(`${legacy.policy}.v1.bak`)).toBe(true);
   });
 
   it("case-empty: fresh-install v1 migrates to a clean v2 baseline", async () => {
     const root = await fromFixture("case-empty");
     await migrateV1toV2(root, { clock });
     const p = getGuardianPaths(root);
-    const state = parseState(JSON.parse(await fs.readFile(p.state, "utf8")));
-    expect(state.tasks).toEqual([]);
-    expect(state.goal).toContain("Replace this");
-    expect(replay(await loadActions(root))).toEqual(state);
+    const contract = parseContract(JSON.parse(await fs.readFile(p.contract, "utf8")));
+    expect(contract.goal).toContain("Replace this");
   });
 
   it("case-corrupt: truncated state and garbage logs fall back safely to the contract", async () => {
@@ -142,10 +101,8 @@ describe("migration goldens (real v0.4.11 workspaces)", () => {
     const result = await migrateV1toV2(root, { clock });
     expect(result.migrated).toBe(true);
     const p = getGuardianPaths(root);
-    const state = parseState(JSON.parse(await fs.readFile(p.state, "utf8")));
-    expect(state.goal).toBe("Corrupt workspace fixture");
-    expect(state.activeTaskId).toBeNull();
-    expect(replay(await loadActions(root))).toEqual(state);
+    const contract = parseContract(JSON.parse(await fs.readFile(p.contract, "utf8")));
+    expect(contract.goal).toBe("Corrupt workspace fixture");
     expect(await fileExists(path.join(p.telemetryDir, "audit-v1.log.bak"))).toBe(true);
   });
 

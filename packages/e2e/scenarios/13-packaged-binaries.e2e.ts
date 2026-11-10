@@ -27,7 +27,7 @@ describe("13 [deterministic] the packaged extension binaries actually run", () =
     expect(fs.existsSync(PACKAGED_HOOK)).toBe(true);
   }, 240_000);
 
-  it("packaged MCP bundle starts and serves the six guardian tools", async () => {
+  it("packaged MCP bundle starts and serves the guardian tools", async () => {
     const ws = await scaffoldWorkspace({});
     const client = new Client({ name: "e2e-13", version: "0.0.0" });
     try {
@@ -41,11 +41,9 @@ describe("13 [deterministic] the packaged extension binaries actually run", () =
       );
       const tools = await client.listTools();
       expect(tools.tools.map((t) => t.name).sort()).toEqual([
-        "guardian_check_action",
-        "guardian_declare_intent",
         "guardian_get_contract",
         "guardian_get_status",
-        "guardian_record_progress",
+      "guardian_report_goal",
         "guardian_update_goal",
       ]);
       const res = (await client.callTool({ name: "guardian_get_contract", arguments: {} })) as {

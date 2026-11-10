@@ -1,22 +1,20 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { loadActions, readAuditTail, summarizeSession } from "@goal-guardian/core";
-import { readStateSafe, workspaceRoot } from "../workspace.js";
+import { goalPhaseOf, readContractSafe, readGoalRecords } from "@goal-guardian/core";
+import { workspaceRoot } from "../workspace.js";
 
 export function registerGetStatus(server: McpServer): void {
   server.registerTool(
     "guardian_get_status",
     {
       description:
-        "Read the session flight recorder: goal, task board counts, recent drift entries with their review status, and 24h telemetry.",
+        "Read where the session stands: the goal, and whether it is active, paused or complete.",
       inputSchema: {},
     },
     async () => {
       const root = await workspaceRoot();
-      const state = await readStateSafe(root);
-      const records = await readAuditTail(root);
-      const actions = await loadActions(root).catch(() => []);
-      const summary = summarizeSession(state, records, actions, new Date());
-      return { content: [{ type: "text", text: JSON.stringify(summary) }] };
+      const contract = await readContractSafe(root);
+      const goalPhase = goalPhaseOf(await readGoalRecords(root), contract);
+      return { content: [{ type: "text", text: JSON.stringify({ goal: contract.goal, goalPhase }) }] };
     },
   );
 }

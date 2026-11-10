@@ -1,72 +1,45 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { dispatch, StateError } from "@goal-guardian/core";
-import { readStateSafe, workspaceRoot } from "../workspace.js";
+import { criteriaFromTexts, ensureGuardianFiles, parseRequest, readUserPrompts, userSaid, writeContract } from "@goal-guardian/core";
+import { readContractSafe, workspaceRoot } from "../workspace.js";
 
 export function registerUpdateGoal(server: McpServer): void {
   server.registerTool(
     "guardian_update_goal",
     {
       description:
-        "Declare or change the session goal, add 'done when' criteria (each becomes a trackable task), or set boundaries. Use this when the user states or changes what the session is for — the chat is the interface; this puts it on the record.",
+        "Change the goal when the user changes it, or add 'done when' items when the user listed none. Guardian records the user's first request by itself, word for word, so don't call this to declare it.",
       inputSchema: {
-        goal: z.string().optional().describe("The goal, one unambiguous sentence. Omit to leave unchanged."),
+        user_words: z.string().optional().describe("The user's new goal, quoted exactly from their message. These words become the goal; only the user changes it."),
         add_criteria: z
           .array(z.string().min(1))
           .optional()
-          .describe("New 'done when' criteria to add; each becomes a task."),
-        constraints: z.array(z.string()).optional().describe("Replaces the boundaries list. Omit to leave unchanged."),
+          .describe("Only if the user listed no 'done when' items: new ones to add. Existing items can't be changed or removed."),
       },
     },
-    async ({ goal, add_criteria, constraints }) => {
+    async ({ user_words, add_criteria }) => {
       const root = await workspaceRoot();
       try {
-        const current = await readStateSafe(root);
-        const payload: Record<string, unknown> = {};
-        if (goal !== undefined) payload.goal = goal;
-        if (constraints !== undefined) payload.constraints = constraints;
-
-        let criteria = current.successCriteria;
-        if (add_criteria && add_criteria.length > 0) {
-          const next = [...criteria];
-          for (const text of add_criteria) {
-            next.push({ id: `sc_${next.length + 1}`, text });
-          }
-          payload.successCriteria = next;
-          criteria = next;
+        const current = await readContractSafe(root);
+        const changesGoal = user_words !== undefined && parseRequest(user_words).goal !== current.goal.trim();
+        // Where Cursor reports the user's messages, the goal only changes on the user's own words.
+        const prompts = changesGoal ? await readUserPrompts(root) : null;
+        if (prompts && !userSaid(user_words, prompts)) {
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: "Not changed: only the user changes the goal. Pass their request in user_words, quoted exactly from their message. If they didn't ask for this, keep working toward the goal as written, or ask them." }],
+          };
         }
-
-        let state = current;
-        if (Object.keys(payload).length > 0) {
-          state = await dispatch(root, { type: "SET_GOAL", actor: "agent", payload });
-        }
-        if (add_criteria && add_criteria.length > 0) {
-          const added = criteria.slice(-add_criteria.length);
-          state = await dispatch(root, {
-            type: "ADD_TASKS",
-            actor: "agent",
-            payload: { tasks: added.map((c) => ({ id: c.id, title: c.text, criterionId: c.id })) },
-          });
-          if (!state.activeTaskId) {
-            const first = state.tasks.find((t) => t.status === "todo");
-            if (first) state = await dispatch(root, { type: "START_TASK", actor: "agent", payload: { taskId: first.id } });
-          }
-        }
+        const next = changesGoal ? parseRequest(user_words!) : null;
+        const kept = next ? criteriaFromTexts(next.items) : current.successCriteria;
+        const added = (add_criteria ?? []).map((text, i) => ({ id: `sc_${kept.length + i + 1}`, text }));
+        await ensureGuardianFiles(root);
+        const contract = await writeContract(root, { ...current, ...(next ? { goal: next.goal } : {}), successCriteria: [...kept, ...added] });
         return {
-          content: [
-            {
-              type: "text" as const,
-              text: JSON.stringify({
-                goal: state.goal,
-                criteria: state.successCriteria,
-                constraints: state.constraints,
-                activeTaskId: state.activeTaskId,
-              }),
-            },
-          ],
+          content: [{ type: "text" as const, text: JSON.stringify({ goal: contract.goal, criteria: contract.successCriteria, constraints: contract.constraints }) }],
         };
       } catch (err) {
-        const message = err instanceof StateError ? `${err.code}: ${err.message}` : err instanceof Error ? err.message : String(err);
+        const message = err instanceof Error ? err.message : String(err);
         return { isError: true, content: [{ type: "text" as const, text: message }] };
       }
     },

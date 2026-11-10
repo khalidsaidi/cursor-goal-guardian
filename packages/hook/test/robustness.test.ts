@@ -39,10 +39,10 @@ describe("robustness: the hook never breaks the editor", () => {
     expect(response.permission).toBe("allow");
   });
 
-  it("corrupt state.json and config.json -> allow, exit 0", async () => {
+  it("corrupt contract.json and config.json -> allow, exit 0", async () => {
     const w = await makeWorkspace();
     workspaces.push(w);
-    await fs.writeFile(w.paths.state, "{truncated", "utf8");
+    await fs.writeFile(w.paths.contract, "{truncated", "utf8");
     await fs.writeFile(w.paths.config, "also broken", "utf8");
     const { status, response } = runHook(w.root, shellEvent("rm -rf /"));
     expect(status).toBe(0);

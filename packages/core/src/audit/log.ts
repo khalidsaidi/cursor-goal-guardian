@@ -32,6 +32,21 @@ export async function readAuditTail(workspaceRoot: string, maxRecords = 500): Pr
   return out;
 }
 
+/** Only the goal loop's records, however far back: receipts must outlive a long session's tape window. */
+export async function readGoalRecords(workspaceRoot: string): Promise<AuditRecord[]> {
+  const raw = await fs.readFile(getGuardianPaths(workspaceRoot).audit, "utf8").catch(() => "");
+  const out: AuditRecord[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.includes('"goal.round"') && !line.includes('"goal.end"') && !line.includes('"goal.control"') && !line.includes('"goal.notice"') && !line.includes('"goal.set"')) continue;
+    try {
+      out.push(auditRecordSchema.parse(JSON.parse(line)));
+    } catch {
+      // skip malformed telemetry lines
+    }
+  }
+  return out;
+}
+
 export async function readAuditSince(workspaceRoot: string, sinceIso: string, maxRecords = 2000): Promise<AuditRecord[]> {
   const since = Date.parse(sinceIso);
   const records = await readAuditTail(workspaceRoot, maxRecords);

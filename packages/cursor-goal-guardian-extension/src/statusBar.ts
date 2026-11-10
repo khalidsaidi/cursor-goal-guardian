@@ -3,7 +3,7 @@ import type { PanelViewModel } from "@goal-guardian/core";
 
 /**
  * Calm chrome: hidden until the workspace is set up; never an error background
- * (a missing goal is not an error). Warning tint only for confirmed drift.
+ * (a missing goal is not an error).
  */
 export class StatusBar {
   private readonly item: vscode.StatusBarItem;
@@ -21,16 +21,8 @@ export class StatusBar {
       this.item.hide();
       return;
     }
-    const task = vm.activeTask ? vm.activeTask.title : "no active task";
-    this.item.text = vm.badge > 0 ? `$(target) ${task} · ${vm.badge}⚠` : `$(target) ${task}`;
-    this.item.backgroundColor =
-      vm.badge > 0 ? new vscode.ThemeColor("statusBarItem.warningBackground") : undefined;
-    const semantic = vm.semantic.consented
-      ? vm.semantic.available
-        ? "AI review on"
-        : "AI review offline"
-      : "AI review off";
-    this.item.tooltip = `Goal Guardian — ${vm.health}\nunreviewed: ${vm.semantic.pendingCount} · confirmed 24h: ${vm.counts24h.driftConfirmed} · dismissed: ${vm.counts24h.driftDismissed}\n${semantic}`;
+    this.item.text = `$(target) Goal: ${vm.status.word}`;
+    this.item.tooltip = `Goal Guardian — goal: ${vm.status.word}`;
     this.item.show();
   }
 }

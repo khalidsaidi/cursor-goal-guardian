@@ -16,10 +16,8 @@ const BIN_HOOK = path.join(REPO, "dist-bin", HOST_TARGET, `goal-guardian-hook${E
 /**
  * The complete functionality of the SHIPPED binaries, exercised on whatever
  * platform runs this suite — the CI matrix makes that linux, darwin, and
- * win32. Scenario 13 is the smoke; this is the full sweep: all six MCP tools
- * as a session lifecycle, and every hook pipeline path (allow, lexical drift
- * with episode-governed nudging, chained risky-command advisory, no-task
- * reminder, quiet mode, guardian-tool exemption).
+ * win32. Scenario 13 is the smoke; this is the full sweep: all four MCP tools
+ * as a session lifecycle, and every hook path (record and allow, with nothing said).
  */
 
 function hook(ws: E2EWorkspace, payload: Record<string, unknown>): { out: Record<string, unknown>; status: number } {
@@ -75,109 +73,47 @@ describe("14 [deterministic] shipped binaries: full functionality on this platfo
     return JSON.parse(res.content[0]!.text) as Record<string, unknown>;
   }
 
-  let exporterTaskId = "";
-
-  it("goal grows and the board follows: update_goal, get_contract, decision-gated switch, intent, self-check", async () => {
-    // update_goal: extend the goal with a new criterion -> a new task appears
+  it("the goal grows on the record: update_goal, get_contract", async () => {
     await tool("guardian_update_goal", {
-      goal: "Finish the math utilities and ship the CSV exporter",
+      user_words: "Finish the math utilities and ship the CSV exporter",
       add_criteria: ["Exporter writes valid CSV"],
     });
 
     const contract = (await tool("guardian_get_contract")) as { goal: string; successCriteria: Array<{ id: string; text: string }> };
     expect(contract.goal).toContain("CSV exporter");
-    exporterTaskId = contract.successCriteria.find((c) => c.text.includes("Exporter"))!.id;
-
-    // switching away from the active task without a decision is refused...
-    const refused = (await client.callTool({
-      name: "guardian_record_progress",
-      arguments: { action: "start_task", taskId: exporterTaskId },
-    })) as { isError?: boolean; content: Array<{ text: string }> };
-    expect(JSON.stringify(refused.content)).toMatch(/decision/i);
-
-    // ...and honored with one (the machine keeps the why on the record)
-    await tool("guardian_record_progress", {
-      action: "start_task",
-      taskId: exporterTaskId,
-      decision: { text: "Switch to the exporter", rationale: "CSV is the blocking deliverable" },
-    });
-
-    const intent = (await tool("guardian_declare_intent", { summary: "Writing the CSV serializer" })) as { intentId?: string };
-    expect(intent).toBeTruthy();
-
-    // check_action: severity comes from the per-segment policy even inside a
-    // chain — destructive tail escalates to alert, cautionary tail to caution,
-    // and a neutral command stays ok
-    const destructive = (await tool("guardian_check_action", { action_type: "shell", action_value: "git status && rm -rf /" })) as { severity: string };
-    const cautionary = (await tool("guardian_check_action", { action_type: "shell", action_value: "git status && git reset --hard" })) as { severity: string };
-    const calm = (await tool("guardian_check_action", { action_type: "shell", action_value: "git status" })) as { severity: string };
-    expect(destructive.severity).toBe("alert");
-    expect(cautionary.severity).toBe("caution");
-    expect(calm.severity).toBe("ok");
-
-    expect(tapeKinds(ws)).toContain("intent.declared");
+    expect(contract.successCriteria.some((c) => c.text.includes("Exporter"))).toBe(true);
   });
 
-  it("hook: neutral command -> bare allow, no message", () => {
+  it("hook: a command -> bare allow, no message", () => {
     const { out } = hook(ws, { hook_event_name: "beforeShellExecution", command: "git status" });
     expect(out.permission).toBe("allow");
     expect(out.userMessage).toBeUndefined();
   });
 
-  it("hook: off-goal burst -> drift recorded every time, nudged ONCE (episode governor)", () => {
-    const first = hook(ws, { hook_event_name: "beforeShellExecution", command: "docker build darkmode theme palette ." });
-    const second = hook(ws, { hook_event_name: "beforeShellExecution", command: "touch darkmode theme palette tokens" });
-    const third = hook(ws, { hook_event_name: "beforeShellExecution", command: "mv darkmode-theme palette-tokens styles" });
-    expect(first.out.permission).toBe("allow");
-    expect(second.out.permission).toBe("allow");
-    expect(third.out.permission).toBe("allow");
-    const nudges = [first, second, third].filter((r) => typeof r.out.userMessage === "string" && (r.out.userMessage as string).length > 0);
-    expect(nudges.length).toBe(1);
-    const drifts = tapeKinds(ws).filter((k) => k === "drift.lexical");
-    expect(drifts.length).toBeGreaterThanOrEqual(3);
-  });
 
-  it("hook: risky command inside a chain -> advisory recorded, still allow", () => {
-    const { out } = hook(ws, { hook_event_name: "beforeShellExecution", command: "git status && git reset --hard HEAD~3" });
-    expect(out.permission).toBe("allow");
-    expect(tapeKinds(ws)).toContain("policy.advisory");
-  });
-
-  it("hook: guardian's own MCP tools are never drift", () => {
-    const before = tapeKinds(ws).filter((k) => k === "drift.lexical").length;
+  it("hook: guardian's own MCP tools pass silently", () => {
     const { out } = hook(ws, {
       hook_event_name: "beforeMCPExecution",
       mcp_server_name: "goal-guardian",
       tool_name: "guardian_get_status",
     });
     expect(out.permission).toBe("allow");
-    expect(tapeKinds(ws).filter((k) => k === "drift.lexical").length).toBe(before);
+    expect(out.userMessage).toBeUndefined();
   });
 
-  it("hook: edits and reads are observed on the raw tape", () => {
+  it("hook: edits are observed on the raw tape", () => {
     hook(ws, { hook_event_name: "afterFileEdit", file_path: path.join(ws.root, "src", "exporter.ts") });
     const observed = tapeKinds(ws).filter((k) => k === "action.observed");
     expect(observed.length).toBeGreaterThan(0);
   });
 
-  it("completing the task closes the lifecycle in get_status", async () => {
-    await tool("guardian_record_progress", { action: "complete_task", taskId: exporterTaskId });
-    const status = await tool("guardian_get_status");
-    expect(JSON.stringify(status)).toContain("Exporter");
+  it("a report on the goal goes on the record, and get_status shows where the goal stands", async () => {
+    const answer = await tool("guardian_report_goal", { status: "complete", proofs: [], changes: [] });
+    expect(answer.accepted).toBe(false);
+    expect(tapeKinds(ws)).toContain("goal.report");
+    const status = (await tool("guardian_get_status")) as { goal: string; goalPhase: string };
+    expect(status.goal).toContain("CSV exporter");
+    expect(status.goalPhase).toBe("active");
   });
 
-  it("quiet mode: drifting actions stay recorded, zero messages injected", async () => {
-    const quiet = await scaffoldWorkspace({ config: { notify: "quiet" } });
-    try {
-      const r1 = hook(quiet, { hook_event_name: "beforeShellExecution", command: "docker build darkmode theme palette ." });
-      const r2 = hook(quiet, { hook_event_name: "beforeShellExecution", command: "git reset --hard" });
-      expect(r1.out.userMessage).toBeUndefined();
-      expect(r2.out.userMessage).toBeUndefined();
-      expect(tapeKinds(quiet).length).toBeGreaterThan(0);
-      await quiet.cleanup();
-    } catch (err) {
-      await quiet.cleanup(true);
-      throw err;
-    }
-  });
 });

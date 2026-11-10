@@ -27,7 +27,7 @@ function runRaw(cwd: string, payload: Record<string, unknown>): { status: number
 
 describe("native-windows payload shape (no workspace_roots, foreign cwd)", () => {
   it("afterFileEdit resolves the workspace from file_path and writes the tape", async () => {
-    const w = await makeWorkspace({ goal: "Expense tracker app", tasks: [{ id: "t1", title: "Build the expense form", status: "doing" }] });
+    const w = await makeWorkspace({ goal: "Expense tracker app" });
     workspaces.push(w);
     const hostileCwd = await fs.mkdtemp(path.join(os.tmpdir(), "gg-elsewhere-"));
     const { status, response } = runRaw(hostileCwd, {

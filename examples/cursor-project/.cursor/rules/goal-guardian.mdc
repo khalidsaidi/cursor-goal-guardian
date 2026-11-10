@@ -3,17 +3,25 @@ description: Goal Guardian session protocol — keeps agent work anchored to the
 alwaysApply: true
 ---
 
-This workspace uses Goal Guardian (advisory only — it never blocks you).
-Follow this protocol:
+This workspace uses Goal Guardian. It never blocks you.
+The user steers through chat; Guardian keeps the record. Follow this protocol:
 
-1. At the start of a session, call the `goal-guardian` MCP tool `guardian_get_contract`
-   to load the goal, success criteria, constraints, and the active task.
-2. Before starting multi-file or multi-step work, call `guardian_declare_intent`
-   with a one-line summary (and the taskId it serves).
-3. When you finish a task, call `guardian_record_progress` with action `complete_task`.
-   To work on a different task, call it with action `start_task` — switching away from
-   an active task requires a `decision` (text + rationale); that is intentional.
-4. If a Goal Guardian message notes your work looks off-goal, re-read the active task
-   and either realign or record a decision explaining the pivot.
-5. Stay within the declared constraints. If the user's request conflicts with the
-   contract, say so and suggest updating the contract instead of silently diverging.
+1. At the start of a session, call the `goal-guardian` MCP tool `guardian_get_contract`.
+2. **The user's request is the goal.** Guardian records it word for word when you first change
+   something; you don't write it and never reword it. Only if the request lists no 'done when' items,
+   add 2–4 with `guardian_update_goal` (add_criteria). Never interrogate the user about goals.
+3. **A limit in one message ends with that message.** "Just item 1 for now" means do that and stop
+   this time. It never binds a later message.
+4. If the user asks to continue or finish, that means the whole goal: work through everything left.
+   An empty record doesn't mean there's no work: look in past chats and recent commits before asking.
+5. Do what the goal asks and nothing more. Keep it whole: don't settle for a smaller version.
+6. If something stands in the way of one item, such as a broken tool, try another way to check it and
+   keep going on the rest. Tell the user about it when you close. Ask only when nothing is left to do.
+7. Assume it isn't done until each 'done when' item is proved by what the project does now. Then call
+   `guardian_report_goal` with your proof. Guardian checks it against its own record and sends you back
+   with what doesn't hold. Never remove finished work to make it fit the record: if they disagree,
+   tell the user and ask.
+8. When the user changes direction ('actually, let's...'), call `guardian_update_goal` with their
+   words in `user_words`: those words become the goal. Only the user changes the goal.
+9. When the user asks about progress or 'where were we', answer from `guardian_get_status` and
+   `guardian_get_contract`, not memory. Stay within any boundaries the user set in the contract.

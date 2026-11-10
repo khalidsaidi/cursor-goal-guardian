@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+- AI review. Scored on real agent runs for the first time, it found no real drift, so it no
+  longer runs or spends your plan. Older workspaces keep working; its old settings are ignored.
+
+- Word-matching drift flags, with their nudges, the "off the track" section and the
+  on-course lamp. On 72 scored agent runs they fired 131 times: the one run a blind judge
+  found drifted got none, and 29 clean runs got at least one. Cursor also ignores nudge text
+  on allowed actions, so the agent never saw them. The lamp now shows where the goal stands.
+  Also gone: the no-active-task reminder and the `vocal` mode, which now acts as `balanced`.
+  Old settings and old log entries are still read, and ignored.
+
+- The task board: tasks, the active task, decisions, open questions, pinned context and
+  intents, with the event log and state machine behind them, the tools
+  `guardian_record_progress`, `guardian_declare_intent` and `guardian_check_action`, the
+  task commands, the panel's "Now" section and the auto-start and auto-pin settings. Agents
+  used them to ask for task ids they couldn't find, and no test showed they helped.
+  `contract.json` now holds the goal alone. A goal found only in an older `state.json` moves
+  into it, and the old files are ignored. "Done when" lines tick only when a run proved them.
+
+- Risky-command advisories, loop detection, the `notify` setting and quiet mode. Their notes
+  went out in fields Cursor ignores on allowed actions, so they reached nobody, and safety isn't
+  Guardian's job: it's about the goal. While the agent works, Guardian records and says nothing.
+  Rules from an older `policy.json` aren't carried over, though its backup is kept.
+
+- The native Windows observer (file watcher, process watcher, lease). It was built on a wrong
+  diagnosis: Cursor's hooks do fire on Windows, and the real bugs were in how Guardian's hook read
+  them. It only recorded, the goal loop needs hooks anyway, and it taped the person's saves as
+  agent edits. Reads and Tab completions are no longer hooked either.
+
+### Added
+- The goal loop. When the agent stops after editing files, it's sent back with your
+  goal and what Guardian's record shows until the goal is proved, truly blocked, set
+  aside, stalled, or out of rounds (20). Proof is checked against commands and output
+  Guardian recorded itself, for any language or tool. Each changed file must be tied to
+  a "done when" line or called extra. No AI calls; each round is an agent turn. Not yet
+  measured.
+- New tool `guardian_report_goal`. Pause (which also stops the running chat), resume
+  and mark done are in the panel. Only you can use them.
+- Only the user changes an existing goal: `guardian_update_goal` now needs their words.
+- Fixed: Guardian's hook couldn't read Cursor's payload on native Windows, or its workspace path.
+- Updates now refresh the rule in connected workspaces, so the agent's instructions can't go stale.
+
 ## 1.0.0
 
 Ground-up rewrite. Identity: a drift flight-recorder for AI coding sessions —

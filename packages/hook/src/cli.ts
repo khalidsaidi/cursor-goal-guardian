@@ -5,7 +5,13 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { advisoryAllow, runPipeline, type HookResponse } from "@goal-guardian/core";
+import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordShellFailure, recordShellOutput, recordUserPrompt, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
+
+/** The stop and prompt hooks answer in their own shapes, not the permission shape. */
+type HookOutput = HookResponse | { followup_message?: string } | { continue: true; additional_context?: string } | { additional_context?: string };
+
+/** Hooks with nothing to say answer empty, never with the permission shape. */
+const SILENT_EVENTS = new Set(["stop", "afterShellExecution", "postToolUse", "postToolUseFailure"]);
 
 async function readAllStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -30,11 +36,15 @@ function isGuardianWorkspace(dir: string): boolean {
   }
 }
 
+/** On Windows Cursor sends workspace roots as URI paths, such as /c:/Users/me/repo. */
+function nativePath(root: string): string {
+  return /^\/[a-zA-Z]:/.test(root) ? path.win32.normalize(root.slice(1)) : root;
+}
+
 /**
- * Resolve the workspace this event belongs to. Native-Windows Cursor sends
- * hook payloads with NO workspace_roots and a cwd outside the workspace —
- * only file_path identifies where the work is happening. Ladder:
- * 1. workspace_roots (WSL/remote sends it)
+ * Resolve the workspace this event belongs to. Older native-Windows Cursor sent
+ * no workspace_roots and a cwd outside the workspace, leaving only file_path. Ladder:
+ * 1. workspace_roots
  * 2. ascend from file_path until a Guardian workspace appears
  * 3. cwd, if it is a Guardian workspace
  * Unresolvable returns "" and the caller answers a bare allow — never a
@@ -42,7 +52,7 @@ function isGuardianWorkspace(dir: string): boolean {
  */
 function workspaceRoot(payload: Record<string, unknown>): string {
   const roots = payload.workspace_roots;
-  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return roots[0];
+  if (Array.isArray(roots) && typeof roots[0] === "string" && roots[0]) return nativePath(roots[0]);
 
   const filePath = typeof payload.file_path === "string" ? payload.file_path : "";
   if (filePath && path.isAbsolute(filePath)) {
@@ -67,10 +77,10 @@ function relativePath(root: string, value: string): string {
   return asPosix(value).replace(/^\.\//, "");
 }
 
-async function handle(payload: Record<string, unknown>): Promise<HookResponse> {
-  const root = workspaceRoot(payload);
-  if (!root) return advisoryAllow();
+async function handle(payload: Record<string, unknown>): Promise<HookOutput> {
   const event = eventName(payload);
+  const root = workspaceRoot(payload);
+  if (!root) return SILENT_EVENTS.has(event) ? {} : event === "beforeSubmitPrompt" ? { continue: true } : advisoryAllow();
 
   switch (event) {
     case "beforeShellExecution":
@@ -81,15 +91,74 @@ async function handle(payload: Record<string, unknown>): Promise<HookResponse> {
       const value = `${serverName}/${String(payload.tool_name ?? "")}`;
       return runPipeline(root, "beforeMCPExecution", "mcp", value, ids(payload));
     }
+    // Nothing needs reads, and a Tab completion is the person typing. Connected workspaces lose these on update.
     case "beforeReadFile":
     case "beforeTabFileRead":
-      return runPipeline(root, "beforeReadFile", "read", relativePath(root, String(payload.file_path ?? "")), ids(payload));
-    case "afterFileEdit":
     case "afterTabFileEdit":
-      return runPipeline(root, "afterFileEdit", "edit", relativePath(root, String(payload.file_path ?? "")), ids(payload));
+      return {};
+    case "afterFileEdit": {
+      const file = relativePath(root, String(payload.file_path ?? ""));
+      if (!file.startsWith(".cursor/")) await captureGoal(root, ids(payload).conversationId).catch(() => undefined);
+      return runPipeline(root, "afterFileEdit", "edit", file, ids(payload));
+    }
+    case "stop": {
+      const { conversationId } = ids(payload);
+      const followup = await runGoalStop(root, {
+        ...(conversationId ? { conversationId } : {}),
+        status: String(payload.status ?? ""),
+        loopCount: typeof payload.loop_count === "number" ? payload.loop_count : 0,
+        ...turnTokens(payload),
+      }).catch(() => null);
+      return followup ? { followup_message: followup } : {};
+    }
+    case "postToolUse":
+    case "postToolUseFailure": {
+      if (commandFailed(event, payload)) {
+        await recordShellFailure(root, String((payload.tool_input as { command: string }).command)).catch(() => undefined);
+      }
+      const notice = await goalMidTurnNotice(root, ids(payload).conversationId).catch(() => null);
+      return notice ? { additional_context: notice } : {};
+    }
+    case "beforeSubmitPrompt": {
+      const mode = typeof payload.composer_mode === "string" ? payload.composer_mode : undefined;
+      const prompt = String(payload.prompt ?? "");
+      await recordUserPrompt(root, prompt, ids(payload).conversationId, mode).catch(() => undefined);
+      const context = !prompt.startsWith(GUARDIAN_MESSAGE_PREFIX) && mode && agentMode(mode) ? await goalTurnContext(root).catch(() => null) : null;
+      return context ? { continue: true, additional_context: context } : { continue: true };
+    }
+    case "afterShellExecution":
+      await recordShellOutput(root, {
+        command: String(payload.command ?? ""),
+        output: String(payload.output ?? ""),
+        ...(typeof payload.duration === "number" ? { durationMs: payload.duration } : {}),
+      }).catch(() => undefined);
+      return {};
     default:
       return advisoryAllow();
   }
+}
+
+/**
+ * Which hook reports a failed shell command depends on which executor Cursor's server picked: one uses
+ * postToolUseFailure, the other postToolUse with an exit code in tool_output, a JSON string.
+ */
+function commandFailed(event: string, payload: Record<string, unknown>): boolean {
+  const input = payload.tool_input as { command?: unknown } | undefined;
+  if (payload.tool_name !== "Shell" || typeof input?.command !== "string") return false;
+  if (event === "postToolUseFailure") return true;
+  try {
+    const output = JSON.parse(String(payload.tool_output)) as { exitCode?: unknown };
+    return typeof output.exitCode === "number" && output.exitCode !== 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Cursor reports what the turn spent. Cached reads are left out: they aren't new work. */
+function turnTokens(payload: Record<string, unknown>): { tokens?: number } {
+  const count = (key: string): number => (typeof payload[key] === "number" ? (payload[key] as number) : 0);
+  const tokens = count("input_tokens") + count("output_tokens");
+  return tokens > 0 ? { tokens } : {};
 }
 
 function ids(payload: Record<string, unknown>): { conversationId?: string; generationId?: string } {
@@ -98,23 +167,29 @@ function ids(payload: Record<string, unknown>): { conversationId?: string; gener
   return { ...(conversationId ? { conversationId } : {}), ...(generationId ? { generationId } : {}) };
 }
 
+/** Plain ASCII: on Windows the output passes through a PowerShell pipeline that can re-encode anything else. */
+function hookJson(value: unknown): string {
+  return JSON.stringify(value).replace(/[\u0080-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+
 async function main(): Promise<void> {
-  let response: HookResponse = advisoryAllow();
+  let response: HookOutput = advisoryAllow();
   try {
     const raw = await readAllStdin();
-    const payload = JSON.parse(raw) as Record<string, unknown>;
+    // On Windows, Cursor pipes the payload through PowerShell, whose UTF-8 output starts with a byte-order mark.
+    const payload = JSON.parse(raw.replace(/^\uFEFF/, "")) as Record<string, unknown>;
     if (payload && typeof payload === "object") {
       response = await handle(payload);
     }
   } catch {
     response = advisoryAllow();
   }
-  process.stdout.write(JSON.stringify(response));
+  process.stdout.write(hookJson(response));
 }
 
 main()
   .catch(() => {
-    process.stdout.write(JSON.stringify(advisoryAllow()));
+    process.stdout.write(hookJson(advisoryAllow()));
   })
   .finally(() => {
     process.exit(0);

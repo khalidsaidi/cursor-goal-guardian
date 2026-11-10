@@ -1,5 +1,12 @@
 # 1.0.0 verification record
 
+> **2026-11-06:** the task board was removed: tasks, the active task, decisions, intents,
+> the event log and state machine, and their tools and commands. `contract.json` now holds the
+> goal alone. Also removed: risky-command advisories, loop detection, quiet mode, and the native
+> Windows observer. Hooks do fire on Windows; the "broken hook runtime" diagnosis below was wrong.
+> Dated entries below describe what existed when they were written.
+
+
 Everything below was verified against **real artifacts and a real Cursor
 editor** — no mocked-API claim stands in for any of it.
 
@@ -22,6 +29,8 @@ Bugs found only by this tier (all fixed): Cursor sends `mcp_server_name` (not
 `server`), headless MCP tool calls need `--force`, judges stall without
 `--trust`, a double-shebang crash lived only in the packaged MCP bundle, and
 chained shell commands escaped prefix policy rules.
+
+> AI review was removed on 2026-11-05 after it found no real drift on real runs. Word-matching drift flags, their nudges and the drift panel were removed on 2026-11-06 after scoring as noise on 72 runs. Mentions below are history.
 
 ## Live editor tier (real Cursor, driven by PowerShell + CDP)
 - Cursor's extension host logs: `Extension activated success:
@@ -227,10 +236,8 @@ silently writing session files into home (regression-tested).
 
 ## Self-contained binaries, verified on all three platforms (2026-08-26)
 
-Researched the shipping pattern of renowned extensions first: the OpenAI
-extension installed on this machine bundles self-contained native `codex`
-binaries for all six platform/arch combos — no runtime dependency, no
-dialogs. Guardian now ships the same way, per-platform: the hook and MCP
+Guardian now ships self-contained binaries for all six platform/arch
+combos, with no runtime dependency and no dialogs, per-platform: the hook and MCP
 server compile to standalone executables and each platform gets a targeted
 VSIX (~77 MB) published with `ovsx --target`.
 
@@ -269,7 +276,9 @@ correctly refuses (the agent relayed "could not attach... open the project
 folder", twice, zero stray writes) but agent-driven workspace attach through
 Cursor's source selection remains unproven there; (b) workspace hooks.json
 produced no hook events from agent activity on native Windows (it does on
-WSL) — needs a fresh-boot investigation of Cursor's hook loading on win32.
+WSL). Update 2026-11-04: hooks do fire there. Guardian's hook couldn't read
+the payload (PowerShell's byte-order mark) or the workspace path (`/c:/...`),
+both now fixed. See `goal-design.md`.
 
 
 # OPEN — NOT PROVEN (plain list)
@@ -321,10 +330,8 @@ which once shipped an hour-old binary; it now always compiles fresh.
 
 ## Both Windows gaps closed the way professionals close them (2026-08-26)
 
-Researched how OpenAI's Cursor extension (openai.chatgpt, installed locally)
-handles the same two problems. Finding: it does not use Cursor hooks at all
-(zero references in its bundle) and writes no workspace config — it observes
-everything from inside its own extension process. Applied that pattern:
+The fix is to observe from inside Guardian's own extension process instead
+of depending on Cursor's hooks:
 
 **Toggle guidance is now a guided action.** Cursor's per-project MCP enable
 is unavoidable (no per-server deep link exists in its workbench), so the

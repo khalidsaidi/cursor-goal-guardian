@@ -25,9 +25,9 @@ export async function detectWorkspaceFormat(workspaceRoot: string): Promise<Work
   }
   if (hasAiDir) return "v1";
 
-  if (await fileExists(p.state)) {
+  if (await fileExists(legacy.state)) {
     try {
-      const raw = (await readJsonFile(p.state)) as { schemaVersion?: unknown };
+      const raw = (await readJsonFile(legacy.state)) as { schemaVersion?: unknown };
       return raw.schemaVersion === 2 ? "v2" : "v1";
     } catch {
       return "v1";

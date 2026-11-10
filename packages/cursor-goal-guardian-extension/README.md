@@ -15,9 +15,8 @@ it wanders, and shows you the story. It never blocks, and it never nags.
 - **A goal that can't get lost.** Your own request becomes the goal, with a
   "done when" checklist — kept outside the AI's memory, so compaction, resets,
   and long sessions can't erase it.
-- **A second pair of eyes on every session.** Every command, edit, and tool
-  call is checked against the goal. Real detours get one calm sentence in
-  chat; false alarms get cleared by an AI reviewer — with reasons.
+- **An agent that finishes.** When it stops early, Guardian sends it back with
+  your goal and what's still open, until each item is backed by its record.
 - **The story, whenever you want it.** "Where were we?" is a glance at the
   panel or a `/guardian` in chat — never an archaeology dig through history.
 
@@ -37,8 +36,7 @@ top of the file sidebar — that's where you'll glance later. You'll see this:
 
 **3. Fill the little form — or don't.** The whole setup is right there in
 the panel: say what you're working toward in your own words, press Enter to
-add each "done when" finish line (each becomes a task on the board, the ×
-removes it), optionally add a boundary, and click **Connect Guardian**.
+add each "done when" finish line (the × removes it), optionally add a boundary, and click **Connect Guardian**.
 Every field is optional — connecting empty is fine, step 5 works either
 way. No wizard, no separators, nothing to memorize. Guardian writes its
 files into a small `.cursor/goal-guardian` folder you never need to open.
@@ -54,27 +52,24 @@ Ten seconds, once per project. The panel's **Get started checklist** — it
 ticks itself from what actually happens in your session, no "next" buttons —
 is already keeping score.
 
-<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s13-tour.png" alt="The board and get-started checklist right after connecting" width="500" />
+<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s13-tour.png" alt="The panel and get-started checklist right after connecting" width="500" />
 
 **5. Ask your agent for something — like you always do.** That's the whole
 trick. If you connected empty, your request *becomes* the goal: the agent
 answers with one line — "Tracking: … — done when …" — writes its own
 "done when" list, and gets to work. If you filled the form, the agent finds
-your goal already on the record and starts moving the board instead. Either
-way: no ceremony. And when a task says "with tests," the agent runs them
-before the box gets ticked — **done means verified**, and if something on
-your machine blocks the proof, the agent says so plainly and offers to fix
-it or record the gap. Your call.
+your goal already on the record and starts on it instead. Either way: no
+ceremony. And when a "done when" line says "with tests," the agent has to run
+them before it can call that line proved.
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s2-hub-tracking.png" alt="A plain request becomes a tracked goal" width="800" />
 
-**6. Glance at the panel** any time. Your goal is the title. The lamp says
-"on course" (or doesn't). The checklist ticks itself as the agent finishes
-things.
+**6. Glance at the panel** any time. Your goal is the title. The lamp and its word say
+where the goal stands: active, paused, blocked, stalled, proved. The checklist ticks each "done when" line that a run
+proved on Guardian's record.
 
 **7. Type `/guardian` in the chat** and get a plain-language briefing of
-where the session stands — what's done, what's left, whether anything
-wandered.
+where the session stands: what's proved and what's left.
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s4-hub-briefing.png" alt="/guardian briefing" width="800" />
 
@@ -86,7 +81,7 @@ That's it. You now have a session that can't lose the plot.
 
 Guardian's skills sit in the same `/` menu as everything else, and the agent
 follows a session protocol automatically. Here is the whole core move — one
-plain request, and the goal, the "Tracking:" line, and the task board all
+plain request, and the goal, the "Tracking:" line, and the "done when" list all
 come from it:
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-ask.gif" alt="One request becomes a tracked goal with its own done-when list" width="800" />
@@ -99,13 +94,9 @@ the old thread:
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s1-slash-menu.png" alt="Guardian skills in the slash menu" width="800" />
 
-And when the *agent* wanders off on its own, Guardian's tap on the shoulder
-arrives right in the conversation — the agent pauses and asks you: continue
-this direction (and record it), or get back to the task?
-
 ### The session panel
 
-One glance answers "is this session on course?" — and every part of it is
+One glance answers "where does the goal stand?" — and every part of it is
 labeled in plain words:
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/panel-anatomy.png" alt="Panel anatomy, annotated" width="800" />
@@ -115,32 +106,60 @@ labeled in plain words:
 ### One keystroke to steer
 
 Click the status bar item (or run "Goal Guardian: Command Center") for direct
-actions: mark the task done, switch task (Guardian asks "why?" in one line —
-that reason goes on the record), update the goal, toggle how chatty
-notifications are:
+actions: update the goal, toggle how chatty notifications are, open Guardian's
+files:
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s7-command-center.png" alt="The Command Center" width="800" />
 
-### AI review — false alarms clear themselves
+### The goal — done means proved
 
-Word-matching alone can't tell "installing a test runner for the task" from
-"wandering off to build a dark theme." With your one-time OK, an AI reviewer
-(using your Cursor account, a few small calls) double-checks every flagged
-detour — dismissing housekeeping with a written reason, confirming real
-drift, and periodically reading the whole session to answer one question:
-*is this still on course?*
+Most agents decide for themselves when they've finished. Guardian checks. When the
+agent stops after editing files, it's sent back with your goal and what Guardian's
+record shows, until one of these happens:
 
-<img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-review.gif" alt="Consent once; false alarms clear themselves with written reasons" width="800" />
+- **Proved.** For each "done when" line, the agent names a command it ran after its
+  last edit and text that command printed, or a file and text in it. Guardian checks
+  that against what it recorded itself. A command that never ran or failed, a result from
+  before the latest change, or output that doesn't match is refused and the agent keeps working.
+  The panel shows these receipts.
+- **Blocked.** Something outside the agent's reach has stopped it, and it has tried for
+  at least 3 turns.
+- **Set aside.** Your latest message asked for only part of the goal or something else. The
+  agent has to quote it, the goal stays open, and the next message is checked again.
+- **Stalled or out of rounds.** Three rounds in a row where nothing changed, or 20 rounds
+  for one message from you. The agent closes with what's done and what isn't, and the
+  panel says it isn't proved, with rounds, time and tokens spent. An agent that never reports, usually because Guardian's MCP
+  server is switched off, is left alone in that chat after it stalls once.
+
+You're in charge from the panel. **Pause goal** stops the chat at work and the send-backs,
+and the agent can't pause or lift it. **Resume goal** and **Work on the goal** start the agent in a new
+chat. **Mark goal done** closes a goal you're happy with, proved or not.
+
+Every file the agent changed has to be tied to a "done when" line or called extra.
+Extras are sent back once to undo. If the agent keeps one, it's listed in the panel for
+you to decide. Only you change an existing goal: where Cursor reports your messages, the
+agent has to quote your words to change it. If the agent edits Guardian's goal files, the
+panel says so.
+
+Works with any language or tool, because Guardian only compares text. It never runs your
+project's commands and makes no AI calls, but each round is an agent turn on your Cursor
+plan, including one short turn when you ask for something unrelated after the goal is set.
+In a git repository it also reads `git status` and `git diff`, so files changed by commands
+count too. It keeps your last 3 messages and recent command output in the workspace's
+Guardian folder, excluded from git.
+
+**What it can't do:** it can't tell whether a command really tests what the agent says it
+does (a script that just prints "passed" would get through), or whether a file the agent
+tied to the goal was truly needed. The receipts are there so you can judge that. Outside
+git, changes made by commands go unseen. Whether it reduces drift hasn't been measured. It doesn't run in
+headless runs of the command-line agent, where Cursor fires no stop hook, or in Cmd+K, Ask or
+Plan mode. Cursor only runs project hooks in a trusted workspace.
 
 ### Safety rails
 
-- **Never blocks.** Every check answers "allow." The strongest opt-in setting
-  (`escalateConfirmedDrift: "ask"`) hands confirmed, repeated drift to *you*
-  via Cursor's own confirmation dialog — Guardian itself never denies.
-- **Never nags.** One calm sentence per detour episode, not per action.
-  `quiet` mode records everything and says nothing, ever.
-- **Never surprises.** No popups except one migration notice and one AI-review
-  consent. The status bar never turns red. Auto-behaviors are off by default.
+- **Never blocks.** Every check answers "allow." Guardian never denies anything.
+- **Never nags.** While the agent works, Guardian records and says nothing. It speaks at the end of a turn, about the goal.
+- **Never surprises.** No popups except one migration notice. The status bar never turns red.
 - **Leaves no trace.** "Remove from Workspace" deletes everything Guardian
   created — files, hook wiring, skills, the rule.
 
@@ -149,64 +168,40 @@ drift, and periodically reading the whole session to answer one question:
 | | Capability |
 |---|---|
 | **In chat** | ✓ Your request becomes the goal (with "done when" criteria) |
-| | ✓ Done means verified — the agent runs the tests/build before a task is recorded complete; a blocked proof becomes a fix-it-or-record-it choice in chat |
 | | ✓ Agent loads the goal at every session start (survives resets) |
-| | ✓ Progress recorded as tasks start/finish — by the agent itself |
-| | ✓ Your pivots documented with a reason, never lost |
-| | ✓ Agent-initiated drift → the choice comes to you in chat |
+| | ✓ Only your own words change an existing goal |
 | | ✓ `/guardian` briefing · `/guardian-goal` to declare/change the goal |
-| | ✓ Six agent tools (read contract, update goal, declare intent, self-check an action, record progress, session status) |
+| | ✓ Four agent tools (read contract, update goal, report on the goal, session status) |
 | | ✓ Works in Cursor's agent hub and the IDE — one-time connect approval |
 | **Watching** | ✓ Every shell command, edit, and tool call observed (~60ms, invisible) |
-| | ✓ Records on every platform — on native Windows Guardian watches at the OS level, so the tape fills even where Cursor's own hooks can't reach |
-| | ✓ Off-goal detection by vocabulary, three sensitivity levels |
-| | ✓ Risky-command advisories (ok/caution/alert — even inside `a && b` chains) |
-| | ✓ One calm nudge per detour episode · quiet/balanced/vocal modes |
-| | ✓ "No task active" gentle reminder |
-| | ✓ Out-of-workspace and housekeeping actions never count as drift |
-| **AI review** | ✓ Per-detour verdicts with written rationale (consent-gated) |
-| | ✓ Whole-session "on course?" review with confidence |
-| | ✓ Verdicts cached — nothing is judged twice |
-| **The record** | ✓ Append-only session log; state always rebuildable from it |
-| | ✓ Hand-edited state detected; one-click repair |
-| | ✓ Task switches require a recorded reason (the machine enforces it) |
-| | ✓ Detours paired with the action that brought the session back |
-| **IDE** | ✓ Full-height session panel (goal, lamp, board, checklist, track) |
+| **The record** | ✓ One file holds the goal; an append-only tape holds what happened |
+| **IDE** | ✓ Full-height session panel (goal, lamp, checklist) |
 | | ✓ Setup is a form in the panel — type, press Enter, Connect; no wizard, no separators |
 | | ✓ Introduces itself once: the panel opens on its own after install |
 | | ✓ One-click "Open MCP Settings" guidance for Cursor's per-project enable |
 | | ✓ Get-started tour that completes from the real session, not from clicks |
-| | ✓ Click-to-edit goal · per-item "check with AI" |
+| | ✓ Click-to-edit goal |
 | | ✓ Status bar with click-to-steer Command Center |
-| | ✓ 15 palette commands incl. guided setup and full uninstall |
-| **Trust** | ✓ Advisory forever — never blocks, opt-in "ask" at most |
+| | ✓ 8 palette commands incl. guided setup and full uninstall |
+| **Trust** | ✓ Advisory forever — never blocks |
 | | ✓ Automatic migration from 0.4.x with backups |
 | | ✓ Ships as self-contained native builds for all six platforms (Linux, macOS, Windows × x64/arm64) — no Node.js required |
-| | ✓ 260+ tests incl. real-agent end-to-end suites and live-editor verification |
+| | ✓ 200+ tests incl. real-agent end-to-end suites and live-editor verification |
 
 ## How it works (plain English)
 
 Drift happens because "what we're working on" normally lives in the AI's
-head — and the AI's head leaks. Guardian takes the plan out of anyone's head
-and makes it a **fact in a file**:
+head, and the AI's head leaks. Guardian writes the goal down as a **fact in a
+file**:
 
-1. **One answer to "what is the current task?"** The hooks, the panel, the AI
-   reviewer, and the agent itself all read the same answer from the same
-   file. Once the goal is written down, drifting from it becomes *visible*.
-2. **The plan only changes through the front door.** Not by editing — by
-   recorded actions: start this task, finish that one, note a decision.
-   Switching tasks without a written reason is refused by the state machine
-   itself.
-3. **Every change is a receipt.** Actions append to a log forever; replaying
-   the log reproduces the state exactly. When a detour is flagged at 3:40 PM,
-   the tape shows what the session was for at 3:35.
-4. **Interruptions stop causing drift.** Resuming is a read, not a
-   reconstruction: active task, done list, last decision.
-
-The store doesn't stop the agent from wandering — it makes it impossible for
-the *goal* to wander. That fixed point is what every detector measures
-against. (Under the hood it's a Redux-style store: append-only action log,
-one pure reducer, `state === replay(actions)`, hash-guarded.)
+1. **One answer to "what is the goal?"** The hooks, the panel and the agent all
+   read the same file. Only your own words change an existing goal.
+2. **It comes back with every message.** A new chat or a compacted one still has
+   the goal in front of it.
+3. **The agent can't just stop.** When it stops after editing files it's sent back
+   until its report holds against Guardian's own record of what ran.
+4. **A tape of what happened.** Every shell command, edit and tool call is recorded,
+   so you can see what the session did.
 
 ## Reference
 
@@ -216,32 +211,25 @@ them):
 ```
 .cursor/goal-guardian/
   contract.json      # the goal and "done when" list
-  config.json        # notifications, sensitivity, advisory rules
-  state.json         # the task board (auto-managed)
-  actions.jsonl      # the session log
+  config.json        # settings version
   telemetry/         # the tape (gitignored)
 .cursor/rules/goal-guardian.mdc      # teaches the agent the protocol
 .cursor/skills/guardian*/            # /guardian and /guardian-goal
 ```
 
-**Settings**: `goalGuardian.statusBar.enabled` ·
-`goalGuardian.autoStartNextTask` (off) · `goalGuardian.autoPinEditedFiles`
-(off). Behavior knobs (notify mode, sensitivity, AI review pacing,
-escalation) live in `config.json` — the Command Center changes the common
-ones for you.
+**Settings**: `goalGuardian.statusBar.enabled`.
 
 ## Upgrading from 0.4.x
 
 Automatic on first activation: files backed up as `*.v1.bak`, one passive
-notice, done. The old permit system is retired in favor of honest telemetry
-plus decision-gated task switching.
+notice, done. The old permit system and task board are retired; your
+goal carries over.
 
 ## Validation
 
-260+ unit and contract tests (quietness contract, hook latency budget,
-migration goldens from real 0.4.x workspaces), a 12-scenario end-to-end suite
+200+ unit and contract tests (quietness contract, hook latency budget,
+migration goldens from real 0.4.x workspaces), an end-to-end suite
 driving **real** Cursor agents — including an uninstructed agent cooperating
-purely from the session rule and a live AI judge separating real drift from
-false alarms — live-editor verification down to the rendered panel, and a
+purely from the session rule — live-editor verification down to the rendered panel, and a
 six-architecture CI matrix that compiles and *executes* the shipped binaries
 on Linux, macOS, and Windows, x64 and arm64 alike.

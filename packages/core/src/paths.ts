@@ -5,13 +5,10 @@ export interface GuardianPaths {
   dir: string;
   contract: string;
   config: string;
-  state: string;
-  actions: string;
-  snapshot: string;
   telemetryDir: string;
   audit: string;
-  verdicts: string;
-  episodes: string;
+  shellOutput: string;
+  prompts: string;
   migrationMarker: string;
 }
 
@@ -23,13 +20,10 @@ export function getGuardianPaths(workspaceRoot: string): GuardianPaths {
     dir,
     contract: path.join(dir, "contract.json"),
     config: path.join(dir, "config.json"),
-    state: path.join(dir, "state.json"),
-    actions: path.join(dir, "actions.jsonl"),
-    snapshot: path.join(dir, "snapshot.json"),
     telemetryDir,
     audit: path.join(telemetryDir, "audit.jsonl"),
-    verdicts: path.join(telemetryDir, "verdicts.json"),
-    episodes: path.join(telemetryDir, "episodes.json"),
+    shellOutput: path.join(telemetryDir, "shell-output.jsonl"),
+    prompts: path.join(telemetryDir, "prompts.json"),
     migrationMarker: path.join(dir, "migration.json"),
   };
 }
@@ -50,7 +44,7 @@ export interface LegacyGuardianPaths {
   violations: string;
 }
 
-/** File layout of v0.x workspaces; used only by migration detection/transform. */
+/** Files of older workspaces: v0.x, and the task store of 1.0. Read only to carry a goal forward. */
 export function getLegacyPaths(workspaceRoot: string): LegacyGuardianPaths {
   const dir = path.join(workspaceRoot, ".cursor", "goal-guardian");
   const aiDir = path.join(workspaceRoot, ".ai", "goal-guardian");

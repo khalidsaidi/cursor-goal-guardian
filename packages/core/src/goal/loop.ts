@@ -1,0 +1,364 @@
+/**
+ * The goal loop. When the agent stops after working on a goal, Guardian compares its report with Guardian's own
+ * record and sends it back with the facts, until the goal is proved, the agent is truly blocked, the user set it
+ * aside, the work stalls, or the rounds run out. It never runs the project's commands, never calls a model, never blocks a tool.
+ */
+import { createHash } from "node:crypto";
+import path from "node:path";
+import { appendAudit, readAuditTail, readGoalRecords } from "../audit/log.js";
+import { nowIso } from "../clock.js";
+import { readContractSafe } from "../safeReaders.js";
+import type { Contract } from "../schema/contract.js";
+import type { AuditRecord, GoalEndRecord, GoalReportRecord, GoalControlRecord, GoalRoundRecord, UserMessageRecord } from "../schema/audit.js";
+import { evaluateReport, projectPath, userSaid, type GoalEvaluation } from "./evaluate.js";
+import { CLOSING, goalBlock, goalClosingMessage, goalRoundMessage } from "./prompts.js";
+import { captureGoal } from "./capture.js";
+import { readShellOutputs, readShrunkFiles, readTree, readUserPrompts, type TreeState } from "./record.js";
+
+/** Per user message. Only real progress keeps a run going this long: see NO_PROGRESS_ROUNDS. */
+export const GOAL_MAX_ROUNDS = 20;
+/** Cursor's own cap: every round plus the closing hand-off. */
+export const GOAL_LOOP_LIMIT = GOAL_MAX_ROUNDS + 1;
+export const GOAL_BLOCKED_AFTER_TURNS = 3;
+/** Rounds in a row with nothing changed before Guardian stops sending the agent back. */
+const NO_PROGRESS_ROUNDS = 3;
+
+/** Long enough that a proved goal stays proved through a long session. */
+const TAPE_WINDOW = 20_000;
+
+const GUARDIAN_FILES = /^\.cursor\/goal-guardian\/(contract|state|actions)/;
+
+export function goalHash(contract: Pick<Contract, "goal" | "successCriteria">): string {
+  return createHash("sha256").update(JSON.stringify({ goal: contract.goal.trim(), criteria: contract.successCriteria.map((c) => c.text) })).digest("hex").slice(0, 16);
+}
+
+const isEdit = (r: AuditRecord): r is Extract<AuditRecord, { kind: "action.observed" }> => r.kind === "action.observed" && r.actionType === "edit";
+/** Goal work happens in the project: not in Guardian's own files, and not outside the root. */
+const inProject = (file: string): boolean => !file.startsWith(".cursor/") && !file.startsWith("../") && !path.isAbsolute(file);
+
+interface Sequence {
+  /** Everything after the last time this chat's goal run closed. */
+  records: AuditRecord[];
+  rounds: GoalRoundRecord[];
+  report: GoalReportRecord | null;
+  editedFiles: string[];
+  /** This chat edited something, or a command changed something, since the user's latest message. */
+  changedThisTurn: boolean;
+  goalFileEdited: boolean;
+  lastEditTs: string | null;
+  /** What was already changed when this run began. */
+  dirtyAtStart: Set<string>;
+  tree: TreeState | null;
+  /** The chat's latest mode: "none" when a message arrived with no mode at all, which is Cmd+K. */
+  mode: string | null;
+}
+
+/**
+ * A tool can't see which chat called it, but the hook just before it can: a report belongs to the chat whose
+ * call to the tool came right before it. With no such call on the record it counts for whoever asks.
+ */
+function reportsOf(records: AuditRecord[], conversationId: string | undefined): GoalReportRecord[] {
+  const out: GoalReportRecord[] = [];
+  let caller: string | undefined;
+  for (const r of records) {
+    if (r.kind === "action.observed" && r.actionType === "mcp" && r.actionValue.endsWith("guardian_report_goal")) caller = r.conversationId;
+    if (r.kind === "goal.report") {
+      if (caller === undefined || conversationId === undefined || caller === conversationId) out.push(r);
+      caller = undefined;
+    }
+  }
+  return out;
+}
+
+/** The chat about to report: the one whose hook just announced the call. Unknown means every chat's work counts. */
+function reportingChat(all: AuditRecord[]): string | undefined {
+  for (let i = all.length - 1; i >= 0; i -= 1) {
+    const r = all[i]!;
+    if (r.kind === "action.observed" && r.actionType === "mcp" && r.actionValue.endsWith("guardian_report_goal")) return r.conversationId;
+  }
+  return undefined;
+}
+
+function readSequence(root: string, all: AuditRecord[], conversationId: string | undefined, hash: string): Sequence {
+  const mineOnly = <T extends { conversationId?: string | undefined }>(r: T): boolean => conversationId === undefined || r.conversationId === conversationId;
+  let from = 0;
+  all.forEach((r, i) => {
+    if (r.kind === "goal.end" && mineOnly(r)) from = i + 1;
+  });
+  const records = all.slice(from);
+  const mine = records.filter(isEdit).filter(mineOnly);
+  const lastEdit = [...all].reverse().find((r) => isEdit(r) && inProject(r.actionValue));
+  const reports = reportsOf(records, conversationId).filter((r) => !r.goalHash || r.goalHash === hash);
+  const messages = records.filter((r): r is UserMessageRecord => r.kind === "user.message" && mineOnly(r));
+  const latestMessage = messages[messages.length - 1];
+  const tree = readTree(root);
+  // Files a command changed, measured from what was already changed when this run began.
+  const before = new Set(messages[0]?.dirty ?? []);
+  const byCommand = messages[0]?.dirty && tree ? tree.paths.filter((f) => !before.has(f)) : [];
+  const atLatest = new Set(latestMessage?.dirty ?? []);
+  const newThisTurn = latestMessage?.dirty && tree ? tree.paths.some((f) => !atLatest.has(f)) : false;
+  const sinceLatest = latestMessage ? mine.filter((r) => Date.parse(r.ts) >= Date.parse(latestMessage.ts)) : mine;
+  // A file can change because the person saved it. It's the agent's change only if the agent ran a command this turn.
+  const ranCommand = records.some((r) => r.kind === "action.observed" && r.actionType === "shell" && mineOnly(r) && (!latestMessage || Date.parse(r.ts) >= Date.parse(latestMessage.ts)));
+  return {
+    records,
+    rounds: records.filter((r): r is GoalRoundRecord => r.kind === "goal.round" && mineOnly(r)),
+    report: reports[reports.length - 1] ?? null,
+    editedFiles: [...new Set([...mine.map((r) => r.actionValue), ...byCommand].filter(inProject))],
+    changedThisTurn: (newThisTurn && ranCommand) || sinceLatest.some((r) => inProject(r.actionValue)),
+    goalFileEdited: mine.some((r) => GUARDIAN_FILES.test(r.actionValue)),
+    lastEditTs: lastEdit?.ts ?? null,
+    dirtyAtStart: before,
+    tree,
+    mode: latestMessage ? (latestMessage.mode ?? "none") : null,
+  };
+}
+
+/** Modes where the agent edits on the user's behalf. Unknown means no message was seen, so don't hold it back. */
+const NOT_GOAL_WORK = new Set(["none", "chat", "ask", "plan", "project"]);
+export function agentMode(mode: string | null | undefined): boolean {
+  return !mode || !NOT_GOAL_WORK.has(mode);
+}
+
+export type GoalPhase = "none" | "active" | "paused" | "complete";
+
+/** Where the goal stands. The hash is the goal's identity and revision: when the user changes it, this all starts over. */
+export function goalPhaseOf(all: AuditRecord[], contract: Pick<Contract, "goal" | "successCriteria">): GoalPhase {
+  if (!contract.goal.trim()) return "none";
+  const hash = goalHash(contract);
+  let phase: GoalPhase = "active";
+  for (const r of all) {
+    if (r.kind === "goal.end" && r.goalHash === hash && r.outcome === "proved") phase = "complete";
+    if (r.kind === "goal.control" && r.goalHash === hash) {
+      phase = r.operation === "pause" ? "paused" : r.operation === "resume" ? "active" : "complete";
+    }
+  }
+  return phase;
+}
+
+/** The user's controls. Resuming and closing are refused from anywhere else: the panel is the only caller. */
+export async function controlGoal(root: string, operation: GoalControlRecord["operation"]): Promise<void> {
+  const contract = await readContractSafe(root);
+  if (!contract.goal.trim()) return;
+  await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: goalHash(contract), operation, actor: "user" });
+}
+
+/** Nothing more to ask: proved anywhere, or this chat's agent can't report at all, and the goal hasn't changed since. */
+function settled(all: AuditRecord[], hash: string, conversationId: string): boolean {
+  return all.some((r) => r.kind === "goal.end" && r.goalHash === hash && r.noReport === true && r.conversationId === conversationId);
+}
+
+/** A file the agent edited and then put back has nothing to account for. Outside git the edits are all there is. */
+function stillChanged(seq: Sequence): string[] {
+  if (!seq.tree) return seq.editedFiles;
+  const changed = new Set(seq.tree.paths);
+  return seq.editedFiles.filter((f) => changed.has(f));
+}
+
+async function evaluate(root: string, contract: Contract, report: Pick<GoalReportRecord, "proofs" | "changes" | "removed">, seq: Sequence): Promise<GoalEvaluation> {
+  // Files already emptied before this run began are the user's own business.
+  const shrunk = readShrunkFiles(root).filter((f) => !seq.dirtyAtStart.has(f.file));
+  return evaluateReport(root, contract, report, { outputs: await readShellOutputs(root), lastEditTs: seq.lastEditTs, editedFiles: stillChanged(seq), tree: seq.tree?.fingerprint ?? null, shrunk });
+}
+
+export type GoalReportInput = Omit<GoalReportRecord, "ts" | "kind">;
+
+export interface GoalReportAnswer {
+  accepted: boolean;
+  message: string;
+  unproved: string[];
+  unclaimed: string[];
+}
+
+/** The agent's report, answered at once so it can fix what doesn't hold without waiting for a round. */
+export async function submitGoalReport(root: string, input: GoalReportInput): Promise<GoalReportAnswer> {
+  const contract = await readContractSafe(root);
+  const hash = goalHash(contract);
+  const all = await readAuditTail(root, TAPE_WINDOW);
+  const none = { unproved: [], unclaimed: [] };
+  const phase = goalPhaseOf(all, contract);
+  if (phase === "none") return { accepted: false, ...none, message: "No goal is set." };
+  if (phase === "paused") return { accepted: false, ...none, message: "The user paused this goal. Only they can resume it. Stop goal work." };
+  if (phase === "complete") return { accepted: false, ...none, message: "This goal is already closed. There's nothing to report." };
+  const seq = readSequence(root, all, reportingChat(all), hash);
+  await appendAudit(root, { ts: nowIso(), kind: "goal.report", goalHash: hash, ...input });
+  if (input.status === "set_aside") {
+    const prompts = await readUserPrompts(root);
+    if (prompts && !userSaid(input.userWords, prompts)) {
+      return { accepted: false, ...none, message: "Not set aside: pass the user's request in user_words, quoted exactly from their latest message. If they didn't ask for this, keep working on the goal." };
+    }
+    return { accepted: true, ...none, message: CLOSING.setAside };
+  }
+  if (input.status === "blocked") {
+    if (!input.reason?.trim()) return { accepted: false, ...none, message: "Say what is blocking you in reason." };
+    const turns = seq.rounds.length + 1;
+    return turns < GOAL_BLOCKED_AFTER_TURNS
+      ? { accepted: false, ...none, message: `Blocked is accepted from turn ${GOAL_BLOCKED_AFTER_TURNS} on the same obstacle; this is turn ${turns}. Try the ways around it first.` }
+      : { accepted: true, ...none, message: CLOSING.blocked };
+  }
+  const result = await evaluate(root, contract, input, seq);
+  if (result.unproved.length || result.unclaimed.length) {
+    return { accepted: false, message: "Not accepted yet: fix what's listed and report again.", unproved: result.unproved, unclaimed: result.unclaimed };
+  }
+  return { accepted: true, ...none, message: CLOSING.proved };
+}
+
+/** Nothing moved since the round before: no edit in this chat, the same files, the same open items. */
+function noProgress(seq: Sequence, conversationId: string, last: GoalRoundRecord | undefined, unproved: string[]): boolean {
+  if (!last) return false;
+  const edited = seq.records.some((r) => isEdit(r) && r.conversationId === conversationId && Date.parse(r.ts) > Date.parse(last.ts));
+  const sameTree = (seq.tree?.fingerprint ?? undefined) === last.tree;
+  return !edited && sameTree && JSON.stringify(unproved) === JSON.stringify(last.unproved);
+}
+
+async function end(root: string, seq: Sequence, conversationId: string, hash: string, outcome: GoalEndRecord["outcome"], rest: Partial<GoalEndRecord> = {}, tokens?: number): Promise<void> {
+  const ts = nowIso();
+  const spent = seq.rounds.reduce((sum, r) => sum + (r.tokens ?? 0), tokens ?? 0);
+  const began = seq.records.find((r) => r.kind === "user.message" || r.kind === "goal.round" || isEdit(r))?.ts;
+  await appendAudit(root, {
+    ts,
+    kind: "goal.end",
+    conversationId,
+    goalHash: hash,
+    outcome,
+    rounds: seq.rounds.length,
+    ...(spent > 0 ? { tokens: spent } : {}),
+    ...(began ? { seconds: Math.max(0, Math.round((Date.parse(ts) - Date.parse(began)) / 1000)) } : {}),
+    ...(seq.goalFileEdited ? { goalFileEdited: true } : {}),
+    ...rest,
+  });
+}
+
+/** End of a turn. Returns what to send the agent, or null to let it stop. */
+export async function runGoalStop(root: string, input: { conversationId?: string; status: string; loopCount: number; tokens?: number }): Promise<string | null> {
+  const { conversationId, loopCount } = input;
+  if (!conversationId) return null;
+  let contract = await readContractSafe(root);
+  const phaseNow = goalPhaseOf(await readGoalRecords(root), contract);
+  if (phaseNow === "none" || phaseNow === "complete") {
+    // A command can change files with no edit hook firing: this is the last chance to catch the first change.
+    const before = readSequence(root, await readAuditTail(root, TAPE_WINDOW), conversationId, "");
+    if (!agentMode(before.mode) || !before.changedThisTurn || !(await captureGoal(root, conversationId))) {
+      if (phaseNow === "none") return null;
+    } else contract = await readContractSafe(root);
+  }
+  const hash = goalHash(contract);
+  const all = await readAuditTail(root, TAPE_WINDOW);
+  // Closed or paused by whoever had the right to: nothing to ask. A paused run can't be restarted from here.
+  if (goalPhaseOf(all, contract) !== "active" || settled(all, hash, conversationId)) return null;
+  const seq = readSequence(root, all, conversationId, hash);
+
+  // Cmd+K and the read-only modes aren't goal work, and a send-back would run in the same mode.
+  if (!agentMode(seq.mode)) return null;
+
+  // A cancelled or failed turn is never restarted on its own.
+  if (input.status !== "completed") {
+    if (seq.rounds.length || seq.editedFiles.length) await end(root, seq, conversationId, hash, "stopped", {}, input.tokens);
+    return null;
+  }
+  // Answering a question or asking one isn't goal work; a run already closed stays closed.
+  if (loopCount === 0 && !seq.changedThisTurn && !seq.report) return null;
+  if (loopCount > 0 && seq.rounds.length === 0) return null;
+
+  let unproved: string[] = [];
+  let unclaimed = stillChanged(seq);
+  let extras: string[] = [];
+  const notes: string[] = [];
+  const lastRound = seq.rounds[seq.rounds.length - 1];
+
+  if (seq.report) {
+    const prompts = seq.report.status === "set_aside" ? await readUserPrompts(root) : null;
+    if (seq.report.status === "set_aside" && (!prompts || userSaid(seq.report.userWords, prompts))) {
+      await end(root, seq, conversationId, hash, "set_aside", { reason: seq.report.reason ?? seq.report.userWords ?? "" }, input.tokens);
+      return null;
+    }
+    // A blocked claim speaks for the turn it was made in, not the rounds after it.
+    const freshClaim = !lastRound || Date.parse(seq.report.ts) >= Date.parse(lastRound.ts);
+    if (seq.report.status === "blocked" && freshClaim) {
+      if (seq.rounds.length + 1 >= GOAL_BLOCKED_AFTER_TURNS && seq.report.reason?.trim()) {
+        await end(root, seq, conversationId, hash, "blocked", { reason: seq.report.reason }, input.tokens);
+        return null;
+      }
+      notes.push("- Blocked isn't accepted yet: try the ways around it first.");
+    }
+    const result = await evaluate(root, contract, seq.report, seq);
+    unproved = result.unproved;
+    unclaimed = result.unclaimed;
+    // An extra the agent was already told about and still keeps is the user's call: reported, not re-argued.
+    const warned = new Set(seq.rounds.flatMap((r) => r.extras));
+    extras = result.extras.filter((f) => !warned.has(f));
+    if (seq.report.status === "complete" && !unproved.length && !unclaimed.length && !extras.length) {
+      await end(root, seq, conversationId, hash, "proved", { proved: result.proved, extras: result.extras, changes: seq.report.changes.map((c) => ({ file: projectPath(root, c.file), serves: c.serves })), ...(seq.report.removed?.length ? { removed: seq.report.removed } : {}) }, input.tokens);
+      return null;
+    }
+  } else {
+    notes.push("- No report yet.");
+  }
+
+  if (lastRound && lastRound.goalHash !== hash) {
+    notes.unshift("- The goal on record changed. Ask the user before removing any finished work.");
+  }
+
+  const idle = noProgress(seq, conversationId, lastRound, unproved);
+  const idleRounds = idle ? [...seq.rounds].reverse().findIndex((r) => !r.idle) : -1;
+  const idleInARow = idle ? (idleRounds === -1 ? seq.rounds.length : idleRounds) + 1 : 0;
+  if (idleInARow >= NO_PROGRESS_ROUNDS) {
+    await end(root, seq, conversationId, hash, "stalled", {
+      unproved,
+      ...(seq.report ? {} : { noReport: true, reason: "The agent never reported. Check that Guardian's MCP server is switched on in Cursor's settings." }),
+    }, input.tokens);
+    return seq.report ? goalClosingMessage(contract.goal, contract.successCriteria, `nothing has changed for ${NO_PROGRESS_ROUNDS} rounds, so Guardian is stopping here.`, unproved) : null;
+  }
+  if (loopCount >= GOAL_MAX_ROUNDS) {
+    await end(root, seq, conversationId, hash, "limit", { unproved }, input.tokens);
+    return goalClosingMessage(contract.goal, contract.successCriteria, `that was the last of ${GOAL_MAX_ROUNDS} rounds.`, unproved);
+  }
+  const round = loopCount + 1;
+  await appendAudit(root, { ts: nowIso(), kind: "goal.round", conversationId, goalHash: hash, round, idle, ...(input.tokens ? { tokens: input.tokens } : {}), ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited });
+  const latestMessage = (await readUserPrompts(root))?.at(-1);
+  return goalRoundMessage(contract.goal, contract.successCriteria, { latestMessage, round, maxRounds: GOAL_MAX_ROUNDS, unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited, notes });
+}
+
+/** Goes with every message the user sends, so the goal survives compaction and old chats reopened. Not shown as a message. */
+export async function goalTurnContext(root: string): Promise<string | null> {
+  const contract = await readContractSafe(root);
+  const phase = goalPhaseOf(await readGoalRecords(root), contract);
+  if (phase === "none") return "No goal is on record. Guardian records the user's request as the goal, word for word, when you first change something. If this message asks to continue earlier work, look in past chats and recent commits to find out what it was.";
+  if (phase !== "active") return null;
+  return [
+    "This workspace has an open goal the user set. Work on it only if this message asks for it, or asks to continue or finish: that means the whole goal, and report with guardian_report_goal when it's done. If this message limits the work or asks for something separate, do only that and leave the rest of the goal alone. A limit in an earlier message ended with that message.",
+    ...goalBlock(contract.goal, contract.successCriteria),
+  ].join("\n");
+}
+
+/** Said to a running agent after its next tool call, once per change: the user paused, or changed the goal. */
+export async function goalMidTurnNotice(root: string, conversationId: string | undefined): Promise<string | null> {
+  if (!conversationId) return null;
+  const contract = await readContractSafe(root);
+  const hash = goalHash(contract);
+  const records = await readGoalRecords(root);
+  const phase = goalPhaseOf(records, contract);
+  const seen = [...records].reverse().find((r) => r.kind === "goal.notice" && r.conversationId === conversationId) as Extract<AuditRecord, { kind: "goal.notice" }> | undefined;
+  if (seen?.goalHash === hash && seen.phase === phase) return null;
+  await appendAudit(root, { ts: nowIso(), kind: "goal.notice", conversationId, goalHash: hash, phase });
+  const justSet = phase === "active" && seen?.goalHash !== hash && records.some((r) => r.kind === "goal.set" && r.goalHash === hash && r.conversationId === conversationId);
+  if (justSet) {
+    return ["Guardian recorded the user's request as the goal, word for word. Don't reword it. Use these ids when you report with guardian_report_goal. If the user limited this message to part of it, do that part and report set_aside.", ...goalBlock(contract.goal, contract.successCriteria)].join("\n");
+  }
+  // The first look in a chat only sets the baseline: the goal came with the user's message.
+  if (!seen) return null;
+  // A first goal being declared isn't a change, and the chat that declared it already knows it.
+  if (seen.goalHash !== hash && contract.goal.trim() && seen.phase !== "none") {
+    return ["The goal on record changed. This replaces the old one. Ask the user before removing any finished work.", ...goalBlock(contract.goal, contract.successCriteria)].join("\n");
+  }
+  return phase === "paused" ? CLOSING.paused : null;
+}
+
+/** The chat most recently at work, so the user's pause can stop it. */
+export function lastActiveConversation(records: AuditRecord[]): string | null {
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const r = records[i]!;
+    if ((r.kind === "action.observed" || r.kind === "goal.round") && r.conversationId) return r.conversationId;
+  }
+  return null;
+}

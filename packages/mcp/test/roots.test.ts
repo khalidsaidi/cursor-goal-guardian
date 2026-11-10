@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -51,10 +52,9 @@ describe("workspace resolution via MCP roots", () => {
   it("writes through tools into the advertised root", async () => {
     const res = (await client.callTool({
       name: "guardian_update_goal",
-      arguments: { goal: "Rooted goal update" },
+      arguments: { user_words: "Rooted goal update" },
     })) as { isError?: boolean };
     expect(res.isError).not.toBe(true);
-    const { readState } = await import("cursor-goal-guardian-testkit");
-    expect((await readState(ws.root)).goal).toBe("Rooted goal update");
+    expect(JSON.parse(await fs.readFile(ws.paths.contract, "utf8")).goal).toBe("Rooted goal update");
   });
 });

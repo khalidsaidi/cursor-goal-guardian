@@ -1,7 +1,7 @@
 {
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
-  "description": "Your AI agent forgets what it's building. Guardian doesn't: ask like you always do and the request becomes a tracked goal — drift gets caught, false alarms clear themselves, and \"where were we?\" is one glance. Never blocks, never nags.",
+  "description": "Your AI agent forgets what it's building. Guardian doesn't: ask like you always do and the request becomes a tracked goal, done has to be proved, and \"where were we?\" is one glance. Never blocks, never nags.",
   "version": "1.0.0",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
@@ -88,36 +88,8 @@
         "title": "Goal Guardian: Open Config"
       },
       {
-        "command": "goalGuardian.openState",
-        "title": "Goal Guardian: Open State Store"
-      },
-      {
-        "command": "goalGuardian.openActions",
-        "title": "Goal Guardian: Open Action Log"
-      },
-      {
         "command": "goalGuardian.openAuditLog",
         "title": "Goal Guardian: Open Audit Log"
-      },
-      {
-        "command": "goalGuardian.startNextTask",
-        "title": "Goal Guardian: Start Next Task"
-      },
-      {
-        "command": "goalGuardian.completeActiveTask",
-        "title": "Goal Guardian: Complete Active Task"
-      },
-      {
-        "command": "goalGuardian.rebuildState",
-        "title": "Goal Guardian: Rebuild State from Action Log"
-      },
-      {
-        "command": "goalGuardian.dispatchAction",
-        "title": "Goal Guardian: Dispatch Action (Advanced)"
-      },
-      {
-        "command": "goalGuardian.rescoreDrift",
-        "title": "Goal Guardian: Review Recent Drift with AI"
       },
       {
         "command": "goalGuardian.uninstall",
@@ -136,16 +108,6 @@
     "configuration": {
       "title": "Goal Guardian",
       "properties": {
-        "goalGuardian.autoStartNextTask": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically start the next todo task when you save a file and no task is active."
-        },
-        "goalGuardian.autoPinEditedFiles": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically pin files you save to the active task's context."
-        },
         "goalGuardian.statusBar.enabled": {
           "type": "boolean",
           "default": true,

@@ -69,63 +69,10 @@ button.link {
   width: 9px; height: 9px; border-radius: 50%;
   background: var(--vscode-charts-green, #3fb950);
 }
-.lamp.recovering { background: var(--vscode-charts-yellow, #d29922); }
-.lamp.drifting {
-  background: var(--vscode-editorWarning-foreground, #d29922);
-  animation: lamp-breathe 2.4s ease-in-out infinite;
-}
+.lamp.warn { background: var(--vscode-editorWarning-foreground, #d29922); }
 .lamp.idle { background: var(--vscode-descriptionForeground, gray); }
-@keyframes lamp-breathe { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .lamp.drifting { animation: none; } }
 
-.status-sentence { opacity: 0.8; }
 .review-line { font-size: 11px; opacity: 0.7; }
-.suggestion {
-  border-left: 2px solid var(--vscode-editorWarning-foreground);
-  padding: 6px 10px;
-  margin-top: 8px;
-  background: rgba(128,128,128,0.07);
-  border-radius: 0 4px 4px 0;
-}
-
-/* ---- now / up next ---- */
-
-.now-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.3));
-  border-radius: 6px;
-}
-.now-card { flex-wrap: wrap; }
-.now-card.empty { border-style: dashed; }
-.now-title { font-weight: 600; overflow-wrap: anywhere; min-width: 12ch; }
-.now-card button { flex-shrink: 0; }
-
-.next-list { list-style: none; padding: 0; margin: 0; }
-.next-list li {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-  padding: 4px 0;
-  border-bottom: 1px solid rgba(128,128,128,0.12);
-}
-.next-list li:last-child { border-bottom: none; }
-.next-list span { overflow-wrap: anywhere; opacity: 0.9; }
-.done-line { margin-top: 8px; font-size: 11px; opacity: 0.6; }
-
-/* ---- repair card ---- */
-
-.repair {
-  margin-top: 14px;
-  padding: 12px 14px;
-  border: 1px solid var(--vscode-editorWarning-foreground, #d9a03f);
-  border-radius: 6px;
-}
-.repair p { margin: 0 0 10px 0; }
 
 /* ---- get started tour ---- */
 
@@ -172,69 +119,7 @@ button.link {
 .constraints li { padding: 2px 0 2px 18px; position: relative; opacity: 0.85; }
 .constraints li::before { content: "—"; position: absolute; left: 0; opacity: 0.5; }
 
-/* ---- the track: the session as a line; detours push off it ---- */
-
-.track { list-style: none; margin: 0; padding: 0 0 0 7px; position: relative; }
-.track::before {
-  content: "";
-  position: absolute;
-  left: 3px; top: 4px; bottom: 4px;
-  width: 2px;
-  background: var(--vscode-widget-border, rgba(128,128,128,0.35));
-  border-radius: 1px;
-}
-.track li { position: relative; padding: 0 0 14px 32px; }
-.track li:last-child { padding-bottom: 2px; }
-.track .node {
-  position: absolute;
-  top: 3px;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: var(--vscode-descriptionForeground, gray);
-}
-/* a detour sits off the line; a return sits back on it */
-.track li .node { left: 16px; }
-.track li .node::before {
-  content: "";
-  position: absolute;
-  top: 3px; right: 100%;
-  width: 12px; height: 2px;
-  background: var(--vscode-widget-border, rgba(128,128,128,0.35));
-}
-.track li.confirmed .node { background: var(--vscode-editorWarning-foreground, #d29922); }
-.track li.pending .node { opacity: 0.6; }
-.track li.back .node {
-  left: -1px;
-  background: var(--vscode-charts-green, #3fb950);
-}
-.track li.back .node::before { display: none; }
-
-.entry-head { display: flex; align-items: baseline; gap: 8px; }
-.when { font-size: 10px; opacity: 0.55; font-variant-numeric: tabular-nums; }
-.chip { font-size: 10px; letter-spacing: 0.03em; display: inline-flex; gap: 6px; align-items: baseline; }
-.chip.confirmed { color: var(--vscode-editorWarning-foreground, #d29922); }
-.chip.back { color: var(--vscode-charts-green, #3fb950); }
-.chip.pending { opacity: 0.7; }
-.track code {
-  display: block;
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 11px;
-  opacity: 0.75;
-  overflow-wrap: anywhere;
-  background: none;
-  margin-top: 1px;
-}
-
-/* ---- consent + welcome ---- */
-
-.consent {
-  border: 1px solid var(--vscode-widget-border, rgba(128,128,128,0.3));
-  border-radius: 6px;
-  padding: 10px 12px;
-  margin-top: 18px;
-}
-.consent.muted { opacity: 0.65; border-style: dashed; }
-.consent p { margin-bottom: 8px; }
+/* ---- welcome ---- */
 
 .welcome p { max-width: 42ch; }
 .welcome .lamp-row { margin-bottom: 12px; }

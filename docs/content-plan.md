@@ -52,7 +52,7 @@ those three jobs and one placement.
    mode, boundaries, uninstall-removes-everything)
 5. **Everything it does** — the full capability matrix (all 30, grouped by
    surface, ✓ rows so nothing is invisible)
-6. **How it works (plain English)** — existing Redux/mechanism section
+6. **How it works (plain English)** — existing mechanism section
 7. **Reference** — files, settings, skills, commands
 8. Upgrading + Validation
 

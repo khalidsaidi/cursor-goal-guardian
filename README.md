@@ -1,7 +1,7 @@
 # Cursor Goal Guardian
 
 **A drift flight-recorder for AI coding sessions in Cursor.** It records what
-the agent did, scores it against your declared goal, and shows you the tape.
+the agent did, holds it to your declared goal, and shows you the tape.
 Advisory forever: it never blocks, and it never nags.
 
 Published on Open VSX: [khalidsaidi/cursor-goal-guardian-extension](https://open-vsx.org/extension/khalidsaidi/cursor-goal-guardian-extension)
@@ -9,8 +9,8 @@ Published on Open VSX: [khalidsaidi/cursor-goal-guardian-extension](https://open
 ## The problem
 
 An agent's commitment to a goal lives in its context window, and context
-decays. The agent's *effective* goal silently mutates: scope creeps, tasks
-switch without justification, and after an interruption nobody can cheaply
+decays. The agent's *effective* goal silently mutates: scope creeps, work
+stops short, and after an interruption nobody can cheaply
 reconstruct what the session was for.
 
 ## The mechanism
@@ -20,37 +20,26 @@ close the loop at every point where drift happens:
 
 | Loop point | Mechanism |
 |---|---|
-| Session start | A Cursor rule anchors every session: load the contract, record progress via MCP tools |
-| During work | Hooks (~60 ms) observe every shell/MCP/edit action; a lexical scorer flags off-vocabulary work |
-| At the moment of drift | One calm sentence per episode re-anchors the agent — context injection, not ceremony |
-| After the fact | An AI judge (consent-gated, your Cursor account) confirms/dismisses flagged drift AND periodically reviews the raw tape against the goal — catching in-vocabulary drift |
-| Persistent, confirmed drift | Opt-in: `permission: "ask"` hands the call to the human via Cursor's own UI |
-| Any time | The panel shows the tape: drift ↔ realignment pairs, session health, task board, AI verdict |
+| Session start | A Cursor rule anchors every session: load the contract, report on the goal via MCP tools |
+| During work | Hooks (~60 ms) record every shell/MCP/edit action and say nothing |
+| Each message | The goal goes back to the agent with every message you send |
+| When the agent stops | The goal loop sends it back until each "done when" item is proved against Guardian's own record |
+| Any time | The panel shows where the goal stands, its "done when" list and the goal receipts |
 
-The task board is a Redux-style store: append-only action log, one pure
-reducer, deterministic replay (`state === replay(actions)`, exactly — v2 moved
-all id/timestamp generation into the actions to make that guarantee real),
-hash-guarded state, decision-gated task switches.
-
-**Why the store is the anti-drift mechanism, in plain English:** drift happens
-because the plan normally lives in the agent's context, and context leaks. The
-store makes the plan a fact in a file — there is one answer to "what is the
-current task", it can only change through a dispatched action, switching tasks
-without a recorded decision is refused by the state machine, and every change
-leaves a replayable receipt. The store doesn't stop the agent from wandering;
-it makes it impossible for the *goal* to wander — which gives every detector
-(lexical scorer, AI judge, nudges, panel) a fixed point to measure drift from,
-and makes resuming after any interruption a read instead of a guess.
+The goal lives in one file, `contract.json`. Drift happens because the plan
+normally lives in the agent's context, and context leaks. Writing it down gives
+the goal loop a fixed point to hold the agent to, and makes resuming after an
+interruption a read instead of a guess. Only the user changes an existing goal.
 
 ## Repo layout (pnpm monorepo, all packages 1.0.0)
 
 ```
 packages/
-  core/         @goal-guardian/core   — all logic: schemas, state machine, policy,
-                                        drift scoring, episodes, judge, telemetry, migration
-  mcp/          MCP server (5 guardian_* tools), thin adapter over core
+  core/         @goal-guardian/core   — all logic: schemas, goal record,
+                                        goal loop, migration
+  mcp/          MCP server (guardian_* tools), thin adapter over core
   hook/         Cursor hook, single ~200KB CJS bundle, p95 < 150ms budget
-  extension/    the published Cursor extension (panel, setup, rescorer host)
+  extension/    the published Cursor extension (panel, setup)
   testkit/      shared test scaffolding
   e2e/          12-scenario end-to-end suite driving real headless Cursor agents
 ```
@@ -62,7 +51,7 @@ pnpm install
 pnpm -r build
 pnpm -r test          # ~200 unit + contract tests (free, runs in CI)
 pnpm test:e2e:offline # deterministic e2e scenarios against built binaries (free)
-pnpm test:e2e         # full suite: real cursor-agent runs + a live AI judge (billed)
+pnpm test:e2e         # full suite: real cursor-agent runs (billed)
 ```
 
 CI runs build, typecheck, unit/contract tests, the free e2e scenarios, and a

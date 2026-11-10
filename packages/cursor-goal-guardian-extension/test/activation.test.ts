@@ -17,14 +17,7 @@ const EXPECTED_COMMANDS = [
   "goalGuardian.refresh",
   "goalGuardian.openContract",
   "goalGuardian.openConfig",
-  "goalGuardian.openState",
-  "goalGuardian.openActions",
   "goalGuardian.openAuditLog",
-  "goalGuardian.startNextTask",
-  "goalGuardian.completeActiveTask",
-  "goalGuardian.rebuildState",
-  "goalGuardian.dispatchAction",
-  "goalGuardian.rescoreDrift",
   "goalGuardian.uninstall",
 ];
 
@@ -102,7 +95,7 @@ describe("activation surface", () => {
     await activate(makeContext() as never);
     expect(recorded.windowMessages).toEqual([]);
     expect(recorded.watchers).toContain(".cursor/goal-guardian/**");
-    expect(recorded.watchers).toContain(".cursor/goal-guardian/telemetry/audit.jsonl");
+    expect(recorded.watchers).toContain(".cursor/goal-guardian/**");
     // Connected workspaces are never auto-revealed — the introduction is for
     // fresh installs only.
     expect(recorded.executed).not.toContain("goalGuardian.goalPanel.focus");
@@ -130,7 +123,7 @@ describe("activation surface", () => {
     const rule = await fs.readFile(rulePath, "utf8");
     expect(rule).toContain("alwaysApply: true");
     expect(rule).toContain("guardian_get_contract");
-    expect(rule).toContain("guardian_record_progress");
+    expect(rule).toContain("guardian_report_goal");
     expect(await fileExists(path.join(root, ".cursor", "hooks.json"))).toBe(true);
     expect(await fileExists(path.join(root, ".cursor", "mcp.json"))).toBe(true);
 
@@ -193,5 +186,44 @@ describe("activation surface", () => {
     expect(await fileExists(path.join(root, ".cursor", "mcp.json"))).toBe(true);
     expect(await fileExists(path.join(root, ".cursor", "rules", "goal-guardian.mdc"))).toBe(true);
     expect(await fileExists(path.join(root, ".cursor", "skills", "guardian", "SKILL.md"))).toBe(true);
+  });
+
+  it("doctor: an update refreshes the rule and drops read and Tab hooks, keeping other tools' entries", async () => {
+    const { doctorIntegration, applySetup } = await import("../src/setup.js");
+    const { GUARDIAN_RULE_RELATIVE_PATH, guardianRuleContent } = await import("@goal-guardian/core");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-doctor-"));
+    cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
+    const context = makeContext(root) as never;
+    await applySetup(root, context, { goal: "Ship it", criteria: [], constraints: [], gitignore: false });
+
+    const rule = path.join(root, GUARDIAN_RULE_RELATIVE_PATH);
+    await fs.writeFile(rule, "the old rule, from an earlier version", "utf8");
+    const hooksPath = path.join(root, ".cursor", "hooks.json");
+    const hooks = JSON.parse(await fs.readFile(hooksPath, "utf8")) as { hooks: Record<string, Array<{ command: string }>> };
+    const ours = hooks.hooks.afterFileEdit![0]!;
+    hooks.hooks.beforeReadFile = [ours, { command: "other-tool --read" }];
+    hooks.hooks.beforeTabFileRead = [ours];
+    hooks.hooks.afterTabFileEdit = [{ command: "other-tool --tab" }, ours];
+    hooks.hooks.afterFileEdit = [...hooks.hooks.afterFileEdit!, { command: "other-tool --edit" }];
+    await fs.writeFile(hooksPath, JSON.stringify(hooks), "utf8");
+
+    await doctorIntegration(root, context);
+
+    expect(await fs.readFile(rule, "utf8")).toBe(guardianRuleContent());
+    const after = JSON.parse(await fs.readFile(hooksPath, "utf8")) as { hooks: Record<string, Array<{ command: string }>> };
+    expect(after.hooks.beforeReadFile).toEqual([{ command: "other-tool --read" }]);
+    expect(after.hooks).not.toHaveProperty("beforeTabFileRead");
+    expect(after.hooks.afterTabFileEdit).toEqual([{ command: "other-tool --tab" }]);
+    expect(after.hooks.afterFileEdit!.map((e) => e.command)).toContain("other-tool --edit");
+    expect(after.hooks.afterFileEdit!.map((e) => e.command)).toContain(ours.command);
+  });
+
+  it("doctor: a workspace without the rule doesn't get one", async () => {
+    const { doctorIntegration } = await import("../src/setup.js");
+    const { GUARDIAN_RULE_RELATIVE_PATH } = await import("@goal-guardian/core");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-doctor-"));
+    cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
+    await doctorIntegration(root, makeContext(root) as never);
+    expect(await fileExists(path.join(root, GUARDIAN_RULE_RELATIVE_PATH))).toBe(false);
   });
 });

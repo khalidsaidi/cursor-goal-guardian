@@ -1,20 +1,15 @@
 import * as vscode from "vscode";
 import {
   detectWorkspaceFormat,
-  dispatch,
   getGuardianPaths,
   migrateV1toV2,
-  rebuild,
-  readStateSafe,
-  ACTION_TYPES,
-  type ActionType,
+  readContractSafe,
+  writeContract,
 } from "@goal-guardian/core";
+import { applyGoalCommand } from "./goalControls.js";
 import { PanelController } from "./panel/panelController.js";
-import { RescoreService } from "./rescoreService.js";
 import { StatusBar } from "./statusBar.js";
-import { registerAutoBehaviors } from "./autoBehaviors.js";
 import { applySetup, connectWorkspace, doctorIntegration, offerMcpEnableGuidance, runUninstall } from "./setup.js";
-import { Observer } from "./observer.js";
 import { openCommandCenter } from "./commandCenter.js";
 
 /**
@@ -26,32 +21,21 @@ import { openCommandCenter } from "./commandCenter.js";
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? null;
 
-  const rescore = new RescoreService(context, root, undefined, () => void controller.refresh());
   const controller = new PanelController(context, root, {
-    isSemanticConsented: () => rescore.isConsented(),
-    isSemanticAvailable: () => rescore.isAvailable(),
     isCommandCenterUsed: () => context.workspaceState.get<boolean>("goalGuardian.tour.commandCenterUsed", false),
     isTourDismissed: () => context.workspaceState.get<boolean>("goalGuardian.tour.dismissed", false),
     onCommand: async (command) => {
-      if (command === "enableRescore") await rescore.grantConsent();
-      else if (command === "dismissTour") await context.workspaceState.update("goalGuardian.tour.dismissed", true);
+      if (command === "goal.pause" || command === "goal.resume" || command === "goal.done" || command === "goal.work") {
+        if (root) await applyGoalCommand(root, command);
+      } else if (command === "dismissTour") await context.workspaceState.update("goalGuardian.tour.dismissed", true);
       else if (command === "editGoal") {
         if (!root) return;
-        const state = await readStateSafe(root);
-        const goal = await vscode.window.showInputBox({ title: "Goal", value: state.goal, prompt: "One unambiguous sentence." });
-        if (goal !== undefined) await dispatch(root, { type: "SET_GOAL", actor: "human", payload: { goal } });
+        const contract = await readContractSafe(root);
+        const goal = await vscode.window.showInputBox({ title: "Goal", value: contract.goal, prompt: "One unambiguous sentence." });
+        if (goal !== undefined) await writeContract(root, { ...contract, goal });
       } else await vscode.commands.executeCommand(`goalGuardian.${command}`);
       await controller.refresh();
     },
-    onStartTask: async (taskId) => {
-      if (!root) return;
-      try {
-        await dispatch(root, { type: "START_TASK", actor: "human", payload: { taskId } });
-      } catch (err) {
-        void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    },
-    onRescoreOne: async () => rescore.rescoreNow(),
     onConnectSubmit: async (form) => {
       if (!root) return;
       try {
@@ -65,16 +49,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const statusBar = new StatusBar(context);
   controller.onDidUpdate((vm) => statusBar.update(vm));
 
-  const observer = new Observer(root);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(PanelController.viewType, controller),
-    observer,
-  );
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider(PanelController.viewType, controller));
 
   const startServices = (): void => {
     controller.startWatching();
-    rescore.start();
-    observer.start();
     void controller.refresh();
   };
 
@@ -83,7 +61,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return root;
   };
 
-  const openGuardianFile = (key: "contract" | "config" | "state" | "actions" | "audit"): (() => Promise<void>) => {
+  const openGuardianFile = (key: "contract" | "config" | "audit"): (() => Promise<void>) => {
     return async () => {
       const r = requireRoot();
       if (!r) return;
@@ -105,52 +83,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     "goalGuardian.refresh": async () => controller.refresh(),
     "goalGuardian.openContract": openGuardianFile("contract"),
     "goalGuardian.openConfig": openGuardianFile("config"),
-    "goalGuardian.openState": openGuardianFile("state"),
-    "goalGuardian.openActions": openGuardianFile("actions"),
     "goalGuardian.openAuditLog": openGuardianFile("audit"),
-    "goalGuardian.startNextTask": async () => {
-      const r = requireRoot();
-      if (!r) return;
-      const state = await readStateSafe(r);
-      const next = state.tasks.find((t) => t.status === "todo");
-      if (!next) return;
-      await dispatch(r, { type: "START_TASK", actor: "human", payload: { taskId: next.id } }).catch((err) => {
-        void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
-      });
-    },
-    "goalGuardian.completeActiveTask": async () => {
-      const r = requireRoot();
-      if (!r) return;
-      const state = await readStateSafe(r);
-      if (!state.activeTaskId) return;
-      await dispatch(r, { type: "COMPLETE_TASK", actor: "human", payload: { taskId: state.activeTaskId } });
-    },
-    "goalGuardian.rebuildState": async () => {
-      const r = requireRoot();
-      if (!r) return;
-      try {
-        await rebuild(r);
-      } catch (err) {
-        void vscode.window.showWarningMessage(
-          `Goal Guardian: rebuild failed — ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      await controller.refresh();
-    },
-    "goalGuardian.dispatchAction": async () => {
-      const r = requireRoot();
-      if (!r) return;
-      const type = await vscode.window.showQuickPick([...ACTION_TYPES], { title: "Action type" });
-      if (!type) return;
-      const payloadRaw = await vscode.window.showInputBox({ title: "Payload (JSON)", value: "{}" });
-      if (payloadRaw === undefined) return;
-      try {
-        await dispatch(r, { type: type as ActionType, actor: "human", payload: JSON.parse(payloadRaw) });
-      } catch (err) {
-        void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    },
-    "goalGuardian.rescoreDrift": async () => rescore.rescoreNow(),
     "goalGuardian.commandCenter": async () => {
       const r = requireRoot();
       if (!r) return;
@@ -159,7 +92,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // workspaceState changes don't touch watched files — refresh so the
         // tour tick shows immediately, from every entry point (status bar too).
         void controller.refresh();
-        await openCommandCenter({ root: r, rescoreNow: () => rescore.rescoreNow(), refresh: () => controller.refresh() });
+        await openCommandCenter({ root: r, refresh: () => controller.refresh() });
       } catch (err) {
         void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -180,8 +113,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   for (const [id, handler] of Object.entries(commands)) {
     context.subscriptions.push(vscode.commands.registerCommand(id, handler));
   }
-
-  registerAutoBehaviors(context, root, async () => (root ? (await detectWorkspaceFormat(root)) === "v2" : false));
 
   if (root) {
     const format = await detectWorkspaceFormat(root);

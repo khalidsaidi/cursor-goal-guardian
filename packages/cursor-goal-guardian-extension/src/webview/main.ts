@@ -92,11 +92,8 @@ document.addEventListener("click", (event) => {
     });
     return;
   }
-  const target = (event.target as HTMLElement).closest("[data-cmd],[data-task],[data-rescore]") as HTMLElement | null;
-  if (!target) return;
-  if (target.dataset.cmd) vscode.postMessage({ type: "command", command: target.dataset.cmd });
-  else if (target.dataset.task) vscode.postMessage({ type: "startTask", taskId: target.dataset.task });
-  else if (target.dataset.rescore) vscode.postMessage({ type: "rescoreOne", driftId: target.dataset.rescore });
+  const target = (event.target as HTMLElement).closest("[data-cmd]") as HTMLElement | null;
+  if (target?.dataset.cmd) vscode.postMessage({ type: "command", command: target.dataset.cmd });
 });
 
 vscode.postMessage({ type: "ready" });

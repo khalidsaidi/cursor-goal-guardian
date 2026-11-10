@@ -9,7 +9,7 @@ workspace looks like.
 .cursor/
   goal-guardian/
     contract.json    # the goal contract (v2 schema)
-    config.json      # notify mode, drift sensitivity, advisory rules
+    config.json      # settings version
   rules/
     goal-guardian.mdc  # session anchor: agents load the contract at session start
   hooks.json         # observation hooks -> bundled goal-guardian-hook.cjs
@@ -20,5 +20,5 @@ Replace `/ABSOLUTE/PATH/TO/EXTENSION` with your installed extension directory
 (something like `~/.cursor/extensions/khalidsaidi.cursor-goal-guardian-extension-<version>`)
 if you wire manually — or just run the setup command.
 
-Runtime state (`state.json`, `actions.jsonl`, `telemetry/`) is created on first
-use; `telemetry/` is machine-written and belongs in `.gitignore`.
+Runtime records (`telemetry/`) are created on first use; `telemetry/` is
+machine-written and belongs in `.gitignore`.

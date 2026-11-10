@@ -21,12 +21,12 @@ export const hookEventRecordSchema = z
     event: hookEventNameSchema,
     conversationId: z.string().optional(),
     generationId: z.string().optional(),
-    // Absent = Cursor's hook runtime; "observer" = the extension's in-process
-    // recorder. The observer uses this to tell live hooks from its own echo.
+    // Legacy: the Windows observer marked its records. Never written; kept so older logs still parse.
     source: z.literal("observer").optional(),
   })
   .strict();
 
+/** Legacy: word-matching flags were removed. Never written; kept so older logs still parse. */
 export const lexicalDriftRecordSchema = z
   .object({
     ...base,
@@ -43,18 +43,7 @@ export const lexicalDriftRecordSchema = z
   })
   .strict();
 
-export const driftVerdictRecordSchema = z
-  .object({
-    ...base,
-    kind: z.literal("drift.verdict"),
-    driftId: z.string().min(1),
-    verdict: z.enum(["confirmed", "dismissed"]),
-    judge: z.string().min(1),
-    confidence: z.number().min(0).max(1),
-    rationale: z.string(),
-  })
-  .strict();
-
+/** Legacy: policy advisories were removed. Never written; kept so older logs still parse. */
 export const policyAdvisoryRecordSchema = z
   .object({
     ...base,
@@ -67,6 +56,7 @@ export const policyAdvisoryRecordSchema = z
   })
   .strict();
 
+/** Legacy: the intent tool was removed. Never written; kept so older logs still parse. */
 export const intentDeclaredRecordSchema = z
   .object({
     ...base,
@@ -78,49 +68,174 @@ export const intentDeclaredRecordSchema = z
   })
   .strict();
 
-/** The raw tape: every substantive action, so semantic review can read the session itself. */
+/** The raw tape: every substantive action. */
 export const actionObservedRecordSchema = z
   .object({
     ...base,
     kind: z.literal("action.observed"),
+    // Lets the goal loop and loop detection scope actions to one conversation.
+    conversationId: z.string().optional(),
     actionType: z.enum(["shell", "mcp", "edit"]),
     actionValue: z.string(),
+    // Legacy, as on hook.event.
     source: z.literal("observer").optional(),
   })
   .strict();
 
-/** A whole-session verdict from the judge over the raw tape — catches in-vocabulary drift no lexical signal can. */
-export const sessionReviewRecordSchema = z
+/** Legacy: loop detection was removed. Never written; kept so older logs still parse. */
+export const loopRepeatRecordSchema = z
   .object({
     ...base,
-    kind: z.literal("session.review"),
-    verdict: z.enum(["on_course", "off_course"]),
-    confidence: z.number().min(0).max(1),
-    rationale: z.string(),
-    judge: z.string().min(1),
-    sampledActions: z.number().int().nonnegative(),
-    flaggedActions: z.array(z.string()),
+    kind: z.literal("loop.repeat"),
+    conversationId: z.string().optional(),
+    command: z.string(),
+    count: z.number().int().positive(),
+  })
+  .strict();
+
+/** One way the agent says a "done when" item is proved. Guardian checks it against its own record. */
+export const goalProofSchema = z
+  .object({
+    criterion: z.string(),
+    command: z.string().optional(),
+    quote: z.string().optional(),
+    file: z.string().optional(),
+    contains: z.string().optional(),
+  })
+  .strict();
+
+/** The agent's report on the goal, in its own words: a claim until Guardian checks it. */
+export const goalReportRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.report"),
+    /** The goal this report is about: a report on a goal the user has since changed doesn't count. */
+    goalHash: z.string().optional(),
+    status: z.enum(["complete", "blocked", "set_aside"]),
+    proofs: z.array(goalProofSchema),
+    changes: z.array(z.object({ file: z.string(), serves: z.string() }).strict()),
+    /** Files that lost most of their lines, which the agent says the goal or the user asked for. */
+    removed: z.array(z.string()).optional(),
+    reason: z.string().optional(),
+    userWords: z.string().optional(),
+  })
+  .strict();
+
+/** The user paused, resumed or closed the goal, from the panel. The agent can't do any of these. */
+export const goalControlRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.control"),
+    goalHash: z.string(),
+    operation: z.enum(["pause", "resume", "done"]),
+    actor: z.literal("user"),
+  })
+  .strict();
+
+/** What this chat has already been told about the goal mid-turn, so each change is said once. */
+/** Guardian recorded the user's own message as the goal. */
+export const goalSetRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.set"),
+    conversationId: z.string().optional(),
+    goalHash: z.string(),
+  })
+  .strict();
+
+export const goalNoticeRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.notice"),
+    conversationId: z.string(),
+    goalHash: z.string(),
+    phase: z.string(),
+  })
+  .strict();
+
+/** The user sent a message: what counts as "this turn" starts here. Dirty files are those already changed at that point. */
+export const userMessageRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("user.message"),
+    conversationId: z.string().optional(),
+    /** Cursor's chat mode. Cmd+K sends none. */
+    mode: z.string().optional(),
+    dirty: z.array(z.string()).optional(),
+  })
+  .strict();
+
+/** Guardian sent the agent back, with the facts it sent. */
+export const goalRoundRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.round"),
+    conversationId: z.string(),
+    goalHash: z.string(),
+    round: z.number().int().positive(),
+    /** Nothing changed since the round before: no edit, same files, same open items. */
+    idle: z.boolean(),
+    tree: z.string().optional(),
+    tokens: z.number().int().nonnegative().optional(),
+    unproved: z.array(z.string()),
+    unclaimed: z.array(z.string()),
+    extras: z.array(z.string()),
+    goalFileEdited: z.boolean().optional(),
+  })
+  .strict();
+
+/** How a run on the goal ended. Only "proved" means Guardian's record backs every item. */
+export const goalEndRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.end"),
+    conversationId: z.string(),
+    goalHash: z.string(),
+    outcome: z.enum(["proved", "blocked", "set_aside", "stalled", "limit", "stopped"]),
+    rounds: z.number().int().nonnegative().optional(),
+    seconds: z.number().int().nonnegative().optional(),
+    tokens: z.number().int().nonnegative().optional(),
+    reason: z.string().optional(),
+    proved: z.array(goalProofSchema).optional(),
+    unproved: z.array(z.string()).optional(),
+    extras: z.array(z.string()).optional(),
+    /** Every changed file and the done-when item the agent says it serves, for the user to look over. */
+    changes: z.array(z.object({ file: z.string(), serves: z.string() }).strict()).optional(),
+    removed: z.array(z.string()).optional(),
+    goalFileEdited: z.boolean().optional(),
+    /** The agent never reported in this run, so asking again in this chat would only repeat it. */
+    noReport: z.boolean().optional(),
   })
   .strict();
 
 export const auditRecordSchema = z.discriminatedUnion("kind", [
   hookEventRecordSchema,
   lexicalDriftRecordSchema,
-  driftVerdictRecordSchema,
   policyAdvisoryRecordSchema,
   intentDeclaredRecordSchema,
   actionObservedRecordSchema,
-  sessionReviewRecordSchema,
+  loopRepeatRecordSchema,
+  goalReportRecordSchema,
+  userMessageRecordSchema,
+  goalControlRecordSchema,
+  goalNoticeRecordSchema,
+  goalSetRecordSchema,
+  goalRoundRecordSchema,
+  goalEndRecordSchema,
 ]);
 
 export type HookEventName = z.infer<typeof hookEventNameSchema>;
 export type HookEventRecord = z.infer<typeof hookEventRecordSchema>;
 export type LexicalDriftRecord = z.infer<typeof lexicalDriftRecordSchema>;
-export type DriftVerdictRecord = z.infer<typeof driftVerdictRecordSchema>;
 export type PolicyAdvisoryRecord = z.infer<typeof policyAdvisoryRecordSchema>;
 export type IntentDeclaredRecord = z.infer<typeof intentDeclaredRecordSchema>;
 export type ActionObservedRecord = z.infer<typeof actionObservedRecordSchema>;
-export type SessionReviewRecord = z.infer<typeof sessionReviewRecordSchema>;
+export type GoalProof = z.infer<typeof goalProofSchema>;
+export type GoalReportRecord = z.infer<typeof goalReportRecordSchema>;
+export type GoalRoundRecord = z.infer<typeof goalRoundRecordSchema>;
+export type UserMessageRecord = z.infer<typeof userMessageRecordSchema>;
+export type GoalControlRecord = z.infer<typeof goalControlRecordSchema>;
+export type GoalEndRecord = z.infer<typeof goalEndRecordSchema>;
 export type AuditRecord = z.infer<typeof auditRecordSchema>;
 
 export function parseAuditRecord(value: unknown): AuditRecord {

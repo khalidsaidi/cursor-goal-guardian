@@ -1,160 +1,32 @@
-import { appendAudit, readAuditTail } from "../audit/log.js";
-import { assignEpisode, loadEpisodes, saveEpisodes } from "../drift/episodes.js";
-import { evaluateLexicalDrift, type DriftActionType } from "../drift/lexical.js";
-import { loadVerdicts } from "../drift/rescorer.js";
-import { evaluatePolicy } from "../policy/engine.js";
-import { newId, nowIso } from "../clock.js";
-import { readConfigSafe, readStateSafe } from "../safeReaders.js";
+import { appendAudit } from "../audit/log.js";
+import { nowIso } from "../clock.js";
 import type { HookEventName } from "../schema/audit.js";
-import type { GuardianConfig } from "../schema/config.js";
-import type { GuardianState } from "../schema/state.js";
-import type { PolicyActionKind } from "../policy/engine.js";
-import { advisoryAllow, advisoryAsk, advisoryNudge, type HookResponse } from "./outcome.js";
+import { advisoryAllow, type HookResponse } from "./outcome.js";
 
-/** Where a pipeline run originated. Absent = Cursor's hook runtime; "observer"
- * = the extension's in-process recorder (native Windows, where Cursor's hook
- * runtime is sandboxed away from the workspace). */
 export interface PipelineMeta {
   conversationId?: string;
   generationId?: string;
-  source?: "observer";
 }
 
-function hasActiveDoingTask(state: GuardianState): boolean {
-  if (!state.activeTaskId) return false;
-  return state.tasks.some((t) => t.id === state.activeTaskId && t.status === "doing");
-}
+export type PipelineActionType = "shell" | "mcp" | "edit";
 
-function truncate(value: string, max = 60): string {
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
-}
-
-/**
- * One pipeline for every event, whoever runs it. Everything is recorded; at
- * most one calm sentence is ever injected, chosen by priority: policy alert,
- * then a new drift episode, then the no-active-task reminder. Every path
- * allows.
- */
+/** One pipeline for every action: record it, say nothing, allow. The goal loop reads this tape. */
 export async function runPipeline(
   root: string,
   event: HookEventName,
-  actionType: DriftActionType,
+  actionType: PipelineActionType,
   actionValue: string,
-  meta: PipelineMeta = {},
+  ids: PipelineMeta = {},
 ): Promise<HookResponse> {
-  const { source, ...ids } = meta;
-  await appendAudit(root, { ts: nowIso(), kind: "hook.event", event, ...ids, ...(source ? { source } : {}) });
-
-  const config = await readConfigSafe(root);
-  const state = await readStateSafe(root);
-
-  // The raw tape: what session review judges. Reads are skipped (too noisy);
-  // shell/mcp/edit is what work is made of.
-  if (actionType !== "read" && actionValue.trim()) {
+  await appendAudit(root, { ts: nowIso(), kind: "hook.event", event, ...ids });
+  if (actionValue.trim()) {
     await appendAudit(root, {
       ts: nowIso(),
       kind: "action.observed",
       actionType,
       actionValue: actionValue.slice(0, 300),
-      ...(source ? { source } : {}),
+      ...(ids.conversationId ? { conversationId: ids.conversationId } : {}),
     });
   }
-
-  const advisory =
-    actionType === "edit" ? null : evaluatePolicy(actionType as PolicyActionKind, actionValue, config);
-  if (advisory && advisory.severity !== "ok") {
-    await appendAudit(root, {
-      ts: nowIso(),
-      kind: "policy.advisory",
-      severity: advisory.severity,
-      actionType: actionType as PolicyActionKind,
-      actionValue,
-      rule: advisory.rule,
-      reason: advisory.reason,
-    });
-  }
-
-  const drift = evaluateLexicalDrift(state, config, actionType, actionValue);
-  let driftNudge = false;
-  let driftEpisodeId: string | null = null;
-  if (drift) {
-    const episodes = await loadEpisodes(root);
-    const assignment = assignEpisode(episodes, { taskId: drift.activeTaskId, terms: drift.actionTerms }, config);
-    await saveEpisodes(root, assignment.store);
-    driftNudge = assignment.shouldNudge;
-    driftEpisodeId = assignment.episodeId;
-    await appendAudit(root, {
-      ts: nowIso(),
-      kind: "drift.lexical",
-      driftId: newId("drift"),
-      episodeId: assignment.episodeId,
-      actionType,
-      actionValue,
-      activeTaskId: drift.activeTaskId,
-      activeTaskTitle: drift.activeTaskTitle,
-      taskTerms: drift.taskTerms,
-      actionTerms: drift.actionTerms,
-      confidence: drift.confidence,
-    });
-  }
-
-  if (config.notify === "quiet") return advisoryAllow();
-
-  if (advisory && advisory.severity === "alert") {
-    return advisoryNudge(
-      `heads up — "${truncate(actionValue)}" matches a high-risk pattern${advisory.reason ? `: ${advisory.reason.toLowerCase()}` : ""}`,
-      `"${truncate(actionValue)}" matches a high-risk pattern${advisory.reason ? ` (${advisory.reason.toLowerCase()})` : ""}. Flag it to the user in your reply and confirm before doing anything similar again.`,
-    );
-  }
-
-  if (drift && driftNudge) {
-    return advisoryNudge(
-      `this looks outside "${truncate(drift.activeTaskTitle, 40)}" — worth a quick check`,
-      `this work looks outside the active task "${truncate(drift.activeTaskTitle, 60)}". Pause and give the user the choice in chat: continue this direction (then call guardian_declare_intent with a one-line summary so it's on the record) or return to the task. Don't proceed silently.`,
-    );
-  }
-
-  // Opt-in escalation: the nudge for this episode is already spent AND the
-  // judge has confirmed earlier drift in the same episode -> hand the call to
-  // the human via the editor's confirmation UI (never a deny).
-  if (drift && !driftNudge && driftEpisodeId && config.advisories.escalateConfirmedDrift === "ask") {
-    if (await episodeHasConfirmedDrift(root, driftEpisodeId)) {
-      return advisoryAsk(
-        `continuing confirmed off-goal work (task: "${truncate(drift.activeTaskTitle, 40)}"). Proceed?`,
-      );
-    }
-  }
-
-  const bootstrapPath = (actionType === "read" || actionType === "edit") && actionValue.startsWith(".cursor/");
-  if (config.advisories.remindWhenNoActiveTask && !hasActiveDoingTask(state) && !bootstrapPath) {
-    const reminder = await reminderNudge(root, config);
-    if (reminder) return reminder;
-  }
-
   return advisoryAllow();
-}
-
-/** True when any lexical drift in this episode carries a confirmed judge verdict. */
-async function episodeHasConfirmedDrift(root: string, episodeId: string): Promise<boolean> {
-  const verdicts = await loadVerdicts(root);
-  const confirmed = new Set(
-    Object.entries(verdicts.entries)
-      .filter(([, v]) => v.verdict === "confirmed")
-      .map(([driftId]) => driftId),
-  );
-  if (confirmed.size === 0) return false;
-  const records = await readAuditTail(root);
-  return records.some((r) => r.kind === "drift.lexical" && r.episodeId === episodeId && confirmed.has(r.driftId));
-}
-
-/** The no-active-task reminder shares the episode governor so it can never spam. */
-async function reminderNudge(root: string, config: GuardianConfig): Promise<HookResponse | null> {
-  const episodes = await loadEpisodes(root);
-  const assignment = assignEpisode(episodes, { taskId: "", terms: ["no-active-task"] }, config);
-  await saveEpisodes(root, assignment.store);
-  if (!assignment.shouldNudge) return null;
-  return advisoryNudge(
-    "no task is active — start one so this session's work has a home",
-    "no task is active. Ask the user in chat what this session's task is, then record it with guardian_record_progress (action start_task).",
-  );
 }

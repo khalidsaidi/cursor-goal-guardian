@@ -7,9 +7,6 @@ import {
   readAuditTail,
   readAuditSince,
   getGuardianPaths,
-  loadEpisodes,
-  saveEpisodes,
-  emptyEpisodeStore,
   type AuditRecord,
 } from "../src/index.js";
 
@@ -58,24 +55,21 @@ describe("audit log IO", () => {
     expect(await readAuditTail(root)).toEqual([]);
   });
 
+  it("skips old AI review records when reading an older tape", async () => {
+    const root = await makeRoot();
+    const file = getGuardianPaths(root).audit;
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, [
+      JSON.stringify({ ts: "2026-01-01T00:00:00.000Z", kind: "drift.verdict", driftId: "d", verdict: "confirmed", judge: "j", confidence: 0.9, rationale: "" }),
+      JSON.stringify({ ts: "2026-01-01T00:00:01.000Z", kind: "action.observed", actionType: "edit", actionValue: "a.js" }),
+    ].join("\n"));
+    expect((await readAuditTail(root)).map((r) => r.kind)).toEqual(["action.observed"]);
+  });
+
   it("rejects malformed records at write time", async () => {
     const root = await makeRoot();
     await expect(
-      appendAudit(root, { ts: "x", kind: "drift.verdict", driftId: "d", verdict: "confirmed", judge: "j", confidence: 2, rationale: "" } as AuditRecord),
+      appendAudit(root, { ts: "x", kind: "policy.advisory", severity: "nope" } as unknown as AuditRecord),
     ).rejects.toThrow();
-  });
-});
-
-describe("episode store IO", () => {
-  it("round-trips and falls back to empty on damage", async () => {
-    const root = await makeRoot();
-    expect(await loadEpisodes(root)).toEqual(emptyEpisodeStore());
-    const store = emptyEpisodeStore();
-    store.episodes.push({ id: "ep_1", taskId: "t1", terms: ["a"], firstSeenTs: "2026-01-01T10:00:00.000Z", lastSeenTs: "2026-01-01T10:00:00.000Z", lastNudgeTs: null });
-    await saveEpisodes(root, store);
-    expect(await loadEpisodes(root)).toEqual(store);
-    const p = getGuardianPaths(root);
-    await fs.writeFile(p.episodes, "{broken", "utf8");
-    expect(await loadEpisodes(root)).toEqual(emptyEpisodeStore());
   });
 });

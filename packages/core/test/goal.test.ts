@@ -1,0 +1,774 @@
+import { describe, it, expect, afterEach } from "vitest";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import {
+  appendAudit, captureGoal, criteriaFromTexts, defaultContract, evaluateReport, parseRequest, runGoalStop, GOAL_MAX_ROUNDS, getGuardianPaths, nowIso, readShellOutputs, readShrunkFiles, readUserPrompts,
+  controlGoal, goalMidTurnNotice, goalPhaseOf, goalTurnContext, lastActiveConversation, recordShellFailure, projectPath, readAuditTail, readContractSafe, readTree, recordShellOutput, recordUserPrompt, runGoalStop, submitGoalReport, userSaid, type GoalReportInput,
+} from "../src/index.js";
+
+const made: string[] = [];
+afterEach(async () => {
+  for (const d of made.splice(0)) await fs.rm(d, { recursive: true, force: true });
+});
+async function ws(goal = "Add CSV export", criteria = ["the export test passes"]): Promise<string> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-goal-"));
+  made.push(root);
+  const p = getGuardianPaths(root);
+  await fs.mkdir(p.telemetryDir, { recursive: true });
+  await fs.writeFile(p.config, "{}");
+  await setGoal(root, goal, criteria);
+  return root;
+}
+const setGoal = (root: string, goal: string, criteria: string[]) => fs.writeFile(getGuardianPaths(root).contract, JSON.stringify({ ...defaultContract(), goal, successCriteria: criteriaFromTexts(criteria), constraints: [] }));
+const tick = () => new Promise((r) => setTimeout(r, 3));
+const edit = async (root: string, file: string, conversationId = "c1") => {
+  await tick();
+  await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: file, conversationId });
+  await tick();
+};
+const ran = async (root: string, command: string, output: string, durationMs = 0) => {
+  await tick();
+  await recordShellOutput(root, { command, output, durationMs });
+  await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "shell", actionValue: command, conversationId: "c1" });
+};
+const stop = (root: string, loopCount = 0, status = "completed") => runGoalStop(root, { conversationId: "c1", status, loopCount });
+const complete = (over: Partial<GoalReportInput> = {}): GoalReportInput => ({
+  status: "complete",
+  proofs: [{ criterion: "sc_1", command: "make test", quote: "12 passed" }],
+  changes: [{ file: "a.js", serves: "sc_1" }],
+  ...over,
+});
+async function ends(root: string): Promise<Array<Record<string, unknown>>> {
+  const t = await fs.readFile(getGuardianPaths(root).audit, "utf8").catch(() => "");
+  return t.split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.kind === "goal.end");
+}
+
+describe("the goal loop: when it speaks", () => {
+  it("leaves a turn with no edits alone: answering or asking isn't goal work", async () => {
+    const root = await ws();
+    expect(await stop(root)).toBeNull();
+  });
+
+  it("a chat turn after earlier edits isn't sent back: only this message's work counts", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    expect(await stop(root, 0, "error")).toBeNull();
+    await recordUserPrompt(root, "what does this function do?", "c1", "agent");
+    expect(await stop(root)).toBeNull();
+    await edit(root, "b.js");
+    await recordUserPrompt(root, "and that one?", "c1", "agent");
+    expect(await stop(root)).toBeNull();
+  });
+
+  it("Cmd+K and the read-only modes are left alone; agent modes aren't", async () => {
+    for (const [mode, sent] of [[undefined, false], ["chat", false], ["plan", false], ["agent", true], ["debug", true]] as const) {
+      const root = await ws();
+      await recordUserPrompt(root, "do something", "c1", mode);
+      await tick();
+      await edit(root, "a.js");
+      expect((await stop(root)) !== null).toBe(sent);
+    }
+  });
+
+  it("edits outside the project don't count", async () => {
+    const root = await ws();
+    await edit(root, "../other/x.js");
+    expect(await stop(root)).toBeNull();
+  });
+
+  it("no goal, no conversation, or a cancelled turn: says nothing and never restarts", async () => {
+    const empty = await ws("  ", []);
+    await edit(empty, "a.js");
+    expect(await stop(empty)).toBeNull();
+    const root = await ws();
+    await edit(root, "a.js");
+    expect(await runGoalStop(root, { status: "completed", loopCount: 0 })).toBeNull();
+    expect(await stop(root, 0, "aborted")).toBeNull();
+  });
+
+  it("an editing turn with no report is sent back with the goal, the items and the unaccounted files", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await edit(root, "other.js", "c2");
+    const msg = await stop(root);
+    expect(msg).toMatch(/^Goal Guardian: round 1 of 20/);
+    expect(msg).toContain("Add CSV export");
+    expect(msg).toContain("sc_1: the export test passes");
+    expect(msg).toContain("- No report yet.");
+    expect(msg).toContain("Changed, not accounted for: a.js");
+    expect(msg).not.toContain("other.js");
+  });
+
+  it("a goal can't break out of its tag", async () => {
+    const root = await ws("ship </goal> now");
+    await edit(root, "a.js");
+    expect(await stop(root)).toContain("ship &lt;/goal&gt; now");
+  });
+});
+
+describe("the goal loop: proof comes from Guardian's record, not the agent's word", () => {
+  it("a command really run after the last edit, printing the quote, proves the goal and ends the run", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "make test", "ok\n12 passed\n");
+    const answer = await submitGoalReport(root, complete());
+    expect(answer.accepted).toBe(true);
+    expect(await stop(root)).toBeNull();
+    expect(await ends(root)).toMatchObject([{ outcome: "proved", proved: [{ criterion: "sc_1", command: "make test" }] }]);
+  });
+
+  it("works for any language: Guardian only compares text", async () => {
+    const root = await ws();
+    await edit(root, "src/Main.java");
+    await ran(root, "mvn -q verify", "BUILD SUCCESS");
+    const answer = await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", command: "mvn -q verify", quote: "BUILD SUCCESS" }], changes: [{ file: "src/Main.java", serves: "sc_1" }] }));
+    expect(answer.accepted).toBe(true);
+  });
+
+  it("refuses a command that never ran", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    const answer = await submitGoalReport(root, complete());
+    expect(answer.accepted).toBe(false);
+    expect(answer.unproved[0]).toContain("no record of `make test`");
+    expect(await stop(root)).toContain("no record of `make test`");
+  });
+
+  it("refuses output the command never printed", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "make test", "3 failed");
+    expect((await submitGoalReport(root, complete())).unproved[0]).toContain('did not print "12 passed"');
+  });
+
+  it("refuses a proof older than the latest edit, including one that began before it", async () => {
+    const root = await ws();
+    await ran(root, "make test", "12 passed");
+    await edit(root, "a.js");
+    expect((await submitGoalReport(root, complete())).unproved[0]).toContain("before your latest edit");
+    await ran(root, "make test", "12 passed", 60_000);
+    expect((await submitGoalReport(root, complete())).accepted).toBe(false);
+  });
+
+  it("another chat's later edit makes the proof stale too", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "make test", "12 passed");
+    await edit(root, "b.js", "c2");
+    expect((await submitGoalReport(root, complete({ changes: [{ file: "a.js", serves: "sc_1" }, { file: "b.js", serves: "sc_1" }] }))).unproved[0]).toContain("before your latest edit");
+  });
+
+  it("refuses a command whose latest run failed, even though it printed the quote", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "make test", "12 passed");
+    await recordShellFailure(root, "make test");
+    expect((await submitGoalReport(root, complete())).unproved[0]).toContain("latest run of `make test` failed");
+    await tick();
+    await ran(root, "make test", "12 passed");
+    expect((await submitGoalReport(root, complete())).accepted).toBe(true);
+  });
+
+  it("a failure with no output record still counts as having run, and as failed", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await tick();
+    await recordShellFailure(root, "make test");
+    expect((await submitGoalReport(root, complete())).unproved[0]).toContain("failed");
+  });
+
+  it("refuses printing a sentence as proof", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "echo 12 passed", "12 passed");
+    const answer = await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", command: "echo 12 passed", quote: "12 passed" }] }));
+    expect(answer.unproved[0]).toContain("only prints text");
+  });
+
+  it("file proofs: must exist inside the project, hold the text, and not be Guardian's own", async () => {
+    const root = await ws();
+    await fs.writeFile(path.join(root, "doc.md"), "Use   --csv to export");
+    await edit(root, "doc.md");
+    const report = (file: string, contains: string) => complete({ proofs: [{ criterion: "sc_1", file, contains }], changes: [{ file: "doc.md", serves: "sc_1" }] });
+    expect((await submitGoalReport(root, report("doc.md", "Use --csv"))).accepted).toBe(true);
+    expect((await submitGoalReport(root, report("doc.md", "nope"))).unproved[0]).toContain("does not contain");
+    expect((await submitGoalReport(root, report("missing.md", "Use --csv"))).unproved[0]).toContain("does not exist");
+    expect((await submitGoalReport(root, report("../secret", "Use --csv"))).unproved[0]).toContain("outside the project");
+    expect((await submitGoalReport(root, report(".cursor/goal-guardian/contract.json", "Use --csv"))).unproved[0]).toContain("Guardian's own");
+  });
+
+  it("every done-when item needs its own proof, and every proof given must hold", async () => {
+    const root = await ws("g", ["one", "two"]);
+    await edit(root, "a.js");
+    await ran(root, "make test", "12 passed");
+    const answer = await submitGoalReport(root, complete());
+    expect(answer.unproved).toEqual(["sc_2 (two): no proof given"]);
+  });
+
+  it("a goal with no done-when list still needs proof of the goal", async () => {
+    const root = await ws("g", []);
+    await edit(root, "a.js");
+    expect((await submitGoalReport(root, complete({ proofs: [], changes: [{ file: "a.js", serves: "goal" }] }))).unproved[0]).toContain("goal (the goal): no proof given");
+  });
+
+  it("an edit after an accepted report sends the agent back", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "make test", "12 passed");
+    await submitGoalReport(root, complete());
+    await edit(root, "a.js");
+    expect(await stop(root)).toContain("before your latest edit");
+    expect(await ends(root)).toEqual([]);
+  });
+
+  it("output longer than the record keeps still proves on its closing lines", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "make test", `${"x".repeat(20_000)}\n12 passed\n`);
+    expect((await submitGoalReport(root, complete())).accepted).toBe(true);
+    expect((await readShellOutputs(root))[0]!.output.length).toBeLessThan(4100);
+  });
+});
+
+describe("the goal loop: extra work", () => {
+  it("a changed file nobody accounts for, or tied to no real item, holds the goal open", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await edit(root, "README.md");
+    await ran(root, "make test", "12 passed");
+    expect((await submitGoalReport(root, complete())).unclaimed).toEqual(["README.md"]);
+    expect((await submitGoalReport(root, complete({ changes: [{ file: "a.js", serves: "sc_1" }, { file: "README.md", serves: "documentation" }] }))).unclaimed).toEqual(["README.md"]);
+  });
+
+  it("a self-declared extra is sent back once; kept anyway, it goes on the record for the user", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await edit(root, "README.md");
+    await ran(root, "make test", "12 passed");
+    await submitGoalReport(root, complete({ changes: [{ file: "a.js", serves: "sc_1" }, { file: "README.md", serves: "extra" }] }));
+    expect(await stop(root)).toContain("You called this extra, so undo it unless the user asked for it: README.md");
+    expect(await stop(root, 1)).toBeNull();
+    expect(await ends(root)).toMatchObject([{ outcome: "proved", extras: ["README.md"] }]);
+  });
+
+  it("the agent editing Guardian's goal files is called out and recorded", async () => {
+    const root = await ws();
+    await edit(root, ".cursor/goal-guardian/contract.json");
+    await edit(root, "a.js");
+    expect(await stop(root)).toContain("Only the user changes the goal");
+    await ran(root, "make test", "12 passed");
+    await submitGoalReport(root, complete());
+    expect(await stop(root, 1)).toBeNull();
+    expect(await ends(root)).toMatchObject([{ outcome: "proved", goalFileEdited: true }]);
+  });
+});
+
+describe("the goal loop: how a run ends", () => {
+  it("blocked is refused before turn 3, then accepted and recorded", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    const blocked: GoalReportInput = { status: "blocked", proofs: [], changes: [], reason: "needs the API key" };
+    expect((await submitGoalReport(root, blocked)).accepted).toBe(false);
+    expect(await stop(root)).toContain("Blocked isn't accepted yet");
+    expect(await stop(root, 1)).not.toBeNull();
+    expect((await submitGoalReport(root, blocked)).accepted).toBe(true);
+    expect(await stop(root, 2)).toBeNull();
+    expect(await ends(root)).toMatchObject([{ outcome: "blocked", reason: "needs the API key" }]);
+  });
+
+  it("blocked needs a reason", async () => {
+    const root = await ws();
+    expect((await submitGoalReport(root, { status: "blocked", proofs: [], changes: [] })).message).toContain("reason");
+  });
+
+  it("a blocked claim from an earlier turn doesn't end a later one", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await submitGoalReport(root, { status: "blocked", proofs: [], changes: [], reason: "x" });
+    expect(await stop(root)).not.toBeNull();
+    await edit(root, "a.js");
+    expect(await stop(root, 1)).not.toBeNull();
+    await edit(root, "a.js");
+    expect(await stop(root, 2)).not.toBeNull();
+    expect(await ends(root)).toEqual([]);
+  });
+
+  it("set aside takes the user's own words and lasts for that message only", async () => {
+    const root = await ws();
+    await recordUserPrompt(root, "please fix the typo in the footer", "c1", "agent");
+    await tick();
+    await edit(root, "footer.html");
+    expect(await stop(root)).toContain("<user>please fix the typo in the footer</user>");
+    const aside = (userWords: string): GoalReportInput => ({ status: "set_aside", proofs: [], changes: [], userWords });
+    expect((await submitGoalReport(root, aside("the agent felt like it today"))).accepted).toBe(false);
+    expect(await stop(root, 1)).not.toBeNull();
+    expect((await submitGoalReport(root, aside("fix the typo in the footer"))).accepted).toBe(true);
+    await tick();
+    expect(await stop(root, 2)).toBeNull();
+    expect(await ends(root)).toMatchObject([{ outcome: "set_aside", reason: "fix the typo in the footer" }]);
+    await recordUserPrompt(root, "now do the export", "c1", "agent");
+    await tick();
+    await edit(root, "a.js");
+    expect(await stop(root)).toContain("Changed, not accounted for: a.js");
+  });
+
+  it("one chat's report doesn't end or burden another chat", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await edit(root, "b.js", "c2");
+    await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/guardian_report_goal", conversationId: "c2" });
+    await tick();
+    await ran(root, "make test", "12 passed");
+    const answer = await submitGoalReport(root, complete({ changes: [{ file: "b.js", serves: "sc_1" }] }));
+    expect(answer.unclaimed).toEqual([]);
+    expect(await stop(root)).toContain("not accounted for: a.js");
+  });
+
+  it("a proved goal stays proved until the user changes it, then the new goal gets its own run", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "make test", "12 passed");
+    await submitGoalReport(root, complete());
+    expect(await stop(root)).toBeNull();
+    await edit(root, "later.js");
+    expect(await stop(root)).toBeNull();
+    await setGoal(root, "Add JSON export", ["json works"]);
+    await edit(root, "b.js");
+    expect(await stop(root)).toContain("Add JSON export");
+  });
+
+  it("the user changing the goal mid-run is announced", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await stop(root);
+    await setGoal(root, "A different goal", ["x"]);
+    await edit(root, "a.js");
+    const msg = await stop(root, 1);
+    expect(msg).toContain("The goal on record changed");
+    expect(msg).toContain("A different goal");
+  });
+
+  it("three rounds with nothing changed stall it; an agent that can't report isn't asked again in that chat", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    expect(await stop(root)).not.toBeNull();
+    expect(await stop(root, 1)).not.toBeNull();
+    expect(await stop(root, 2)).not.toBeNull();
+    expect(await stop(root, 3)).toBeNull();
+    expect(await ends(root)).toMatchObject([{ outcome: "stalled", noReport: true, rounds: 3 }]);
+    await edit(root, "b.js");
+    expect(await stop(root)).toBeNull();
+    await edit(root, "c.js", "c2");
+    expect(await runGoalStop(root, { conversationId: "c2", status: "completed", loopCount: 0 })).not.toBeNull();
+  });
+
+  it("an agent repeating the same failing report gets a closing message, then silence", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await submitGoalReport(root, complete());
+    for (let i = 0; i < 3; i += 1) expect(await stop(root, i)).toMatch(/^Goal Guardian: round/);
+    const closing = await stop(root, 3);
+    expect(closing).toContain("nothing has changed for 3 rounds");
+    expect(closing).toContain("Still not proved:");
+    expect(await stop(root, 4)).toBeNull();
+    expect(await ends(root)).toMatchObject([{ outcome: "stalled" }]);
+  });
+
+  it("another chat's activity doesn't hide a stall; this chat's edit resets it", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await stop(root);
+    await stop(root, 1);
+    await edit(root, "x.js", "c2");
+    await stop(root, 2);
+    await edit(root, "a.js");
+    expect(await stop(root, 3)).not.toBeNull();
+    await stop(root, 4);
+    await stop(root, 5);
+    await stop(root, 6);
+    expect(await stop(root, 7)).toBeNull();
+    expect(await ends(root)).toMatchObject([{ outcome: "stalled" }]);
+  });
+
+  it("new evidence counts as progress, even with no edit", async () => {
+    const root = await ws("g", ["one", "two"]);
+    await edit(root, "a.js");
+    await stop(root);
+    await stop(root, 1);
+    await stop(root, 2);
+    await submitGoalReport(root, complete());
+    expect(await stop(root, 3)).toMatch(/^Goal Guardian: round 4/);
+  });
+
+  it("the cap ends with a hand-off, then silence", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    let msg: string | null = null;
+    for (let i = 0; i <= GOAL_MAX_ROUNDS; i += 1) {
+      await edit(root, "a.js");
+      msg = await stop(root, i);
+    }
+    expect(msg).toContain("that was the last of 20 rounds");
+    expect(await ends(root)).toMatchObject([{ outcome: "limit" }]);
+    expect(await stop(root, GOAL_MAX_ROUNDS + 1)).toBeNull();
+  });
+
+  it("the whole method goes out on round 1 and every few rounds, the short form otherwise", async () => {
+    const root = await ws();
+    const says: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      await edit(root, "a.js");
+      says.push((await stop(root, i))!);
+    }
+    expect(says[0]).toContain("Before you call it done, assume it isn't");
+    expect(says[1]).toContain("Same rules as round 1");
+    expect(says[1]).not.toContain("Before you call it done");
+    expect(says[4]).toContain("Before you call it done, assume it isn't");
+  });
+
+  it("every round restates the goal, whole, and a very long goal is cut with a pointer", async () => {
+    const root = await ws(`Long ${"x".repeat(5000)}`);
+    await edit(root, "a.js");
+    const msg = await stop(root);
+    expect(msg).toContain("read the rest with guardian_get_contract");
+    expect(msg!.length).toBeLessThan(9000);
+  });
+
+  it("cancelling mid-run closes it", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await stop(root);
+    expect(await stop(root, 1, "aborted")).toBeNull();
+    expect(await ends(root)).toMatchObject([{ outcome: "stopped" }]);
+  });
+});
+
+describe("telling the agent without a visible message", () => {
+  it("each message carries an active goal, or asks for one when none is recorded; not a paused or closed one", async () => {
+    const root = await ws();
+    expect(await goalTurnContext(root)).toContain("Add CSV export");
+    await controlGoal(root, "pause");
+    expect(await goalTurnContext(root)).toBeNull();
+    expect(await goalTurnContext(await ws("  ", []))).toContain("No goal is on record");
+  });
+
+  it("a limit in an earlier message doesn't bind later ones", async () => {
+    const context = await goalTurnContext(await ws());
+    expect(context).toContain("A limit in an earlier message ended with that message");
+    expect(context).toContain("asks to continue or finish: that means the whole goal");
+    expect(context).toContain("do only that and leave the rest of the goal alone");
+  });
+
+  it("a running agent hears a pause or a new goal once, per chat, and nothing else", async () => {
+    const root = await ws();
+    expect(await goalMidTurnNotice(root, "c1")).toBeNull();
+    expect(await goalMidTurnNotice(root, "c1")).toBeNull();
+    await controlGoal(root, "pause");
+    expect(await goalMidTurnNotice(root, "c1")).toContain("paused this goal");
+    expect(await goalMidTurnNotice(root, "c1")).toBeNull();
+    await controlGoal(root, "resume");
+    expect(await goalMidTurnNotice(root, "c1")).toBeNull();
+    await setGoal(root, "A different goal", ["x"]);
+    expect(await goalMidTurnNotice(root, "c1")).toContain("A different goal");
+    expect(await goalMidTurnNotice(root, "c1")).toBeNull();
+    expect(await goalMidTurnNotice(root, undefined)).toBeNull();
+  });
+
+  it("the chat that declares the first goal isn't told the user changed it", async () => {
+    const root = await ws("  ", []);
+    expect(await goalMidTurnNotice(root, "c1")).toBeNull();
+    await setGoal(root, "A brand new goal", ["x"]);
+    expect(await goalMidTurnNotice(root, "c1")).toBeNull();
+  });
+
+  it("finds the chat at work, so a pause can stop it", async () => {
+    const root = await ws();
+    expect(lastActiveConversation(await readAuditTail(root))).toBeNull();
+    await edit(root, "a.js", "c7");
+    expect(lastActiveConversation(await readAuditTail(root))).toBe("c7");
+  });
+});
+
+describe("what a run spent", () => {
+  it("adds up the tokens Cursor reports across rounds", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 0, tokens: 1000 });
+    await ran(root, "make test", "12 passed");
+    await submitGoalReport(root, complete());
+    await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 1, tokens: 500 });
+    expect(await ends(root)).toMatchObject([{ outcome: "proved", rounds: 1, tokens: 1500 }]);
+  });
+});
+
+describe("the goal is the user's", () => {
+  it("while paused the agent isn't sent back and its reports are refused; only resuming restarts it", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await controlGoal(root, "pause");
+    expect(await stop(root)).toBeNull();
+    expect((await submitGoalReport(root, complete())).message).toContain("Only they can resume");
+    await controlGoal(root, "resume");
+    expect(await stop(root)).toContain("Add CSV export");
+  });
+
+  it("nothing the agent says can pause or resume the goal", async () => {
+    const root = await ws();
+    await controlGoal(root, "pause");
+    await recordUserPrompt(root, "please resume the goal", "c1", "agent");
+    expect((await submitGoalReport(root, complete())).accepted).toBe(false);
+    expect(goalPhaseOf(await readAuditTail(root), await readContractSafe(root))).toBe("paused");
+  });
+
+  it("the user can close a goal that can't be proved; changing the goal reopens", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await controlGoal(root, "done");
+    expect(await stop(root)).toBeNull();
+    expect((await submitGoalReport(root, complete())).message).toContain("already closed");
+    await setGoal(root, "Another goal", ["x"]);
+    expect(goalPhaseOf(await readAuditTail(root), await readContractSafe(root))).toBe("active");
+    expect(await stop(root)).toContain("Another goal");
+  });
+
+  it("a report on a goal the user has since changed doesn't count", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "make test", "12 passed");
+    await submitGoalReport(root, complete());
+    await setGoal(root, "A different goal", ["the export test passes"]);
+    expect(await stop(root)).toContain("- No report yet.");
+    expect(await ends(root)).toEqual([]);
+  });
+
+  it("no goal: a report is refused, not recorded", async () => {
+    const root = await ws("  ", []);
+    expect((await submitGoalReport(root, complete())).message).toBe("No goal is set.");
+  });
+});
+
+describe("the goal loop: paths and weak proof", () => {
+  it("accepts a path however the agent writes it", async () => {
+    const root = await ws();
+    expect(projectPath(root, "./src/a.js")).toBe("src/a.js");
+    expect(projectPath(root, "src\\\\a.js")).toBe("src/a.js");
+    expect(projectPath(root, path.join(root, "src/a.js"))).toBe("src/a.js");
+    await edit(root, "src/a.js");
+    await ran(root, "make test", "12 passed");
+    expect((await submitGoalReport(root, complete({ changes: [{ file: "./src/a.js", serves: "sc_1" }] }))).accepted).toBe(true);
+  });
+
+  it("a proof that only prints is refused however it's chained; a real command after an echo isn't", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "cd . && echo 12 passed", "12 passed");
+    expect((await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", command: "cd . && echo 12 passed", quote: "12 passed" }] }))).unproved[0]).toContain("only prints text");
+    await ran(root, "echo start; make test", "start\n12 passed");
+    expect((await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", command: "echo start; make test", quote: "12 passed" }] }))).accepted).toBe(true);
+  });
+
+  it("a one-letter quote proves nothing", async () => {
+    const root = await ws();
+    await edit(root, "a.js");
+    await ran(root, "make test", "12 passed");
+    expect((await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", command: "make test", quote: "2" }] }))).unproved[0]).toContain("whole line");
+    await fs.writeFile(path.join(root, "a.js"), "export");
+    expect((await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", file: "a.js", contains: "e" }] }))).unproved[0]).toContain("whole line");
+  });
+});
+
+describe("the goal loop: what commands change, in a git repository", () => {
+  const sh = (root: string, ...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
+  async function repo(): Promise<string> {
+    const root = await ws();
+    sh(root, "init", "-q");
+    await fs.writeFile(path.join(root, "a.js"), "one\n");
+    sh(root, "add", "a.js");
+    sh(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "base");
+    return root;
+  }
+
+  it("a change made by a command, after the proof ran, makes the proof stale", async () => {
+    const root = await repo();
+    await recordUserPrompt(root, "add the export", "c1", "agent");
+    await tick();
+    await fs.writeFile(path.join(root, "a.js"), "two\n");
+    await ran(root, "make test", "12 passed");
+    expect((await submitGoalReport(root, complete())).accepted).toBe(true);
+    await fs.writeFile(path.join(root, "a.js"), "sed changed this\n");
+    expect((await submitGoalReport(root, complete())).unproved[0]).toContain("files changed after `make test`");
+  });
+
+  it("a file made by a command must be accounted for; what was already changed before the run needn't be", async () => {
+    const root = await repo();
+    await fs.writeFile(path.join(root, "users-own-work.js"), "theirs\n");
+    await recordUserPrompt(root, "add the export", "c1", "agent");
+    await tick();
+    await fs.writeFile(path.join(root, "generated.js"), "by a script\n");
+    await ran(root, "node generate.js", "made it");
+    expect(await stop(root)).toContain("not accounted for: generated.js");
+    expect(await stop(root, 1)).not.toContain("users-own-work.js");
+  });
+
+  it("a file the person saved isn't the agent's change when the agent ran nothing", async () => {
+    const root = await repo();
+    await recordUserPrompt(root, "what does this do?", "c1", "agent");
+    await tick();
+    await fs.writeFile(path.join(root, "typed-by-person.js"), "mine\n");
+    expect(await stop(root)).toBeNull();
+  });
+
+  it("a file edited and then put back needs no accounting", async () => {
+    const root = await ws();
+    sh(root, "init", "-q");
+    sh(root, "config", "user.email", "x@x");
+    sh(root, "config", "user.name", "x");
+    await fs.writeFile(path.join(root, "kept.txt"), "before\n");
+    await fs.writeFile(path.join(root, "reverted.txt"), "before\n");
+    sh(root, "add", "kept.txt", "reverted.txt");
+    sh(root, "commit", "-qm", "base");
+    await recordUserPrompt(root, "go", "c1", "agent");
+    await tick();
+    await fs.writeFile(path.join(root, "kept.txt"), "after\n");
+    await edit(root, "kept.txt");
+    await fs.writeFile(path.join(root, "reverted.txt"), "after\n");
+    await edit(root, "reverted.txt");
+    await fs.writeFile(path.join(root, "reverted.txt"), "before\n");
+    const answer = await submitGoalReport(root, { status: "complete", proofs: [], changes: [] });
+    expect(answer.unclaimed).toEqual(["kept.txt"]);
+  });
+
+  it("a file that lost most of its lines must go back, or be declared as wanted", async () => {
+    const root = await ws();
+    sh(root, "init", "-q");
+    sh(root, "config", "user.email", "x@x");
+    sh(root, "config", "user.name", "x");
+    await fs.writeFile(path.join(root, "suite.txt"), `${"check\n".repeat(100)}`);
+    await fs.writeFile(path.join(root, "small.txt"), `${"line\n".repeat(10)}`);
+    await fs.writeFile(path.join(root, "gone.txt"), `${"line\n".repeat(40)}`);
+    sh(root, "add", "suite.txt", "small.txt", "gone.txt");
+    sh(root, "commit", "-qm", "base");
+    expect(readShrunkFiles(root)).toEqual([]);
+
+    // Ordinary edits, a small file emptied, and more lines than before all stay quiet.
+    await fs.writeFile(path.join(root, "small.txt"), "");
+    await fs.writeFile(path.join(root, "suite.txt"), `${"check\n".repeat(70)}`);
+    expect(readShrunkFiles(root)).toEqual([]);
+
+    await fs.writeFile(path.join(root, "suite.txt"), `${"check\n".repeat(5)}`);
+    await fs.rm(path.join(root, "gone.txt"));
+    expect(readShrunkFiles(root)).toEqual([
+      { file: "gone.txt", lost: 40, had: 40 },
+      { file: "suite.txt", lost: 95, had: 100 },
+    ]);
+
+    const shrunk = [{ file: "suite.txt", lost: 95, had: 100 }];
+    const seen = { outputs: [], lastEditTs: null, editedFiles: [], shrunk };
+    const contract = { successCriteria: [] };
+    const proofs = [{ criterion: "goal", file: "suite.txt", contains: "check" }];
+    const refused = await evaluateReport(root, contract, { proofs, changes: [] }, seen);
+    expect(refused.unproved.join()).toContain("suite.txt lost 95 of its 100 lines");
+    const declared = await evaluateReport(root, contract, { proofs, changes: [], removed: ["./suite.txt"] }, seen);
+    expect(declared.unproved).toEqual([]);
+  });
+
+  it("outside git there is no tree to read, and nothing breaks", async () => {
+    const root = await ws();
+    expect(readTree(root)).toBeNull();
+  });
+});
+
+describe("the user's words", () => {
+  it("keeps the latest messages, skips Guardian's own, and keeps them out of git", async () => {
+    const root = await ws();
+    expect(await readUserPrompts(root)).toBeNull();
+    for (const m of ["one", "two", "Goal Guardian: round 1", "three", "four"]) await recordUserPrompt(root, m, "c1", "agent");
+    expect(await readUserPrompts(root)).toEqual(["two", "three", "four"]);
+    const ignore = await fs.readFile(path.join(getGuardianPaths(root).telemetryDir, ".gitignore"), "utf8");
+    expect(ignore).toContain("prompts.json");
+    expect(ignore).toContain("shell-output.jsonl");
+  });
+
+  it("matches a real quote, ignoring case and spacing; refuses anything else", () => {
+    expect(userSaid("Drop  the CSV part", ["please drop the csv part today"])).toBe(true);
+    expect(userSaid("ship JSON instead", ["please drop the csv part"])).toBe(false);
+    expect(userSaid("the", ["the goal is smaller now"])).toBe(false);
+    expect(userSaid("yes", ["yes"])).toBe(true);
+    expect(userSaid("corrige ça dans le pied", ["corrige Ã§a dans le pied de page"])).toBe(true);
+    expect(userSaid("", ["x"])).toBe(false);
+    expect(userSaid(undefined, ["x"])).toBe(false);
+  });
+});
+
+describe("the goal is the user's own words", () => {
+  const empty = () => ws("  ", []);
+
+  it("a list becomes the done-when items, word for word; what follows it stays out", () => {
+    const parsed = parseRequest("Add two helpers. Done when:\n1. The first works\n2. The second works\n3. Tests pass\n\nDo only item 1 for now, then stop.");
+    expect(parsed.goal).toBe("Add two helpers. Done when:");
+    expect(parsed.items).toEqual(["The first works", "The second works", "Tests pass"]);
+    expect(parseRequest("Fix it:\n- one\n  more of one\n- two").items).toEqual(["one more of one", "two"]);
+    expect(parseRequest("Add it. Done when: 1. It runs 2. It has tests. Only the first today.").items).toEqual(["It runs", "It has tests."]);
+  });
+
+  it("no list means the whole message, and one marker, versions or code aren't a list", () => {
+    expect(parseRequest("Fix the login bug")).toEqual({ goal: "Fix the login bug", items: [] });
+    expect(parseRequest("Do this:\n- only thing").items).toEqual([]);
+    expect(parseRequest("Upgrade from 1.2 to 2.3 today").items).toEqual([]);
+    expect(parseRequest("Run this:\n```\n- a\n- b\n```").items).toEqual([]);
+    expect(parseRequest("- one\n- two").goal).toBe("- one\n- two");
+  });
+
+  it("the first change records the latest message, once; an agent can't get in first", async () => {
+    const root = await empty();
+    expect(await captureGoal(root, "c1")).toBe(false);
+    await recordUserPrompt(root, "Build it. Done when:\n- a works\n- b works", "c1", "agent");
+    expect(await captureGoal(root, "c1")).toBe(true);
+    const saved = await readContractSafe(root);
+    expect(saved.goal).toBe("Build it. Done when:");
+    expect(saved.successCriteria.map((c) => c.text)).toEqual(["a works", "b works"]);
+    await recordUserPrompt(root, "something else entirely", "c1", "agent");
+    expect(await captureGoal(root, "c1")).toBe(false);
+    expect((await readContractSafe(root)).goal).toBe("Build it. Done when:");
+  });
+
+  it("the agent hears the recorded goal once, in the chat that set it", async () => {
+    const root = await empty();
+    await recordUserPrompt(root, "Build it", "c1", "agent");
+    await captureGoal(root, "c1");
+    expect(await goalMidTurnNotice(root, "c2")).toBeNull();
+    expect(await goalMidTurnNotice(root, "c1")).toContain("word for word");
+    expect(await goalMidTurnNotice(root, "c1")).toBeNull();
+  });
+
+  it("at the stop, work with no goal records one and carries on; a question records nothing", async () => {
+    const root = await empty();
+    await recordUserPrompt(root, "what does this do?", "c1", "agent");
+    expect(await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 0 })).toBeNull();
+    expect((await readContractSafe(root)).goal.trim()).toBe("");
+    await tick();
+    await recordUserPrompt(root, "Build it", "c1", "agent");
+    await tick();
+    await edit(root, "a.txt");
+    expect(await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 0 })).toContain("Build it");
+    expect((await readContractSafe(root)).goal).toBe("Build it");
+  });
+
+  it("the next request after a closed goal becomes the next goal; an open goal stays", async () => {
+    const root = await ws("  ", []);
+    await recordUserPrompt(root, "First job", "c1", "agent");
+    await captureGoal(root, "c1");
+    await tick();
+    await recordUserPrompt(root, "Second job", "c1", "agent");
+    expect(await captureGoal(root, "c1")).toBe(false);
+    await controlGoal(root, "done");
+    expect(await captureGoal(root, "c1")).toBe(false); // nothing asked since it closed
+    await tick();
+    await recordUserPrompt(root, "Third job", "c1", "agent");
+    expect(await captureGoal(root, "c1")).toBe(true);
+    expect((await readContractSafe(root)).goal).toBe("Third job");
+    expect(goalPhaseOf(await readAuditTail(root, 1000), await readContractSafe(root))).toBe("active");
+  });
+});

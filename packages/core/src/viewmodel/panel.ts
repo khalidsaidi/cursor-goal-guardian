@@ -1,27 +1,9 @@
-import type { GuardianState, GuardianAction, Task } from "../schema/state.js";
+import { goalHash, goalPhaseOf } from "../goal/loop.js";
+import type { Contract } from "../schema/contract.js";
 import type { AuditRecord } from "../schema/audit.js";
-import { summarizeSession, type SessionSummary } from "../telemetry/summary.js";
-import type { PairedDrift } from "../telemetry/pairing.js";
-
-export interface PanelTask {
-  id: string;
-  title: string;
-  active: boolean;
-  criterionId: string | null;
-}
-
-export interface PanelDriftEntry {
-  driftId: string;
-  ts: string;
-  status: PairedDrift["status"];
-  realigned: boolean;
-  realignmentType: string | null;
-  label: string;
-  detail: string;
-}
 
 export interface TourStep {
-  id: "connect" | "ask" | "tick" | "steer" | "review" | "center";
+  id: "connect" | "ask" | "steer" | "center";
   label: string;
   hint: string;
   done: boolean;
@@ -40,38 +22,42 @@ export interface PanelViewModel {
   goal: string;
   constraints: string[];
   successCriteria: Array<{ id: string; text: string; done: boolean }>;
-  activeTask: { id: string; title: string } | null;
-  board: { todo: PanelTask[]; doing: PanelTask[]; done: PanelTask[] };
-  health: SessionSummary["drift"]["health"];
-  counts24h: SessionSummary["counts24h"];
-  driftFeed: PanelDriftEntry[];
-  /** Confirmed, un-realigned drifts in the last 24h — the view badge number. */
-  badge: number;
-  semantic: { consented: boolean; available: boolean; pendingCount: number };
-  /** Latest whole-tape judge verdict, if any. */
-  sessionReview: { verdict: "on_course" | "off_course"; confidence: number; rationale: string; ts: string; flaggedActions: string[] } | null;
-  /** One honest sentence when the tape suggests the CONTRACT (not the agent) is stale. */
-  suggestion: string | null;
+  /** Where the goal stands, in one word and a lamp. */
+  status: { lamp: "idle" | "on" | "warn"; word: string };
+  /** The latest run on the goal: still going, or how it ended and what backs it. */
+  goalRun: {
+    ts: string;
+    outcome: "working" | "proved" | "blocked" | "set_aside" | "stalled" | "limit" | "stopped";
+    round: number | null;
+    detail: string[];
+    extras: string[];
+    /** Changed files grouped by the done-when item the agent says each serves. */
+    changes: Array<{ serves: string; files: string[] }>;
+    goalFileEdited: boolean;
+    rounds: number | null;
+    seconds: number | null;
+    tokens: number | null;
+  } | null;
+  /** Cursor doesn't load project hooks in an untrusted workspace. */
+  hooksDisabled: boolean;
+  /** Where the goal stands, for the panel's controls. */
+  goalPhase: "none" | "active" | "paused" | "complete";
   /** The guided first-ten-minutes checklist; steps tick from the real tape. */
   tour: PanelTour;
-  /** True when state.json failed to load — the panel offers rebuild-from-record instead of quietly showing nothing. */
-  stateBroken: boolean;
 }
 
 export interface PanelInputs {
+  /** The goal loop's records in full, so its receipts survive past the tape window. */
+  goalRecords?: AuditRecord[];
+  workspaceTrusted?: boolean;
   setUp: boolean;
-  state: GuardianState;
+  contract: Contract;
   records: AuditRecord[];
-  actions: GuardianAction[];
   now: Date;
-  semanticConsented: boolean;
-  semanticAvailable: boolean;
   /** Host memory: the Command Center has been opened at least once here. */
   commandCenterUsed?: boolean;
   /** Host memory: the user hid the get-started tour. */
   tourDismissed?: boolean;
-  /** The on-disk state failed to load (damaged or hand-edited). */
-  stateBroken?: boolean;
 }
 
 /**
@@ -80,7 +66,7 @@ export interface PanelInputs {
  * the README's "Your first 10 minutes" exactly.
  */
 function buildTour(inputs: PanelInputs): PanelTour {
-  const { state, records } = inputs;
+  const { contract, records } = inputs;
   const steps: TourStep[] = [
     {
       id: "connect",
@@ -92,13 +78,7 @@ function buildTour(inputs: PanelInputs): PanelTour {
       id: "ask",
       label: "Ask your agent for something",
       hint: "your request becomes the goal",
-      done: state.goal.trim().length > 0 || records.length > 0,
-    },
-    {
-      id: "tick",
-      label: "See a task finish",
-      hint: "the checklist ticks itself as work lands",
-      done: state.tasks.some((t) => t.status === "done"),
+      done: contract.goal.trim().length > 0 || records.length > 0,
     },
     {
       id: "steer",
@@ -109,12 +89,6 @@ function buildTour(inputs: PanelInputs): PanelTour {
       done: records.some(
         (r) => r.kind === "action.observed" && r.actionType === "mcp" && r.actionValue.includes("guardian_get_status"),
       ),
-    },
-    {
-      id: "review",
-      label: "Turn on AI review",
-      hint: "false alarms clear themselves, with reasons",
-      done: inputs.semanticConsented || records.some((r) => r.kind === "drift.verdict"),
     },
     {
       id: "center",
@@ -132,23 +106,52 @@ function buildTour(inputs: PanelInputs): PanelTour {
   };
 }
 
-function toPanelTask(t: Task, activeId: string | null): PanelTask {
-  return { id: t.id, title: t.title, active: t.id === activeId, criterionId: t.criterionId ?? null };
+function proofLine(p: { criterion: string; command?: string | undefined; quote?: string | undefined; file?: string | undefined; contains?: string | undefined }): string {
+  return p.command !== undefined ? `${p.criterion}: ran ${p.command}, printed "${p.quote ?? ""}"` : `${p.criterion}: ${p.file ?? ""} contains "${p.contains ?? ""}"`;
 }
 
-function driftLabel(entry: PairedDrift): string {
-  const base =
-    entry.status === "confirmed"
-      ? "Drift confirmed"
-      : entry.status === "dismissed"
-        ? "Dismissed by review"
-        : "Possible drift (unreviewed)";
-  return entry.realigned ? `${base} — realigned` : base;
+function groupChanges(changes: Array<{ file: string; serves: string }>): Array<{ serves: string; files: string[] }> {
+  const by = new Map<string, string[]>();
+  for (const c of changes) by.set(c.serves, [...new Set([...(by.get(c.serves) ?? []), c.file])]);
+  return [...by].map(([serves, files]) => ({ serves, files }));
+}
+
+function buildGoalRun(records: AuditRecord[]): PanelViewModel["goalRun"] {
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const r = records[i]!;
+    if (r.kind === "goal.round") {
+      return { ts: r.ts, outcome: "working", round: r.round, detail: [...r.unproved], extras: r.extras, changes: [], goalFileEdited: r.goalFileEdited === true, rounds: null, seconds: null, tokens: r.tokens ?? null };
+    }
+    if (r.kind === "goal.end") {
+      const detail = r.outcome === "proved" ? (r.proved ?? []).map(proofLine) : r.reason ? [r.reason] : (r.unproved ?? []);
+      return { ts: r.ts, outcome: r.outcome, round: null, detail, extras: r.extras ?? [], changes: groupChanges(r.changes ?? []), goalFileEdited: r.goalFileEdited === true, rounds: r.rounds ?? null, seconds: r.seconds ?? null, tokens: r.tokens ?? null };
+    }
+  }
+  return null;
+}
+
+function goalStatus(phase: PanelViewModel["goalPhase"], run: PanelViewModel["goalRun"]): PanelViewModel["status"] {
+  if (phase === "none") return { lamp: "idle", word: "no goal" };
+  if (phase === "paused") return { lamp: "idle", word: "paused" };
+  if (phase === "complete") return run?.outcome === "proved" ? { lamp: "on", word: "proved" } : { lamp: "idle", word: "closed" };
+  if (run?.outcome === "blocked") return { lamp: "warn", word: "blocked" };
+  if (run?.outcome === "stalled" || run?.outcome === "limit") return { lamp: "warn", word: "stalled" };
+  return { lamp: "on", word: "active" };
+}
+
+/** The items the latest proved run on this goal backed. Nothing else ticks: not a claim, and not the user's "done". */
+function provedItems(records: AuditRecord[], contract: Contract): Set<string> {
+  const hash = goalHash(contract);
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const r = records[i]!;
+    if (r.kind === "goal.end" && r.outcome === "proved" && r.goalHash === hash) return new Set((r.proved ?? []).map((p) => p.criterion));
+  }
+  return new Set();
 }
 
 /** Pure projection: everything the panel renders, computed from disk artifacts. */
 export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
-  const { state, records, actions, now } = inputs;
+  const { contract, records, now } = inputs;
 
   if (!inputs.setUp) {
     return {
@@ -156,88 +159,29 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       goal: "",
       constraints: [],
       successCriteria: [],
-      activeTask: null,
-      board: { todo: [], doing: [], done: [] },
-      health: "stable",
-      counts24h: { driftPending: 0, driftConfirmed: 0, driftDismissed: 0, advisories: 0, intents: 0 },
-      driftFeed: [],
-      badge: 0,
-      semantic: { consented: inputs.semanticConsented, available: inputs.semanticAvailable, pendingCount: 0 },
-      sessionReview: null,
-      suggestion: null,
+      status: { lamp: "idle", word: "no goal" },
+      goalRun: null,
+      goalPhase: "none",
+      hooksDisabled: inputs.workspaceTrusted === false,
       tour: buildTour(inputs),
-      stateBroken: inputs.stateBroken === true,
     };
   }
 
-  const summary = summarizeSession(state, records, actions, now);
-  const doneByCriterion = new Set(
-    state.tasks.filter((t) => t.status === "done" && t.criterionId).map((t) => t.criterionId as string),
-  );
+  const goalRun = buildGoalRun(inputs.goalRecords ?? records);
 
-  const driftFeed: PanelDriftEntry[] = summary.drift.entries.map((entry) => ({
-    driftId: entry.driftId,
-    ts: entry.ts,
-    status: entry.status,
-    realigned: entry.realigned,
-    realignmentType: entry.realignment?.type ?? null,
-    label: driftLabel(entry),
-    detail: `[${entry.actionType}] ${entry.actionValue} · task: ${entry.activeTaskTitle}`,
-  }));
-
-  const horizon = now.getTime() - 24 * 60 * 60 * 1000;
-  const badge = summary.drift.entries.filter(
-    (e) => e.status === "confirmed" && !e.realigned && Date.parse(e.ts) >= horizon,
-  ).length;
-
-  let sessionReview: PanelViewModel["sessionReview"] = null;
-  for (const r of records) {
-    if (r.kind === "session.review" && (!sessionReview || Date.parse(r.ts) > Date.parse(sessionReview.ts))) {
-      sessionReview = { verdict: r.verdict, confidence: r.confidence, rationale: r.rationale, ts: r.ts, flaggedActions: r.flaggedActions };
-    }
-  }
-
-  // Trust hierarchy: an unreviewed lexical signal should not outvote a
-  // confident whole-tape verdict. With nothing CONFIRMED and open, and the
-  // judge reading the session as on course, "drifting" softens to recovering.
-  let health = summary.drift.health;
-  const confirmedOpen = summary.drift.entries.some(
-    (e) => e.status === "confirmed" && !e.realigned && Date.parse(e.ts) >= horizon,
-  );
-  if (health === "drifting" && !confirmedOpen && sessionReview?.verdict === "on_course" && sessionReview.confidence >= 0.7) {
-    health = "recovering";
-  }
-
-  const persistentlyOff =
-    (summary.drift.health === "drifting" && summary.drift.unresolved >= 3) ||
-    (sessionReview?.verdict === "off_course" && sessionReview.confidence >= 0.7);
-  const suggestion = persistentlyOff
-    ? "A lot of recent work reads as off-goal. If the goal actually changed, update the contract or record a decision — the guardian scores against what's declared, not what's intended."
-    : null;
+  const goalRecords = inputs.goalRecords ?? records;
+  const goalPhase = goalPhaseOf(goalRecords, contract);
+  const proved = provedItems(goalRecords, contract);
 
   return {
     setUp: true,
-    goal: state.goal,
-    constraints: state.constraints,
-    successCriteria: state.successCriteria.map((c) => ({ ...c, done: doneByCriterion.has(c.id) })),
-    activeTask: summary.activeTask,
-    board: {
-      todo: state.tasks.filter((t) => t.status === "todo").map((t) => toPanelTask(t, state.activeTaskId)),
-      doing: state.tasks.filter((t) => t.status === "doing").map((t) => toPanelTask(t, state.activeTaskId)),
-      done: state.tasks.filter((t) => t.status === "done").map((t) => toPanelTask(t, state.activeTaskId)),
-    },
-    health,
-    counts24h: summary.counts24h,
-    driftFeed,
-    badge,
-    semantic: {
-      consented: inputs.semanticConsented,
-      available: inputs.semanticAvailable,
-      pendingCount: summary.counts24h.driftPending,
-    },
-    sessionReview,
-    suggestion,
+    goal: contract.goal,
+    constraints: contract.constraints,
+    successCriteria: contract.successCriteria.map((c) => ({ ...c, done: proved.has(c.id) })),
+    status: goalStatus(goalPhase, goalRun),
+    goalRun,
+    hooksDisabled: inputs.workspaceTrusted === false,
+    goalPhase,
     tour: buildTour(inputs),
-    stateBroken: inputs.stateBroken === true,
   };
 }

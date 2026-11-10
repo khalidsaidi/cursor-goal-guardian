@@ -6,7 +6,7 @@ beforeAll(ensureBuilt, 30000);
 
 let w: TestWorkspace;
 beforeAll(async () => {
-  w = await makeWorkspace({ tasks: [{ id: "t1", title: "Task", status: "doing" }] });
+  w = await makeWorkspace();
 });
 afterAll(async () => {
   await w?.cleanup();

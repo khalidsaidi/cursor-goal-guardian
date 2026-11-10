@@ -4,12 +4,10 @@ import {
   fileExists,
   getGuardianPaths,
   getLegacyPaths,
-  loadActions,
   migrateV1toV2,
-  replay,
+  readContractSafe,
 } from "@goal-guardian/core";
 import { scaffoldWorkspace, HOOK_BIN } from "../src/scaffold.js";
-import { readState } from "../src/assert.js";
 
 describe("09 [deterministic] a real v0.4.11 workspace migrates and the built hook runs on it", () => {
   it("migrates case-basic and the hook answers allow on the migrated workspace", async () => {
@@ -24,9 +22,10 @@ describe("09 [deterministic] a real v0.4.11 workspace migrates and the built hoo
       expect(await fileExists(`${legacy.state}.v1.bak`)).toBe(true);
       expect(await fileExists(legacy.aiDir)).toBe(false);
 
-      const state = await readState(ws.root);
-      expect(state.activeTaskId).toBe("sc_1");
-      expect(replay(await loadActions(ws.root))).toEqual(state);
+      expect(await fileExists(legacy.state)).toBe(false);
+      const contract = await readContractSafe(ws.root);
+      expect(contract.goal.trim().length).toBeGreaterThan(0);
+      expect(contract.successCriteria[0]?.id).toBe("sc_1");
 
       const res = spawnSync(process.execPath, [HOOK_BIN], {
         input: JSON.stringify({

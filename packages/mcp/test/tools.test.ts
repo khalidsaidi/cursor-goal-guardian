@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -17,7 +18,6 @@ beforeAll(async () => {
     goal: "Ship the CSV export feature",
     successCriteria: ["Users can export the report table as CSV"],
     constraints: ["No new dependencies"],
-    tasks: [{ id: "t1", title: "Users can export the report table as CSV", status: "doing", criterionId: "sc_1" }],
   });
   client = new Client({ name: "mcp-contract-tests", version: "0.0.0" });
   const transport = new StdioClientTransport({
@@ -35,122 +35,99 @@ afterAll(async () => {
 });
 
 describe("tool surface", () => {
-  it("exposes exactly the six v2 tools — the permit machinery is gone", async () => {
+  it("exposes exactly the goal tools — the permit and task machinery is gone", async () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
-      "guardian_check_action",
-      "guardian_declare_intent",
       "guardian_get_contract",
       "guardian_get_status",
-      "guardian_record_progress",
+      "guardian_report_goal",
       "guardian_update_goal",
     ]);
     expect(names).not.toContain("guardian_issue_permit");
     expect(names).not.toContain("guardian_check_step");
     expect(names).not.toContain("guardian_commit_result");
+    expect(names).not.toContain("guardian_record_progress");
   });
 });
 
 describe("guardian_get_contract", () => {
-  it("returns the contract with criterion ids, active task, and pinned context", async () => {
+  it("returns the contract with criterion ids and boundaries", async () => {
     const result = await callJson("guardian_get_contract");
     expect(result.goal).toBe("Ship the CSV export feature");
     expect(result.successCriteria).toEqual([{ id: "sc_1", text: "Users can export the report table as CSV" }]);
-    expect(result.activeTask).toMatchObject({ id: "t1", criterionId: "sc_1" });
-    expect(result.pinnedContext).toEqual([]);
-  });
-});
-
-describe("guardian_declare_intent", () => {
-  it("appends intent.declared records and returns scope keywords; repeated calls append, never mutate", async () => {
-    const first = await callJson("guardian_declare_intent", { summary: "Implement the CSV serializer", taskId: "t1" });
-    expect(String(first.intentId)).toMatch(/^int_/);
-    expect(first.taskScopeKeywords).toContain("csv");
-
-    await callJson("guardian_declare_intent", { summary: "Add serializer tests", plannedActions: ["edit src/export/csv.test.ts"] });
-
-    const intents = auditOfKind(await readAudit(ws.root), "intent.declared");
-    expect(intents).toHaveLength(2);
-    expect(intents[0]?.summary).toBe("Implement the CSV serializer");
-    expect(intents[0]?.taskId).toBe("t1");
-    expect(intents[1]?.plannedActions).toEqual(["edit src/export/csv.test.ts"]);
-  });
-});
-
-describe("guardian_check_action", () => {
-  it("reports alert for destructive commands without gating anything", async () => {
-    const result = await callJson("guardian_check_action", { action_type: "shell", action_value: "rm -rf /" });
-    expect(result.severity).toBe("alert");
-    expect(result.rule).toBe("rm -rf /");
-  });
-
-  it("reports caution with the matched rule", async () => {
-    const result = await callJson("guardian_check_action", { action_type: "shell", action_value: "git reset --hard" });
-    expect(result).toMatchObject({ severity: "caution", rule: "git reset --hard*" });
-  });
-
-  it("reports ok with lexical drift details for off-scope actions", async () => {
-    const result = await callJson("guardian_check_action", { action_type: "shell", action_value: "docker build -t darkmode-theme ." });
-    expect(result.severity).toBe("ok");
-    expect(result.lexicalDrift).toMatchObject({ confidence: expect.any(String) });
-    const inScope = await callJson("guardian_check_action", { action_type: "read", action_value: "src/export/csv.ts" });
-    expect(inScope.lexicalDrift).toBeNull();
+    expect(result.constraints).toEqual(["No new dependencies"]);
+    expect(result).not.toHaveProperty("activeTask");
   });
 });
 
 describe("guardian_get_status", () => {
-  it("summarizes the session from state + audit", async () => {
+  it("summarizes the session from the contract and the tape", async () => {
     const result = await callJson("guardian_get_status");
     expect(result.goal).toBe("Ship the CSV export feature");
-    expect(result.activeTask).toEqual({ id: "t1", title: "Users can export the report table as CSV" });
-    expect(result.tasks).toEqual({ todo: 0, doing: 1, done: 0 });
-    expect((result.counts24h as Record<string, number>).intents).toBe(2);
-  });
-});
-
-describe("guardian_record_progress", () => {
-  it("completing the active task lands COMPLETE_TASK on the tape", async () => {
-    const result = await callJson("guardian_record_progress", { action: "complete_task", taskId: "t1" });
-    expect(result.completed).toBe("t1");
-    const status = await callJson("guardian_get_status");
-    expect(status.tasks).toEqual({ todo: 0, doing: 0, done: 1 });
-  });
-
-  it("starting a second task after completion needs no decision; switching mid-task does", async () => {
-    await callJson("guardian_declare_intent", { summary: "moving on" });
-    // t1 is done (previous test); add a fresh task pair via the state file? Not available over MCP —
-    // instead assert the rejection path: start_task on an unknown id errors without corrupting state.
-    const res = (await client.callTool({
-      name: "guardian_record_progress",
-      arguments: { action: "start_task", taskId: "ghost" },
-    })) as { isError?: boolean; content: Array<{ text: string }> };
-    expect(res.isError).toBe(true);
-    expect(res.content[0]?.text).toMatch(/TASK_NOT_FOUND/);
-    const status = await callJson("guardian_get_status");
-    expect(status.tasks).toEqual({ todo: 0, doing: 0, done: 1 });
+    expect(result.goalPhase).toBe("active");
+    expect(result).not.toHaveProperty("tasks");
+    expect(result).not.toHaveProperty("counts24h");
   });
 });
 
 describe("guardian_update_goal", () => {
-  it("the chat can change the goal and grow the done-when list", async () => {
+  const contractFile = () => path.join(ws.root, ".cursor", "goal-guardian", "contract.json");
+  let saved = "";
+  beforeEach(async () => { saved = await fs.readFile(contractFile(), "utf8"); });
+  afterEach(async () => { await fs.writeFile(contractFile(), saved); });
+
+  it("the user's words become the goal, a list in them the done-when items, and items can be added", async () => {
     const result = await callJson("guardian_update_goal", {
-      goal: "Ship the CSV export feature, plus filters",
+      user_words: "Ship the CSV export feature, plus filters",
       add_criteria: ["Filter state is preserved in the export"],
     });
     expect(result.goal).toBe("Ship the CSV export feature, plus filters");
-    const criteria = result.criteria as Array<{ id: string; text: string }>;
-    expect(criteria.map((c) => c.id)).toContain("sc_2");
-    const status = await callJson("guardian_get_status");
-    const board = status.tasks as { todo: number; doing: number };
-    expect(board.todo + board.doing).toBeGreaterThanOrEqual(1);
+    expect((result.criteria as Array<{ id: string; text: string }>).map((c) => c.id)).toEqual(["sc_1"]);
+    expect((await callJson("guardian_get_contract")).goal).toBe("Ship the CSV export feature, plus filters");
+    const listed = await callJson("guardian_update_goal", { user_words: "Ship it.\n- one thing\n- another thing" });
+    expect(listed.goal).toBe("Ship it.");
+    expect((listed.criteria as Array<{ text: string }>).map((c) => c.text)).toEqual(["one thing", "another thing"]);
+  });
+});
+
+describe("only the user changes the goal", () => {
+  const contractFile = () => path.join(ws.root, ".cursor", "goal-guardian", "contract.json");
+  let saved = "";
+  beforeEach(async () => { saved = await fs.readFile(contractFile(), "utf8"); });
+  afterEach(async () => { await fs.writeFile(contractFile(), saved); });
+
+  const prompts = () => path.join(ws.root, ".cursor", "goal-guardian", "telemetry", "prompts.json");
+  const call = (args: Record<string, unknown>) => client.callTool({ name: "guardian_update_goal", arguments: args }) as Promise<{ isError?: boolean; content: Array<{ text: string }> }>;
+
+  it("refuses words the user never said, and accepts theirs", async () => {
+    await fs.mkdir(path.dirname(prompts()), { recursive: true });
+    await fs.writeFile(prompts(), JSON.stringify(["please make it JSON export instead"]));
+    const before = String((await callJson("guardian_get_contract")).goal);
+    const invented = await call({ user_words: "make it smaller" });
+    expect(invented.isError).toBe(true);
+    expect(invented.content[0]!.text).toContain("only the user changes");
+    expect(String((await callJson("guardian_get_contract")).goal)).toBe(before);
+    expect((await call({ add_criteria: ["a new item"] })).isError).toBeFalsy();
+    expect((await call({ user_words: "make it JSON export instead" })).isError).toBeFalsy();
+    expect(String((await callJson("guardian_get_contract")).goal)).toBe("make it JSON export instead");
+    await fs.rm(prompts());
+  });
+});
+
+describe("guardian_report_goal", () => {
+  it("answers at once with what doesn't hold, and records the claim", async () => {
+    const answer = await callJson("guardian_report_goal", { status: "complete", proofs: [{ criterion: "sc_1", command: "make test", quote: "12 passed" }] });
+    expect(answer.accepted).toBe(false);
+    expect(JSON.stringify(answer.unproved)).toContain("no record of `make test`");
+    expect(auditOfKind(await readAudit(ws.root), "goal.report").length).toBeGreaterThanOrEqual(1);
   });
 });
 
 describe("robustness", () => {
   it("rejects malformed arguments but stays alive for the next call", async () => {
     const outcome = await client
-      .callTool({ name: "guardian_check_action", arguments: { action_type: "teleport", action_value: "x" } })
+      .callTool({ name: "guardian_report_goal", arguments: { status: "teleport" } })
       .then((res) => res as { isError?: boolean })
       .catch(() => ({ isError: true }));
     expect(outcome.isError).toBe(true);
