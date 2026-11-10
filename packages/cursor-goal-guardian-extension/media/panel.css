@@ -73,6 +73,8 @@ button.link {
 .lamp.idle { background: var(--vscode-descriptionForeground, gray); }
 
 .review-line { font-size: 11px; opacity: 0.7; }
+.review-said { font-style: italic; }
+.review-diff { font-size: 11px; white-space: pre-wrap; max-height: 12em; overflow: auto; opacity: 0.8; }
 
 /* ---- get started tour ---- */
 

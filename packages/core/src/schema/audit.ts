@@ -196,6 +196,11 @@ export const goalReviewRecordSchema = z
     goalHash: z.string(),
     /** The report it reviewed. */
     reportTs: z.string(),
+    /** Names the review for labels and its saved case. */
+    id: z.string().optional(),
+    /** A replayable copy of what it reviewed was saved, or why not. */
+    caseSaved: z.boolean().optional(),
+    caseSkipped: z.string().optional(),
     ran: z.boolean(),
     reason: z.string().optional(),
     seconds: z.number().int().nonnegative(),
@@ -203,6 +208,46 @@ export const goalReviewRecordSchema = z
     extra: z.array(z.object({ file: z.string(), what: z.string() }).strict()),
   })
   .strict();
+
+/** The user's verdict on one of the reviewer's objections. */
+export const reviewFeedbackRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("review.feedback"),
+    reviewId: z.string(),
+    index: z.number().int().nonnegative(),
+    label: z.enum(["right", "wrong"]),
+  })
+  .strict();
+
+const improveScoreSchema = z.object({ correct: z.number().int().nonnegative(), catches: z.number().int().nonnegative() }).strict();
+
+/** The user asked Guardian to try improving its reviewer. */
+export const improveStartRecordSchema = z.object({ ...base, kind: z.literal("improve.start"), id: z.string() }).strict();
+
+/** One try at improving the reviewer: what was proposed, how both versions did on held-out cases, and the call. */
+export const improveRunRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("improve.run"),
+    id: z.string(),
+    kept: z.boolean(),
+    reason: z.string(),
+    train: z.number().int().nonnegative(),
+    heldOut: z.number().int().nonnegative(),
+    old: improveScoreSchema.optional(),
+    new: improveScoreSchema.optional(),
+    lostCatches: z.number().int().nonnegative().optional(),
+    seconds: z.number().int().nonnegative(),
+    calls: z.number().int().nonnegative(),
+    hypotheses: z.array(z.string()),
+    diff: z.string(),
+  })
+  .strict();
+
+/** The user switched the workspace to an improved reviewer, or back to the built-in one. */
+export const improveApplyRecordSchema = z.object({ ...base, kind: z.literal("improve.apply"), runId: z.string() }).strict();
+export const improveUndoRecordSchema = z.object({ ...base, kind: z.literal("improve.undo") }).strict();
 
 export const goalEndRecordSchema = z
   .object({
@@ -244,6 +289,11 @@ export const auditRecordSchema = z.discriminatedUnion("kind", [
   goalRoundRecordSchema,
   goalEndRecordSchema,
   goalReviewRecordSchema,
+  reviewFeedbackRecordSchema,
+  improveStartRecordSchema,
+  improveRunRecordSchema,
+  improveApplyRecordSchema,
+  improveUndoRecordSchema,
 ]);
 
 export type HookEventName = z.infer<typeof hookEventNameSchema>;
@@ -259,6 +309,8 @@ export type UserMessageRecord = z.infer<typeof userMessageRecordSchema>;
 export type GoalControlRecord = z.infer<typeof goalControlRecordSchema>;
 export type GoalEndRecord = z.infer<typeof goalEndRecordSchema>;
 export type GoalReviewRecord = z.infer<typeof goalReviewRecordSchema>;
+export type ReviewFeedbackRecord = z.infer<typeof reviewFeedbackRecordSchema>;
+export type ImproveRunRecord = z.infer<typeof improveRunRecordSchema>;
 export type AuditRecord = z.infer<typeof auditRecordSchema>;
 
 export function parseAuditRecord(value: unknown): AuditRecord {

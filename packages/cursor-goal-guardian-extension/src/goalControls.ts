@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { controlGoal, lastActiveConversation, readAuditTail } from "@goal-guardian/core";
+import { applyImprovement, controlGoal, improveReviewer, lastActiveConversation, readAuditTail, recordReviewFeedback, undoImprovement } from "@goal-guardian/core";
 
 export type GoalCommand = "goal.pause" | "goal.resume" | "goal.done" | "goal.work";
 
@@ -29,4 +29,23 @@ export async function applyGoalCommand(root: string, command: GoalCommand): Prom
   }
   await controlGoal(root, "resume");
   await startAgent();
+}
+
+/**
+ * The reviewer buttons: a verdict on one objection, trying an improvement, applying one, or going back to the
+ * built-in reviewer. Improving takes minutes, so it runs on and the panel refreshes when it's done.
+ */
+export async function applyReviewCommand(root: string, command: string, refresh: () => Promise<void>): Promise<void> {
+  const [verb, id, index] = command.split(":");
+  if ((verb === "review.right" || verb === "review.wrong") && id && index !== undefined) {
+    await recordReviewFeedback(root, id, Number(index), verb === "review.right" ? "right" : "wrong");
+  } else if (verb === "review.improve") {
+    void improveReviewer(root)
+      .catch((err) => vscode.window.showWarningMessage(`Goal Guardian: improving the reviewer failed: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => void refresh());
+  } else if (verb === "review.apply" && id) {
+    await applyImprovement(root, id).catch((err) => vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`));
+  } else if (verb === "review.undo") {
+    await undoImprovement(root);
+  }
 }

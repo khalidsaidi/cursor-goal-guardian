@@ -1,8 +1,10 @@
 import * as vscode from "vscode";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import {
   buildPanelViewModel,
   detectWorkspaceFormat,
+  harnessPath,
   readAuditTail,
   readContractSafe,
   readGoalRecords,
@@ -107,6 +109,7 @@ export class PanelController implements vscode.WebviewViewProvider {
       records: await readAuditTail(this.root),
       goalRecords: await readGoalRecords(this.root),
       workspaceTrusted: vscode.workspace.isTrusted,
+      improvedReviewer: fs.existsSync(harnessPath(this.root, "reviewer")),
     });
   }
 

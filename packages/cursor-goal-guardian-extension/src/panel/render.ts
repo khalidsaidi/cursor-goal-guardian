@@ -82,10 +82,50 @@ function renderGoalRun(vm: PanelViewModel): string {
     ...g.detail,
     ...g.changes.filter((c) => c.serves !== "extra").map((c) => `Changed for ${c.serves}: ${c.files.join(", ")}`),
     ...g.extras.map((f) => `Not for any done-when item, your call: ${f}`),
-    ...g.reviewer.map((l) => `Reviewer's opinion: ${l.replace(/^Reviewer: /, "")}`),
+    ...(vm.reviews.length ? [] : g.reviewer.map((l) => `Reviewer's opinion: ${l.replace(/^Reviewer: /, "")}`)),
     ...(g.goalFileEdited ? ["The agent edited Guardian's goal files during this run."] : []),
   ];
   return `<p class="review-line">${escapeHtml(head)}</p>${lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("")}`;
+}
+
+const SOURCE_WORD = { user: "your call", fixed: "the agent fixed it", overruled: "you marked the goal done over it" } as const;
+
+/** The reviewer's objections, each with the user's verdict: those verdicts are what Guardian learns from. */
+function renderReviews(vm: PanelViewModel): string {
+  if (!vm.reviews.length) return "";
+  const blocks = vm.reviews.map((r) => {
+    const lines = r.lines.map((line, i) => {
+      const said = r.feedback[i];
+      const buttons = said
+        ? `<span class="review-said">${said === "right" ? "you said: right call" : "you said: reviewer was wrong"}</span>`
+        : `<button class="link" data-cmd="review.right:${escapeHtml(r.id)}:${i}">Right call</button> <button class="link" data-cmd="review.wrong:${escapeHtml(r.id)}:${i}">Reviewer was wrong</button>`;
+      return `<p class="review-line">${escapeHtml(`Reviewer's opinion: ${line.replace(/^Reviewer: /, "")}`)} ${buttons}</p>`;
+    });
+    const label = r.label && r.label.source !== "user" ? `<p class="review-line">Counted as ${r.label.label === "right" ? "a right call" : "a wrong call"}: ${SOURCE_WORD[r.label.source]}.</p>` : "";
+    return lines.join("") + label;
+  });
+  return `<div class="reviews">${blocks.join("")}</div>`;
+}
+
+/** Guardian improving its own reviewer: offered when there's enough to learn from, applied only by the user. */
+function renderImprove(vm: PanelViewModel): string {
+  const im = vm.improve;
+  const out: string[] = [];
+  const latest = im.latest;
+  if (im.running) out.push(`<p class="review-line">Improving the reviewer from your verdicts…</p>`);
+  else if (latest?.kept && !latest.applied) {
+    out.push(
+      `<p class="review-line">${escapeHtml(`A better reviewer: ${latest.reason}.`)}</p>`,
+      ...latest.hypotheses.map((h) => `<p class="review-line">${escapeHtml(`Idea tested: ${h}`)}</p>`),
+      `<pre class="review-diff">${escapeHtml(latest.diff)}</pre>`,
+      `<div class="goal-controls"><button class="link" data-cmd="review.apply:${escapeHtml(latest.id)}">Apply</button></div>`,
+    );
+  } else {
+    if (latest && !latest.kept) out.push(`<p class="review-line">${escapeHtml(`Last try kept the current reviewer: ${latest.reason}.`)}</p>`);
+    if (im.ready) out.push(`<p class="review-line">${im.labelled} reviews have a verdict. Guardian can try to improve its reviewer from them and test it on the ones it doesn't learn from.</p><div class="goal-controls"><button class="link" data-cmd="review.improve">Improve the reviewer</button></div>`);
+  }
+  if (im.usingImproved) out.push(`<p class="review-line">This workspace uses its improved reviewer. <button class="link" data-cmd="review.undo">Undo</button></p>`);
+  return out.join("");
 }
 
 /** Yours alone: the agent can't resume a pause or close the goal. */
@@ -120,6 +160,8 @@ function renderGoal(vm: PanelViewModel): string {
         <span class="status-word">${escapeHtml(vm.status.word)}</span>
       </div>
       ${renderGoalRun(vm)}
+      ${renderReviews(vm)}
+      ${renderImprove(vm)}
       ${renderGoalControls(vm)}
     </div>`;
 }

@@ -164,3 +164,43 @@ describe("goal buttons", () => {
     run.mockRestore();
   });
 });
+
+describe("the reviewer on the panel, and improving it", () => {
+  const NOW = new Date("2026-01-01T12:00:00.000Z");
+  const at = (m: number) => new Date(NOW.getTime() - m * 60_000).toISOString();
+  const base = { goalHash: "h", reportTs: at(9), seconds: 3, ran: true };
+  const objected = (id: string, m: number): AuditRecord => ({ ts: at(m), kind: "goal.review", ...base, id, caseSaved: true, fails: [{ id: "sc_1", evidence: "a comment, not code" }], extra: [{ file: "util.js", what: "renamed helpers" }] });
+  const vm = (records: AuditRecord[], improvedReviewer = false) =>
+    buildPanelViewModel({ setUp: true, contract: { ...defaultContract(), goal: "x" }, records, goalRecords: records, now: NOW, improvedReviewer });
+
+  it("each objection can be called right or wrong, and the user's answer shows instead of the buttons", () => {
+    const records = [objected("rev_a", 5), { ts: at(4), kind: "review.feedback", reviewId: "rev_a", index: 1, label: "wrong" } as AuditRecord];
+    const goal = renderSections(vm(records)).goal;
+    expect(goal).toContain("sc_1 isn&#39;t done: a comment, not code");
+    expect(goal).toContain('data-cmd="review.right:rev_a:0"');
+    expect(goal).toContain('data-cmd="review.wrong:rev_a:0"');
+    expect(goal).not.toContain('data-cmd="review.wrong:rev_a:1"');
+    expect(goal).toContain("you said: reviewer was wrong");
+  });
+
+  it("offers an improvement once enough verdicts of both kinds exist, then shows the kept proposal with Apply", () => {
+    const records: AuditRecord[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      records.push(objected(`rev_${i}`, 60 - i));
+      records.push({ ts: at(50 - i), kind: "review.feedback", reviewId: `rev_${i}`, index: 0, label: i < 3 ? "right" : "wrong" } as AuditRecord);
+      if (i >= 3) records.push({ ts: at(50 - i), kind: "review.feedback", reviewId: `rev_${i}`, index: 1, label: "wrong" } as AuditRecord);
+    }
+    expect(renderSections(vm(records)).goal).toContain('data-cmd="review.improve"');
+    records.push({ ts: at(5), kind: "improve.start", id: "improve_1" } as AuditRecord);
+    expect(renderSections(vm(records)).goal).toContain("Improving the reviewer");
+    records.push({ ts: at(2), kind: "improve.run", id: "improve_1", kept: true, reason: "4 right against 2 now on 4 cases it never saw", train: 5, heldOut: 4, old: { correct: 2, catches: 1 }, new: { correct: 4, catches: 1 }, lostCatches: 0, seconds: 300, calls: 9, hypotheses: ["extras the user wanted"], diff: "+ QUIET" } as AuditRecord);
+    const kept = renderSections(vm(records)).goal;
+    expect(kept).toContain("A better reviewer: 4 right against 2 now");
+    expect(kept).toContain('data-cmd="review.apply:improve_1"');
+    expect(kept).toContain("+ QUIET");
+    records.push({ ts: at(1), kind: "improve.apply", runId: "improve_1" } as AuditRecord);
+    const applied = renderSections(vm(records, true)).goal;
+    expect(applied).not.toContain("review.apply:");
+    expect(applied).toContain('data-cmd="review.undo"');
+  });
+});

@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { appendAudit, readAuditTail, readGoalRecords } from "../audit/log.js";
-import { nowIso } from "../clock.js";
+import { newId, nowIso } from "../clock.js";
 import { readContractSafe } from "../safeReaders.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalEndRecord, GoalReportRecord, GoalControlRecord, GoalReviewRecord, GoalRoundRecord, UserMessageRecord } from "../schema/audit.js";
@@ -14,6 +14,7 @@ import { evaluateReport, projectPath, userSaid, type GoalEvaluation } from "./ev
 import { CLOSING, goalBlock, goalClosingMessage, goalRoundMessage } from "./prompts.js";
 import { captureGoal } from "./capture.js";
 import { MAX_REVIEWS, reviewLines, runReview } from "./review.js";
+import { saveCase } from "./cases.js";
 import { readShellOutputs, readShrunkFiles, readTree, readUserPrompts, type TreeState } from "./record.js";
 
 /** Per user message. Only real progress keeps a run going this long: see NO_PROGRESS_ROUNDS. */
@@ -206,8 +207,13 @@ export async function submitGoalReport(root: string, input: GoalReportInput): Pr
   if (reviewsOf(seq, hash).length < MAX_REVIEWS) {
     const outcome = await runReview(root, contract);
     const chat = reportingChat(all);
+    const id = newId("rev");
+    const ts = nowIso();
+    // What it looked at is kept, so the review can be replayed later when Guardian tries to improve it.
+    const skippedCase = outcome.ran && outcome.prompt ? await saveCase(root, id, contract, { prompt: outcome.prompt, fails: outcome.fails, extra: outcome.extra }, ts).catch(() => "the case couldn't be saved") : null;
     await appendAudit(root, {
-      ts: nowIso(), kind: "goal.review", ...(chat ? { conversationId: chat } : {}), goalHash: hash, reportTs,
+      ts, kind: "goal.review", ...(chat ? { conversationId: chat } : {}), goalHash: hash, reportTs, id,
+      ...(outcome.ran ? (skippedCase ? { caseSaved: false, caseSkipped: skippedCase } : { caseSaved: true }) : {}),
       ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra,
     });
     const lines = reviewLines(outcome);

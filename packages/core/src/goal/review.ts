@@ -10,6 +10,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Contract } from "../schema/contract.js";
+import { readHarness } from "./harness.js";
 
 export interface ReviewFailure {
   id: string;
@@ -38,7 +39,7 @@ const TEXT_MAX = 300;
 const COPY_PREFIX = "gg-review-";
 const MAX_FILES = 20_000;
 const MAX_BYTES = 300 * 1024 * 1024;
-const DEP_DIRS = ["node_modules", ".venv", "venv", "vendor"];
+export const DEP_DIRS = ["node_modules", ".venv", "venv", "vendor"];
 /** Names of environment variables that look like credentials. */
 const SECRET_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|AUTH/i;
 
@@ -55,11 +56,15 @@ Be an adversary. For each item, try to prove it is NOT really done: stubs, comme
 Stay in this folder. Don't install, publish, push or use the network.
 Answer with JSON only, no prose: {"items":[{"id":"sc_1","verdict":"holds or fails","evidence":"one line"}],"extra":[{"file":"path","what":"one line"}]}`;
 
-export function reviewPrompt(contract: Pick<Contract, "goal" | "successCriteria">): string {
+/** The reviewer template in use: a test override, else the workspace's own improved version, else the built-in one. */
+export function reviewTemplate(root?: string): string {
   const override = process.env.GOAL_GUARDIAN_REVIEW_PROMPT;
-  const template = override ? fs.readFileSync(override, "utf8") : REVIEW_PROMPT;
+  return override ? fs.readFileSync(override, "utf8") : readHarness(root, "reviewer", REVIEW_PROMPT);
+}
+
+export function reviewPrompt(contract: Pick<Contract, "goal" | "successCriteria">, root?: string, template: string = reviewTemplate(root)): string {
   const items = contract.successCriteria.length ? contract.successCriteria.map((c) => `- ${c.id}: ${c.text}`).join("\n") : "- goal: the goal as stated";
-  return template.replace("{goal}", contract.goal).replace("{items}", items);
+  return template.replace("{goal}", () => contract.goal).replace("{items}", () => items);
 }
 
 /** The first balanced JSON object in the text holding an array under `key`. Models add prose and fences around it. */
@@ -97,21 +102,24 @@ export function firstObjectWith(text: string, key: string): Record<string, unkno
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim().slice(0, TEXT_MAX) : "");
 
-/** The reviewer's answer, from the agent's JSON envelope or raw text. Null when there is nothing usable. */
-export function parseReview(stdout: string): { fails: ReviewFailure[]; extra: ReviewExtra[] } | null {
-  let text = stdout;
+/** The agent's answer text from its JSON envelope, or the raw output. Null when the agent reported an error. */
+export function agentText(stdout: string): string | null {
   for (const line of stdout.trim().split("\n").reverse()) {
     try {
       const envelope = JSON.parse(line) as { result?: unknown; is_error?: unknown };
       if (envelope.is_error === true) return null;
-      if (typeof envelope.result === "string") {
-        text = envelope.result;
-        break;
-      }
+      if (typeof envelope.result === "string") return envelope.result;
     } catch {
       // not the envelope line
     }
   }
+  return stdout;
+}
+
+/** The reviewer's answer, from the agent's JSON envelope or raw text. Null when there is nothing usable. */
+export function parseReview(stdout: string): { fails: ReviewFailure[]; extra: ReviewExtra[] } | null {
+  const text = agentText(stdout);
+  if (text === null) return null;
   const answer = firstObjectWith(text, "items");
   if (!answer) return null;
   const fails = (answer.items as unknown[])
@@ -243,29 +251,44 @@ function runAgent(command: string, prompt: string, dir: string, scratch: string,
   });
 }
 
+/** Ask the headless agent once, in the given folder. Never throws. */
+export async function askAgent(prompt: string, dir: string, scratch: string, budgetMs: number): Promise<{ ok: true; stdout: string } | { ok: false; reason: string }> {
+  // A review's own agent must never review itself.
+  if (process.env.GOAL_GUARDIAN_REVIEWING) return { ok: false, reason: "already inside a review" };
+  const command = resolveReviewer();
+  if (!command) return { ok: false, reason: "cursor-agent isn't installed" };
+  return runAgent(command, prompt, dir, scratch, budgetMs);
+}
+
+/** One review of a prepared copy, with a given prompt. Never throws. */
+export async function reviewIn(dir: string, scratch: string, prompt: string, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome> {
+  const started = Date.now();
+  const seconds = (): number => Math.round((Date.now() - started) / 1000);
+  const run = await askAgent(prompt, dir, scratch, budgetMs);
+  if (!run.ok) return { ran: false, reason: run.reason, fails: [], extra: [], seconds: seconds() };
+  const parsed = parseReview(run.stdout);
+  if (!parsed) return { ran: false, reason: "the reviewer's answer couldn't be read", fails: [], extra: [], seconds: seconds() };
+  return { ran: true, ...parsed, seconds: seconds() };
+}
+
 /** Run one review of the project against the goal. Never throws. */
-export async function runReview(root: string, contract: Pick<Contract, "goal" | "successCriteria">, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome> {
+export async function runReview(root: string, contract: Pick<Contract, "goal" | "successCriteria">, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome & { prompt?: string }> {
   const started = Date.now();
   const seconds = (): number => Math.round((Date.now() - started) / 1000);
   const skipped = (reason: string): ReviewOutcome => ({ ran: false, reason, fails: [], extra: [], seconds: seconds() });
-  // A review's own agent must never review itself.
   if (process.env.GOAL_GUARDIAN_REVIEWING) return skipped("already inside a review");
-  const command = resolveReviewer();
-  if (!command) return skipped("cursor-agent isn't installed");
+  if (!resolveReviewer()) return skipped("cursor-agent isn't installed");
   let prompt: string;
   try {
-    prompt = reviewPrompt(contract);
+    prompt = reviewPrompt(contract, root);
   } catch {
     return skipped("the review prompt couldn't be read");
   }
   const copy = await makeReviewCopy(root);
   if (!copy) return skipped("the project isn't a git repository Guardian can copy");
   try {
-    const run = await runAgent(command, prompt, copy.dir, copy.scratch, budgetMs);
-    if (!run.ok) return skipped(run.reason);
-    const parsed = parseReview(run.stdout);
-    if (!parsed) return skipped("the reviewer's answer couldn't be read");
-    return { ran: true, ...parsed, seconds: seconds() };
+    const outcome = await reviewIn(copy.dir, copy.scratch, prompt, budgetMs);
+    return { ...outcome, seconds: seconds(), prompt };
   } finally {
     await fsp.rm(copy.scratch, { recursive: true, force: true }).catch(() => undefined);
   }

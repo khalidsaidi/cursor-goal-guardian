@@ -17,6 +17,9 @@ it wanders, and shows you the story. It never blocks, and it never nags.
   and long sessions can't erase it.
 - **An agent that finishes.** When it stops early, Guardian sends it back with
   your goal and what's still open, until each item is backed by its record.
+- **A reviewer that learns this project.** Mark each reviewer objection right or wrong.
+  Once enough have a verdict, Guardian can try a better version of its reviewer, test it
+  on your own past cases it didn't learn from, and offer it for you to apply or undo.
 - **The story, whenever you want it.** "Where were we?" is a glance at the
   panel or a `/guardian` in chat — never an archaeology dig through history.
 

@@ -1,6 +1,8 @@
 import { goalHash, goalPhaseOf } from "../goal/loop.js";
 import type { Contract } from "../schema/contract.js";
-import type { AuditRecord } from "../schema/audit.js";
+import type { AuditRecord, GoalReviewRecord, ImproveRunRecord } from "../schema/audit.js";
+import { enoughToImprove, improveRunning, reviewLabels, type ReviewLabel } from "../goal/improve.js";
+import { reviewLines } from "../goal/review.js";
 
 export interface TourStep {
   id: "connect" | "ask" | "steer" | "center";
@@ -40,6 +42,16 @@ export interface PanelViewModel {
     seconds: number | null;
     tokens: number | null;
   } | null;
+  /** Recent reviews that objected, each objection open to the user's verdict. */
+  reviews: Array<{ id: string; lines: string[]; feedback: Array<ReviewLabel | null>; label: { label: ReviewLabel; source: "user" | "fixed" | "overruled" } | null }>;
+  /** Guardian improving its own reviewer from those verdicts. */
+  improve: {
+    labelled: number;
+    ready: boolean;
+    running: boolean;
+    usingImproved: boolean;
+    latest: { id: string; kept: boolean; reason: string; heldOut: number; old?: { correct: number }; new?: { correct: number }; diff: string; hypotheses: string[]; applied: boolean } | null;
+  };
   /** Cursor doesn't load project hooks in an untrusted workspace. */
   hooksDisabled: boolean;
   /** Where the goal stands, for the panel's controls. */
@@ -56,6 +68,8 @@ export interface PanelInputs {
   contract: Contract;
   records: AuditRecord[];
   now: Date;
+  /** The workspace runs its own improved reviewer instead of the built-in one. */
+  improvedReviewer?: boolean;
   /** Host memory: the Command Center has been opened at least once here. */
   commandCenterUsed?: boolean;
   /** Host memory: the user hid the get-started tour. */
@@ -151,6 +165,39 @@ function provedItems(records: AuditRecord[], contract: Contract): Set<string> {
   return new Set();
 }
 
+const REVIEWS_SHOWN = 3;
+
+function buildReviews(records: AuditRecord[]): PanelViewModel["reviews"] {
+  const labels = reviewLabels(records);
+  const feedback = new Map<string, Map<number, ReviewLabel>>();
+  for (const r of records) if (r.kind === "review.feedback") feedback.set(r.reviewId, (feedback.get(r.reviewId) ?? new Map()).set(r.index, r.label));
+  return records
+    .filter((r): r is GoalReviewRecord & { id: string } => r.kind === "goal.review" && r.ran && Boolean(r.id) && r.fails.length + r.extra.length > 0)
+    .slice(-REVIEWS_SHOWN)
+    .reverse()
+    .map((r) => {
+      const lines = reviewLines(r);
+      return { id: r.id, lines, feedback: lines.map((_, i) => feedback.get(r.id)?.get(i) ?? null), label: labels.get(r.id) ?? null };
+    });
+}
+
+function buildImprove(records: AuditRecord[], usingImproved: boolean): PanelViewModel["improve"] {
+  const saved = new Set(records.filter((r): r is GoalReviewRecord => r.kind === "goal.review" && r.caseSaved === true && Boolean(r.id)).map((r) => r.id!));
+  const labelled = [...reviewLabels(records)].filter(([id]) => saved.has(id)).map(([, l]) => l);
+  const runs = records.filter((r): r is ImproveRunRecord => r.kind === "improve.run");
+  const last = runs[runs.length - 1];
+  const applies = records.filter((r) => r.kind === "improve.apply" || r.kind === "improve.undo");
+  const lastApply = applies[applies.length - 1];
+  const applied = Boolean(last && usingImproved && lastApply?.kind === "improve.apply" && lastApply.runId === last.id);
+  return {
+    labelled: labelled.length,
+    ready: enoughToImprove(labelled),
+    running: improveRunning(records),
+    usingImproved,
+    latest: last ? { id: last.id, kept: last.kept, reason: last.reason, heldOut: last.heldOut, ...(last.old ? { old: last.old } : {}), ...(last.new ? { new: last.new } : {}), diff: last.diff, hypotheses: last.hypotheses, applied } : null,
+  };
+}
+
 /** Pure projection: everything the panel renders, computed from disk artifacts. */
 export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
   const { contract, records, now } = inputs;
@@ -163,6 +210,8 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       successCriteria: [],
       status: { lamp: "idle", word: "no goal" },
       goalRun: null,
+      reviews: [],
+      improve: { labelled: 0, ready: false, running: false, usingImproved: false, latest: null },
       goalPhase: "none",
       hooksDisabled: inputs.workspaceTrusted === false,
       tour: buildTour(inputs),
@@ -182,6 +231,8 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
     successCriteria: contract.successCriteria.map((c) => ({ ...c, done: proved.has(c.id) })),
     status: goalStatus(goalPhase, goalRun),
     goalRun,
+    reviews: buildReviews(goalRecords),
+    improve: buildImprove(goalRecords, inputs.improvedReviewer === true),
     hooksDisabled: inputs.workspaceTrusted === false,
     goalPhase,
     tour: buildTour(inputs),

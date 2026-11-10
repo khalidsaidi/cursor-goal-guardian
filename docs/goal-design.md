@@ -37,6 +37,14 @@ No model and no assumption about language or tools. The agent names the proof; G
 
 When the record backs every item, one review runs before "complete" is accepted (`packages/core/src/goal/review.ts`). `cursor-agent`, on the user's own login and default model, runs headless in a throwaway copy (a shared clone with the working tree laid over it, no `.cursor`, credentials stripped except Cursor's own). It is asked to prove each item isn't done and to list changes no item needs, and answers in JSON. Its objections go back through the same loop. There are at most 2 reviews per run; after that the record decides and a standing objection goes on `goal.end` for the user. No reviewer, an error, unreadable output or more than 90 s means skipped, recorded as `goal.review` with `ran: false`. For tests, `GOAL_GUARDIAN_REVIEWER` replaces the binary and `GOAL_GUARDIAN_REVIEW_PROMPT` the prompt.
 
+## Learning from this workspace
+
+Every review that ran is saved as a case: goal, items, base commit, the work as a binary patch plus new files, the prompt and the verdict (`packages/core/src/goal/cases.ts`). Labels come from what people did (`improve.ts`, `reviewLabels`): the user's verdict on an objection wins; otherwise an objection the agent fixed before a passing review counts as right, and one the user overrode by marking the goal done counts as wrong. The agent arguing back is not a label.
+
+`improveReviewer` follows RRSI's regularized loop in our own code: cases split by a stable hash (a third held out), one proposer call with the training cases and the history of rejected ideas, an edit budget of 12 lines with a hypothesis per change, replay of held-out cases in a rebuilt copy with old and new prompts, and a keep rule: beat the current version by a noise margin (one case, or a tenth of the held-out set) and lose no catch. A kept version is applied only by the user, into `.cursor/goal-guardian/harness/reviewer.md`. The harness list (`harness.ts`) is meant to take the rule and the send-back text too; only the reviewer is wired.
+
+Tested with a stand-in agent only (`packages/core/test/improve.test.ts`). It hasn't run on real labelled cases yet.
+
 ## Decisions
 
 - **Edits from another chat or Tab make proof stale.** The code really did change, and the rerun is cheap. Parallel chats can use up rounds this way; the cap ends it.

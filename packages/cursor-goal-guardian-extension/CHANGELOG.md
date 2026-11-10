@@ -6,6 +6,12 @@
 
 When the agent reports the goal complete and Guardian's record backs every item, one independent review runs before Guardian accepts it. A separate headless agent on your own Cursor login and default model (`cursor-agent`) works in a throwaway copy of the project. It tries to prove each "done when" item isn't really done, and lists changes no item needs. Its objections go back to the agent as part of the same loop, at most twice per run. After that the record decides, and any objection still standing is shown on the panel as the reviewer's opinion. Without `cursor-agent`, or if the review fails or takes longer than 90 seconds, it's skipped and noted, never blocking. Each review costs one agent request on your Cursor plan.
 
+### The reviewer learns from this workspace
+
+Each review that runs saves a copy of what it looked at under `.cursor/goal-guardian/cases/` (kept out of git; the newest 200, none over 2 MB). Each objection on the panel has **Right call** and **Reviewer was wrong**. Guardian also counts an objection the agent then fixed as right, and one you overrode by marking the goal done as wrong.
+
+Once at least 8 reviews have a verdict, with both kinds, the panel offers **Improve the reviewer**. One agent call proposes a small edit to the reviewer's instructions: at most 12 changed lines, each tagged with the idea it tests, written with earlier rejected ideas in view. Guardian replays a third of your saved cases, which the proposer never sees, with both versions. It keeps the edit only if it gets more of them right by a noise margin and misses nothing the current reviewer caught. A kept edit waits with its diff and scores until you press **Apply**. **Undo** returns to the built-in reviewer. Nothing runs unless you start it. The method follows Google Research's RRSI, written in our own code.
+
 ### Removed
 - AI review. Scored on real agent runs for the first time, it found no real drift, so it no
   longer runs or spends your plan. Older workspaces keep working; its old settings are ignored.
