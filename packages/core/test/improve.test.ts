@@ -4,9 +4,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  appendAudit, applyImprovement, candidatePath, changedLines, defaultContract, getGuardianPaths, harnessPath, improveReviewer, isHeldOut, keepDecision,
-  loadCases, materializeCase, noiseMargin, nowIso, readAuditTail, reviewLabels, reviewTemplate, saveCase, undoImprovement, REVIEW_PROMPT,
-  type AuditRecord,
+  appendAudit, applyImprovement, candidatePath, defaultContract, estimateImprove, getGuardianPaths, harnessPath, improveReviewer, isHeldOut,
+  labelledCases, loadCases, materializeCase, nowIso, readAuditTail, replayCase, reviewLabels, reviewTemplate, saveCase, undoImprovement, REVIEW_PROMPT,
+  type AuditRecord, type RsiPaths,
 } from "../src/index.js";
 
 const made: string[] = [];
@@ -108,7 +108,7 @@ describe("labels come from what people did", () => {
   });
 });
 
-describe("the split and the keep rule", () => {
+describe("the split and the cost", () => {
   it("a case always lands on the same side, about a third held out", () => {
     const ids = Array.from({ length: 600 }, (_, i) => `rev_${i}`);
     expect(ids.map(isHeldOut)).toEqual(ids.map(isHeldOut));
@@ -117,24 +117,12 @@ describe("the split and the keep rule", () => {
     expect(share).toBeLessThan(0.42);
   });
 
-  const runs = (flags: boolean[], labels: Array<"right" | "wrong">) => flags.map((flagged, i) => ({ caseId: `c${i}`, label: labels[i]!, flagged }));
-  const labels: Array<"right" | "wrong"> = ["right", "right", "wrong", "wrong", "wrong"];
-
-  it("worse or equal is not kept; better by the noise margin is; a lost catch never is", () => {
-    const old = runs([true, true, true, true, false], labels);
-    expect(keepDecision(old, runs([true, false, true, true, false], labels)).keep).toBe(false);
-    expect(keepDecision(old, runs([true, true, true, false, true], labels)).keep).toBe(false);
-    const better = keepDecision(old, runs([true, true, false, false, false], labels));
-    expect(better).toMatchObject({ keep: true, old: { correct: 3, catches: 2 }, new: { correct: 5, catches: 2 } });
-    const lost = keepDecision(old, runs([true, false, false, false, false], labels));
-    expect(lost).toMatchObject({ keep: false, lostCatches: 1 });
-    expect(noiseMargin(5)).toBe(1);
-    expect(noiseMargin(25)).toBe(3);
-  });
-
-  it("counts changed lines both ways", () => {
-    expect(changedLines("a\nb\nc", "a\nb\nc")).toBe(0);
-    expect(changedLines("a\nb\nc", "a\nB\nc\nd")).toBe(3);
+  it("the cost shown before a run counts held-out reviews twice and every candidate's evolve reviews", () => {
+    const cases = Array.from({ length: 12 }, (_, i) => ({ reviewCase: { id: `rev_${i}` }, label: "right", source: "user" })) as never;
+    const est = estimateImprove(cases, { T: 2, m: 2, k: 1, repair_rounds: 2 });
+    expect(est.evolve + est.heldOut).toBe(12);
+    expect(est.reviews).toBe(2 * est.heldOut + est.evolve * 5);
+    expect(est.searchCallsMax).toBe(2 * (2 + 2 * 43));
   });
 });
 
@@ -160,72 +148,115 @@ describe("applying and undoing an improvement", () => {
   });
 });
 
-describe("one improvement try, start to finish", () => {
-  /**
-   * A stand-in for the headless agent. As the proposer it adds a QUIET line to the instructions it was given; as a
-   * reviewer it objects unless its instructions hold that line.
-   */
-  async function stub(proposerAnswer: "good" | "drops-placeholder"): Promise<string> {
-    const dir = await tmp("gg-improve-stub-");
-    const file = path.join(dir, "agent");
-    await fs.writeFile(
-      file,
-      `#!/usr/bin/env node
-const prompt = process.argv[process.argv.indexOf("-p") + 1];
+const REPO_ROOT = path.resolve(__dirname, "../../..");
+const HOOK_CLI = path.join(REPO_ROOT, "packages", "hook", "dist", "cli.cjs");
+
+/**
+ * A stand-in for the headless Cursor agent, speaking each protocol it meets: Guardian's reviewer, and RRSI's
+ * analyst, digester, proposer and critic. As the proposer it adds a QUIET line to the reviewer; as a reviewer it
+ * objects unless its instructions hold that line.
+ */
+async function stubAgent(): Promise<string> {
+  const dir = await tmp("gg-improve-stub-");
+  const file = path.join(dir, "agent");
+  await fs.writeFile(
+    file,
+    `#!/usr/bin/env node
+const fs = require("fs"), path = require("path");
+const a = process.argv.slice(2);
+let prompt = a[a.indexOf("-p") + 1];
+const ws = a[a.indexOf("--workspace") + 1];
+if (prompt.startsWith("Read task.md")) prompt = fs.readFileSync(path.join(ws, "task.md"), "utf8");
 const say = (o) => process.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify(o) }) + "\\n");
-if (prompt.startsWith("You improve the instructions")) {
-  const current = prompt.split("<instructions>\\n")[1].split("\\n</instructions>")[0];
-  const next = ${proposerAnswer === "good" ? '`${current}\\nQUIET: only object to what an item needs.`' : '"QUIET and nothing else"'};
-  say({ changes: [{ hypothesis: "most objections here were about extras the user wanted" }], prompt: next });
-} else if (prompt.includes("QUIET")) say({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [] });
+if (prompt.includes("You are a harness engineer agent")) {
+  const log = prompt.slice(prompt.lastIndexOf("=== INTERACTION LOG ==="));
+  if (!log.includes('"action": "edit_file"')) say({ action: "edit_file", path: "reviewer.md", old: "Stay in this folder.", new: "QUIET: only object to what an item needs.\\nStay in this folder." });
+  else say({ action: "done", summary: "object only to what an item needs", edits: [{ id: "C1", component: "prompt", hypothesis: "most objections here were overruled", targets_mode: "false flags", why_not_lower_lever: "it is a prose rule", trigger_condition: "every review", predicted_affected: ["x"], retroactive_check: "overruled cases pass; nothing caught is lost; general", regression_risk: "a real gap missed" }] });
+} else if (prompt.includes("You are a strict reviewer of harness")) say({ verdict: "accept", reasons: [], risk_notes: [] });
+else if (prompt.includes("You are the batch analyst")) say({ action: "report", failure_modes: [{ mode: "false-flag", description: "objects to good work", n_tasks: 3 }], capability_gaps: [], success_habits: [] });
+else if (prompt.includes("You are a trajectory digester")) say({ action: "return", digest: { summary: "flagged good work" } });
+else if (prompt.includes("QUIET")) say({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [] });
 else say({ items: [{ id: "sc_1", verdict: "fails", evidence: "nope" }], extra: [] });
 `,
-    );
-    await fs.chmod(file, 0o755);
-    return file;
-  }
+  );
+  await fs.chmod(file, 0o755);
+  return file;
+}
 
-  /** Cases where the reviewer objected; held-out ones are all labelled wrong, so a quieter reviewer scores better. */
-  async function labelledWorkspace(): Promise<string> {
-    const root = await repo();
-    let rights = 0;
-    for (let i = 0; i < 12; i += 1) {
-      const id = `rev_${i}`;
-      await saveCase(root, id, contract, { prompt: REVIEW_PROMPT, ...OBJECTION }, nowIso());
-      await appendAudit(root, review(id, `h${i}`));
-      const label = isHeldOut(id) || rights >= 3 ? "wrong" : "right";
-      if (label === "right") rights += 1;
-      await appendAudit(root, { ts: nowIso(), kind: "review.feedback", reviewId: id, index: 0, label });
-      await appendAudit(root, { ts: nowIso(), kind: "review.feedback", reviewId: id, index: 1, label });
-      await tick();
-    }
-    expect(rights).toBeGreaterThan(0);
-    return root;
-  }
+const PYTHON = process.env.GOAL_GUARDIAN_TEST_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
+/** The stand-in agents are scripts run through their shebang line, which Windows doesn't honour. */
+const posixOnly = process.platform === "win32";
 
-  it("keeps a proposal that does better on cases it never saw, and saves it for the user to apply", async () => {
+const rsiPaths = (): RsiPaths => ({
+  python: PYTHON,
+  rrsiDir: path.join(REPO_ROOT, "third_party", "rrsi"),
+  domainDir: path.join(REPO_ROOT, "packages", "rsi", "cgg"),
+  replay: [process.execPath, HOOK_CLI, "replay-review"],
+});
+
+/** Cases where the reviewer objected; held-out ones are all labelled wrong, so a quieter reviewer scores better. */
+async function labelledWorkspace(): Promise<string> {
+  const root = await repo();
+  let rights = 0;
+  for (let i = 0; i < 12; i += 1) {
+    const id = `rev_${i}`;
+    await saveCase(root, id, contract, { prompt: REVIEW_PROMPT, ...OBJECTION }, nowIso());
+    await appendAudit(root, review(id, `h${i}`));
+    const label = isHeldOut(id) || rights >= 3 ? "wrong" : "right";
+    if (label === "right") rights += 1;
+    await appendAudit(root, { ts: nowIso(), kind: "review.feedback", reviewId: id, index: 0, label });
+    await appendAudit(root, { ts: nowIso(), kind: "review.feedback", reviewId: id, index: 1, label });
+    await tick();
+  }
+  expect(rights).toBeGreaterThan(0);
+  return root;
+}
+
+describe.skipIf(posixOnly)("Guardian's RRSI domain", () => {
+  it("passes its own Python checks against a temp checkout and a fake agent", () => {
+    const out = execFileSync(PYTHON, ["-m", "unittest", "tests/test_cgg_domain.py"], {
+      cwd: path.join(REPO_ROOT, "packages", "rsi"),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    expect(out).toBe("");
+  }, 120_000);
+});
+
+describe.skipIf(posixOnly)("replaying one saved review, as RRSI does", () => {
+  it("re-runs a case with another prompt and says whether it flagged", async () => {
     const root = await labelledWorkspace();
-    process.env.GOAL_GUARDIAN_REVIEWER = await stub("good");
-    const result = await improveReviewer(root, 20_000);
-    expect(result.status).toBe("done");
-    expect(result.run).toMatchObject({ kept: true });
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    const first = await replayCase(root, "rev_0", REVIEW_PROMPT);
+    expect(first, JSON.stringify(first)).toMatchObject({ ran: true, flagged: true });
+    expect(await replayCase(root, "rev_0", `${REVIEW_PROMPT}\nQUIET`)).toMatchObject({ ran: true, flagged: false });
+    expect(await replayCase(root, "nope", REVIEW_PROMPT)).toMatchObject({ ran: false, flagged: null });
+  }, 60_000);
+});
+
+describe.skipIf(posixOnly)("one improvement try with Google's RRSI, start to finish", () => {
+  it("RRSI's winner does better on cases it never saw, and waits for the user to apply it", async () => {
+    const root = await labelledWorkspace();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    const result = await improveReviewer(root, rsiPaths());
+    const log = await fs.readFile(path.join(getGuardianPaths(root).dir, "rsi", "rrsi.log"), "utf8").catch(() => "");
+    expect(result.status, log.slice(-3000)).toBe("done");
+    expect(result.run, `${result.run?.reason}\n${log.slice(-3000)}`).toMatchObject({ kept: true });
     expect(result.run!.new!.correct).toBeGreaterThan(result.run!.old!.correct);
     expect(result.run!.diff).toContain("+ QUIET");
+    expect(result.run!.hypotheses.join(" ")).toContain("overruled");
     expect(await fs.readFile(candidatePath(root, result.run!.id), "utf8")).toContain("QUIET");
+    // RRSI's own record of the search is there to read.
+    expect(log).toMatch(/baseline/);
     // Nothing changes until the user applies it.
     expect(reviewTemplate(root)).toBe(REVIEW_PROMPT);
-  }, 60_000);
-
-  it("rejects a proposal that breaks the template, and remembers it", async () => {
-    const root = await labelledWorkspace();
-    process.env.GOAL_GUARDIAN_REVIEWER = await stub("drops-placeholder");
-    const result = await improveReviewer(root, 20_000);
-    expect(result.run).toMatchObject({ kept: false, reason: "the proposal dropped {goal} or {items}" });
-  }, 60_000);
+    const kinds = (await readAuditTail(root, 500)).map((r) => r.kind);
+    expect(kinds).toEqual(expect.arrayContaining(["improve.start", "improve.progress", "improve.run"]));
+  }, 300_000);
 
   it("won't start without enough labelled cases of both kinds", async () => {
     const root = await repo();
-    process.env.GOAL_GUARDIAN_REVIEWER = await stub("good");
-    expect((await improveReviewer(root)).status).toBe("not-enough");
+    expect((await improveReviewer(root, rsiPaths())).status).toBe("not-enough");
+    expect(await labelledCases(root)).toEqual([]);
   });
 });

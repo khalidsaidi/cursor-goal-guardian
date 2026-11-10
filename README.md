@@ -65,3 +65,9 @@ publishes to Open VSX (Cursor's registry — no other marketplace).
 v0.4.x (permit-era) is preserved at tag `v0.4.11-final`; the old A/B evaluation
 harness lives on branch `legacy/ab-study`, to be rebuilt on v2 telemetry.
 Migration from 0.4.x workspaces is automatic, with backups.
+
+## Third-party software
+
+`third_party/rrsi` is Google Research's [RRSI](https://github.com/google-research/rrsi) (Apache-2.0), vendored
+unmodified; Guardian's domain for it is `packages/rsi`. See `NOTICE`.
+

@@ -27,7 +27,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     onCommand: async (command) => {
       if (command === "goal.pause" || command === "goal.resume" || command === "goal.done" || command === "goal.work") {
         if (root) await applyGoalCommand(root, command);
-      } else if (root && command.startsWith("review.")) await applyReviewCommand(root, command, () => controller.refresh());
+      } else if (root && command.startsWith("review.")) await applyReviewCommand(root, command, () => controller.refresh(), context.extensionPath);
       else if (command === "dismissTour") await context.workspaceState.update("goalGuardian.tour.dismissed", true);
       else if (command === "editGoal") {
         if (!root) return;

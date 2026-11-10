@@ -37,6 +37,15 @@ jobs:
       # agent scenarios are skipped automatically in CI (no cursor-agent,
       # and the harness gates on GG_E2E_CONFIRM there).
       - run: pnpm --filter @goal-guardian/e2e test:e2e:offline
+      # The shipped VSIX for this machine, with its pinned, checksum-verified Python: RRSI's
+      # self-improvement runs on that interpreter, so it has to start on every architecture.
+      - run: node scripts/package-extension.js
+      - name: bundled Python runs RRSI's imports
+        shell: bash
+        run: |
+          cd packages/cursor-goal-guardian-extension
+          if [ -x bin/python/python.exe ]; then PY=bin/python/python.exe; else PY=bin/python/bin/python3; fi
+          (cd rsi/rrsi && "../../$PY" -c "import rrsi.loop, rrsi.propose, rrsi.critic, rrsi.selection; print('rrsi imports ok')")
       # Second x64 proof for macOS, independent of Intel-runner queues: the
       # arm64 runner cross-compiles the darwin-x64 binaries and EXECUTES them
       # under Rosetta — a real run of the shipped artifact, not just a build.

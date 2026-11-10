@@ -5,7 +5,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordShellFailure, recordShellOutput, recordUserPrompt, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
+import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordShellFailure, recordShellOutput, recordUserPrompt, replayCase, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
 
 /** The stop and prompt hooks answer in their own shapes, not the permission shape. */
 type HookOutput = HookResponse | { followup_message?: string } | { continue: true; additional_context?: string } | { additional_context?: string };
@@ -172,7 +172,25 @@ function hookJson(value: unknown): string {
   return JSON.stringify(value).replace(/[\u0080-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 }
 
+/**
+ * `goal-guardian-hook replay-review <workspace> <caseId> <promptFile>`: re-run one saved review with another prompt
+ * and print the outcome as JSON. Google's RRSI calls this, through Guardian's domain, to score candidate prompts.
+ */
+async function replayReview(args: string[]): Promise<void> {
+  const [root, caseId, promptFile] = args;
+  let out: Record<string, unknown>;
+  try {
+    if (!root || !caseId || !promptFile) throw new Error("usage: replay-review <workspace> <caseId> <promptFile>");
+    const template = fs.readFileSync(promptFile, "utf8");
+    out = { ...(await replayCase(root, caseId, template)) };
+  } catch (err) {
+    out = { ran: false, flagged: null, reason: err instanceof Error ? err.message : String(err), fails: [], extra: [], seconds: 0 };
+  }
+  process.stdout.write(`${JSON.stringify(out)}\n`);
+}
+
 async function main(): Promise<void> {
+  if (process.argv[2] === "replay-review") return replayReview(process.argv.slice(3));
   let response: HookOutput = advisoryAllow();
   try {
     const raw = await readAllStdin();

@@ -1,27 +1,25 @@
 /**
- * Guardian improves its own reviewer from what happened in this workspace. The method follows Google Research's
- * RRSI (regularized recursive self-improvement), written here in our own terms: learn only from labelled outcomes,
- * propose a small tagged edit with the history of rejected ideas in view, replay the user's own cases that the
- * proposer never saw, and keep the edit only if it clears a noise margin without losing a catch. The user applies it.
+ * Guardian improves its own reviewer from what happened in this workspace, with Google Research's RRSI (Regularized
+ * Recursive Self-Improvement), bundled unmodified in third_party/rrsi. Guardian supplies what RRSI needs: labelled
+ * cases (from what people did after each review), a domain (packages/rsi/cgg) that replays a review with a candidate
+ * prompt, and the user's own model for RRSI's search roles. The user applies a result, or doesn't.
  */
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { appendAudit, readAuditTail } from "../audit/log.js";
 import { newId, nowIso } from "../clock.js";
 import type { AuditRecord, GoalReviewRecord, ImproveRunRecord, ReviewFeedbackRecord } from "../schema/audit.js";
-import { casePatchText, loadCases, materializeCase, type ReviewCase } from "./cases.js";
+import { loadCases, materializeCase, type ReviewCase } from "./cases.js";
 import { harnessDir, harnessUsable, removeHarness, writeHarness } from "./harness.js";
-import { agentText, askAgent, firstObjectWith, REVIEW_BUDGET_MS, reviewIn, reviewPrompt, reviewTemplate } from "./review.js";
+import { REVIEW_BUDGET_MS, reviewIn, reviewPrompt, reviewTemplate, type ReviewOutcome } from "./review.js";
 
 /** Labelled cases needed, of both kinds, before an improvement is worth trying. */
 export const MIN_LABELLED = 8;
 /** One case in this many is held out from the proposer and used only to score. */
 export const HELD_OUT_EVERY = 3;
-/** The most lines one proposal may change: small, testable steps. */
-export const MAX_CHANGED_LINES = 12;
-const PROPOSER_BUDGET_MS = 120_000;
 const AUDIT_WINDOW = 50_000;
 
 export type ReviewLabel = "right" | "wrong";
@@ -76,17 +74,6 @@ export function isHeldOut(caseId: string): boolean {
   return createHash("sha256").update(caseId).digest()[0]! % HELD_OUT_EVERY === 0;
 }
 
-/** Lines one text has that the other doesn't, counted both ways. */
-export function changedLines(before: string, after: string): number {
-  const count = (lines: string[]): Map<string, number> => lines.reduce((m, l) => m.set(l, (m.get(l) ?? 0) + 1), new Map<string, number>());
-  const a = count(before.split("\n"));
-  const b = count(after.split("\n"));
-  let n = 0;
-  for (const [line, k] of a) n += Math.max(0, k - (b.get(line) ?? 0));
-  for (const [line, k] of b) n += Math.max(0, k - (a.get(line) ?? 0));
-  return n;
-}
-
 /** A diff readable on the panel: removed lines then added ones. */
 export function lineDiff(before: string, after: string): string {
   const a = new Set(before.split("\n"));
@@ -97,37 +84,6 @@ export function lineDiff(before: string, after: string): string {
 export interface ReplayScore {
   correct: number;
   catches: number;
-}
-export interface ReplayResult {
-  caseId: string;
-  label: ReviewLabel;
-  flagged: boolean;
-}
-
-export function scoreReplays(results: ReplayResult[]): ReplayScore {
-  return {
-    correct: results.filter((r) => (r.label === "right") === r.flagged).length,
-    catches: results.filter((r) => r.label === "right" && r.flagged).length,
-  };
-}
-
-/** Run-to-run noise: a margin of one case, or a tenth of the held-out set when that's bigger. */
-export function noiseMargin(heldOut: number): number {
-  return Math.max(1, Math.ceil(heldOut / 10));
-}
-
-/** Keep a proposal only if it beats the current version by the noise margin and drops no catch the current one made. */
-export function keepDecision(oldRuns: ReplayResult[], newRuns: ReplayResult[]): { keep: boolean; reason: string; lostCatches: number; old: ReplayScore; new: ReplayScore } {
-  const old = scoreReplays(oldRuns);
-  const neu = scoreReplays(newRuns);
-  const newFlag = new Map(newRuns.map((r) => [r.caseId, r.flagged]));
-  const lostCatches = oldRuns.filter((r) => r.label === "right" && r.flagged && newFlag.get(r.caseId) === false).length;
-  const margin = noiseMargin(oldRuns.length);
-  if (lostCatches > 0) return { keep: false, reason: `it missed ${lostCatches} problem${lostCatches === 1 ? "" : "s"} the current reviewer caught`, lostCatches, old, new: neu };
-  if (neu.correct - old.correct < margin) {
-    return { keep: false, reason: `${neu.correct} right against ${old.correct} now, short of the ${margin}-case margin for noise`, lostCatches, old, new: neu };
-  }
-  return { keep: true, reason: `${neu.correct} right against ${old.correct} now on ${oldRuns.length} cases it never saw`, lostCatches, old, new: neu };
 }
 
 /** Labelled cases, newest last. */
@@ -145,74 +101,134 @@ export function enoughToImprove(cases: Array<Pick<LabelledCase, "label">>): bool
   return cases.length >= MIN_LABELLED && cases.some((c) => c.label === "right") && cases.some((c) => c.label === "wrong");
 }
 
-interface Proposal {
-  prompt: string;
-  hypotheses: string[];
-}
-
-/** One proposer call: the current prompt, the training cases with labels, and what was already tried and rejected. */
-async function propose(root: string, current: string, train: LabelledCase[], rejected: ImproveRunRecord[]): Promise<Proposal | { error: string }> {
-  const cases = await Promise.all(
-    train.map(async (c) => ({
-      goal: c.reviewCase.goal,
-      items: c.reviewCase.items,
-      reviewer_objected: c.reviewCase.flagged,
-      objections: [...c.reviewCase.fails.map((f) => `${f.id}: ${f.evidence}`), ...c.reviewCase.extra.map((e) => `extra ${e.file}: ${e.what}`)],
-      verdict_on_the_reviewer: c.label === "right" ? "right to object" : "wrong to object",
-      work: await casePatchText(root, c.reviewCase.id),
-    })),
-  );
-  const history = rejected.slice(-6).map((r) => ({ hypotheses: r.hypotheses, why_rejected: r.reason, diff: r.diff.slice(0, 1500) }));
-  const ask = `You improve the instructions of an automated reviewer. The reviewer checks an AI coding agent's claim that a user's goal is done: it tries to prove each "done when" item isn't really done, and lists changes no item needs. In this workspace it has been right to object sometimes and wrong at other times. Your job: change its instructions so it objects when it should and stays quiet when it shouldn't.
-
-Current instructions (keep the placeholders {goal} and {items} exactly as they are):
-<instructions>
-${current}
-</instructions>
-
-Cases from this workspace, with what the people involved concluded about the reviewer:
-${JSON.stringify(cases, null, 1)}
-
-Ideas already tried and rejected, with why (don't repeat them):
-${history.length ? JSON.stringify(history, null, 1) : "none yet"}
-
-Rules: change at most ${MAX_CHANGED_LINES} lines in total. Make each change test one idea, and name that idea as a hypothesis: what in the cases suggests it, and why it should help. General guidance only: no project names, file names, languages or tools from these cases. Don't change the answer format.
-Answer with JSON only: {"changes":[{"hypothesis":"one sentence"}],"prompt":"the full new instructions"}`;
-  const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), "gg-propose-"));
+/** Re-run one saved review with another prompt. Guardian's binary exposes this so RRSI can call it. Never throws. */
+export async function replayCase(root: string, caseId: string, template: string, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome & { flagged: boolean | null }> {
+  const c = (await loadCases(root)).find((x) => x.id === caseId);
+  if (!c) return { ran: false, reason: "no such case", fails: [], extra: [], seconds: 0, flagged: null };
+  const copy = await materializeCase(root, c);
+  if (!copy) return { ran: false, reason: "the case's work no longer applies to its commit", fails: [], extra: [], seconds: 0, flagged: null };
   try {
-    const dir = path.join(scratch, "ws");
-    await fsp.mkdir(dir);
-    const run = await askAgent(ask, dir, scratch, PROPOSER_BUDGET_MS);
-    if (!run.ok) return { error: run.reason };
-    const text = agentText(run.stdout);
-    const answer = text ? firstObjectWith(text, "changes") : null;
-    const prompt = typeof answer?.prompt === "string" ? answer.prompt : "";
-    const hypotheses = ((answer?.changes as unknown[]) ?? []).map((c) => String((c as { hypothesis?: unknown })?.hypothesis ?? "").trim()).filter(Boolean);
-    if (!prompt) return { error: "the proposer's answer couldn't be read" };
-    if (!harnessUsable("reviewer", prompt)) return { error: "the proposal dropped {goal} or {items}" };
-    if (!hypotheses.length) return { error: "the proposal named no hypothesis" };
-    if (changedLines(current, prompt) > MAX_CHANGED_LINES) return { error: `the proposal changed more than ${MAX_CHANGED_LINES} lines` };
-    if (changedLines(current, prompt) === 0) return { error: "the proposal changed nothing" };
-    return { prompt, hypotheses };
+    const outcome = await reviewIn(copy.dir, copy.scratch, reviewPrompt({ goal: c.goal, successCriteria: c.items }, undefined, template), budgetMs);
+    return { ...outcome, flagged: outcome.ran ? outcome.fails.length + outcome.extra.length > 0 : null };
   } finally {
-    await fsp.rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+    await fsp.rm(copy.scratch, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-/** Re-run the review on each case with a template. A case that can't be rebuilt or reviewed is left out of both sides. */
-async function replay(root: string, cases: LabelledCase[], template: string, budgetMs: number): Promise<Map<string, boolean>> {
-  const flagged = new Map<string, boolean>();
-  for (const c of cases) {
-    const copy = await materializeCase(root, c.reviewCase);
-    if (!copy) continue;
-    try {
-      const outcome = await reviewIn(copy.dir, copy.scratch, reviewPrompt({ goal: c.reviewCase.goal, successCriteria: c.reviewCase.items }, undefined, template), budgetMs);
-      if (outcome.ran) flagged.set(c.reviewCase.id, outcome.fails.length + outcome.extra.length > 0);
-    } finally {
-      await fsp.rm(copy.scratch, { recursive: true, force: true }).catch(() => undefined);
+/** Where Guardian's bundled copy of RRSI, its domain, a Python and the replay command are. */
+export interface RsiPaths {
+  python: string;
+  /** Google's RRSI, unmodified (third_party/rrsi). */
+  rrsiDir: string;
+  /** Guardian's RRSI domain (packages/rsi/cgg). */
+  domainDir: string;
+  /** Command that replays one review: [binary, "replay-review"]. */
+  replay: string[];
+}
+
+interface RsiConfig {
+  T: number;
+  m: number;
+  k: number;
+  repair_rounds: number;
+}
+
+/** RRSI's proposer may take this many turns per candidate (rrsi/propose.py MAX_TURNS). */
+const PROPOSER_TURNS = 40;
+
+function rsiConfig(rsi: RsiPaths): RsiConfig {
+  const raw = JSON.parse(fs.readFileSync(path.join(rsi.domainDir, "rrsi.json"), "utf8")) as Partial<RsiConfig>;
+  return { T: raw.T ?? 2, m: raw.m ?? 2, k: raw.k ?? 1, repair_rounds: raw.repair_rounds ?? 2 };
+}
+
+/** What one run costs on the user's plan, shown before it starts. */
+export interface ImproveEstimate {
+  evolve: number;
+  heldOut: number;
+  reviews: number;
+  searchCallsMax: number;
+}
+
+export function estimateImprove(cases: LabelledCase[], cfg: RsiConfig): ImproveEstimate {
+  const heldOut = cases.filter((c) => isHeldOut(c.reviewCase.id)).length;
+  const evolve = cases.length - heldOut;
+  // Held out before and after; the evolve set once for the baseline and once per candidate.
+  const reviews = (2 * heldOut + evolve * (1 + cfg.T * cfg.m)) * cfg.k;
+  // Per round: the analyst and digester, then each candidate's proposer turns and critic repairs.
+  const searchCallsMax = cfg.T * (2 + cfg.m * (PROPOSER_TURNS + cfg.repair_rounds + 1));
+  return { evolve, heldOut, reviews, searchCallsMax };
+}
+
+export async function improveEstimate(root: string, rsi: RsiPaths): Promise<ImproveEstimate | null> {
+  const cases = await labelledCases(root);
+  return enoughToImprove(cases) ? estimateImprove(cases, rsiConfig(rsi)) : null;
+}
+
+/** Identifiers and file names from the cases: a general prompt has no reason to mention them. */
+function leakTerms(cases: LabelledCase[]): string[] {
+  const out = new Set<string>();
+  const add = (text: string): void => {
+    for (const w of text.match(/[A-Za-z_][A-Za-z0-9_.\/-]{3,}/g) ?? []) {
+      // camelCase, snake_case, paths and names with digits are specific; ordinary words aren't.
+      const t = w.replace(/[./\\-]+$/, "");
+      if (/[a-z][A-Z]|[_/\\]|\.\w|\d/.test(t)) out.add(t);
     }
+  };
+  for (const c of cases) {
+    add(c.reviewCase.goal);
+    for (const i of c.reviewCase.items) add(i.text);
+    for (const e of c.reviewCase.extra) add(e.file);
   }
-  return flagged;
+  return [...out].filter((w) => w.length >= 4);
+}
+
+function rsiRoot(root: string): string {
+  return path.join(path.dirname(harnessDir(root)), "rsi");
+}
+
+function sh(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, log: string): Promise<{ code: number | null; out: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { cwd, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    const keep = (b: Buffer): void => {
+      out += b.toString("utf8");
+      fs.appendFileSync(log, b);
+    };
+    child.stdout.on("data", keep);
+    child.stderr.on("data", keep);
+    child.on("error", (err) => resolve({ code: -1, out: `${out}\n${err.message}` }));
+    child.on("close", (code) => resolve({ code, out }));
+  });
+}
+
+const git = (args: string[], cwd: string): string =>
+  execFileSync("git", ["-c", "user.name=Goal Guardian", "-c", "user.email=guardian@localhost", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8", windowsHide: true });
+
+async function copyTree(from: string, to: string): Promise<void> {
+  await fsp.cp(from, to, { recursive: true, filter: (src) => !/(^|[\\/])(__pycache__|runs|\.git)([\\/]|$)/.test(path.relative(from, src)) });
+}
+
+interface HeldOutScore extends ReplayScore {
+  run: number;
+}
+
+/** A held-out job's verdicts, from RRSI's own records: right answers, and catches of cases right to object to. */
+async function heldOutScore(runs: string, job: string, labels: Map<string, ReviewLabel>): Promise<HeldOutScore | null> {
+  const jobDir = path.join(runs, "cgg", "jobs", job);
+  const tasks = await fsp.readdir(jobDir).catch(() => null);
+  if (!tasks) return null;
+  let correct = 0;
+  let catches = 0;
+  let run = 0;
+  for (const t of tasks) {
+    const rec = await fsp.readFile(path.join(jobDir, t, "trial0.json"), "utf8").then((x) => JSON.parse(x) as { flagged: boolean | null }).catch(() => null);
+    const label = labels.get(t);
+    if (!rec || rec.flagged === null || !label) continue;
+    run += 1;
+    if (rec.flagged === (label === "right")) correct += 1;
+    if (label === "right" && rec.flagged) catches += 1;
+  }
+  return { correct, catches, run };
 }
 
 export function candidatePath(root: string, runId: string): string {
@@ -225,43 +241,89 @@ export interface ImproveResult {
 }
 
 /**
- * One improvement try, start to finish. Started only by the user. Records improve.start, then improve.run with the
- * verdict; a kept proposal waits as a candidate until the user applies it.
+ * One improvement try, run by Google's RRSI (third_party/rrsi, unmodified) on this workspace's labelled cases.
+ * Started only by the user. Guardian assembles a throwaway RRSI checkout under .cursor/goal-guardian/rsi with its
+ * own domain, scores the current reviewer on the held-out cases, lets RRSI search on the rest, and scores RRSI's
+ * winner on the same held-out cases. A winner that does better there without losing a catch waits for the user.
  */
-export async function improveReviewer(root: string, budgetMs = REVIEW_BUDGET_MS): Promise<ImproveResult> {
+export async function improveReviewer(root: string, rsi: RsiPaths): Promise<ImproveResult> {
   const records = await readAuditTail(root, AUDIT_WINDOW);
   if (improveRunning(records)) return { status: "running" };
   const cases = await labelledCases(root, records);
   if (!enoughToImprove(cases)) return { status: "not-enough" };
   const id = newId("improve");
   const started = Date.now();
+  const cfg = rsiConfig(rsi);
+  const est = estimateImprove(cases, cfg);
   await appendAudit(root, { ts: nowIso(), kind: "improve.start", id });
-  const train = cases.filter((c) => !isHeldOut(c.reviewCase.id));
-  const held = cases.filter((c) => isHeldOut(c.reviewCase.id));
-  const current = reviewTemplate(root);
-  const rejected = records.filter((r): r is ImproveRunRecord => r.kind === "improve.run" && !r.kept);
-  let calls = 1;
+  const progress = (stage: string): Promise<void> => appendAudit(root, { ts: nowIso(), kind: "improve.progress", id, stage });
   const finish = async (rest: Omit<ImproveRunRecord, "ts" | "kind" | "id" | "train" | "heldOut" | "seconds" | "calls">): Promise<ImproveResult> => {
-    const run: ImproveRunRecord = { ts: nowIso(), kind: "improve.run", id, train: train.length, heldOut: held.length, seconds: Math.round((Date.now() - started) / 1000), calls, ...rest };
+    const run: ImproveRunRecord = { ts: nowIso(), kind: "improve.run", id, train: est.evolve, heldOut: est.heldOut, seconds: Math.round((Date.now() - started) / 1000), calls: est.reviews, ...rest };
     await appendAudit(root, run);
     return { status: "done", run };
   };
-  if (!held.length || !train.length) return finish({ kept: false, reason: "not enough cases on both sides of the split yet", hypotheses: [], diff: "" });
-  const proposal = await propose(root, current, train, rejected);
-  if ("error" in proposal) return finish({ kept: false, reason: proposal.error, hypotheses: [], diff: "" });
-  const diff = lineDiff(current, proposal.prompt);
-  const oldFlags = await replay(root, held, current, budgetMs);
-  const newFlags = await replay(root, held, proposal.prompt, budgetMs);
-  calls += oldFlags.size + newFlags.size;
-  const both = held.filter((c) => oldFlags.has(c.reviewCase.id) && newFlags.has(c.reviewCase.id));
-  if (!both.length) return finish({ kept: false, reason: "none of the held-out cases could be replayed", hypotheses: proposal.hypotheses, diff });
-  const runsOf = (flags: Map<string, boolean>): ReplayResult[] => both.map((c) => ({ caseId: c.reviewCase.id, label: c.label, flagged: flags.get(c.reviewCase.id)! }));
-  const verdict = keepDecision(runsOf(oldFlags), runsOf(newFlags));
-  if (verdict.keep) {
-    await fsp.mkdir(path.dirname(candidatePath(root, id)), { recursive: true });
-    await fsp.writeFile(candidatePath(root, id), proposal.prompt, "utf8");
+  if (!est.heldOut || !est.evolve) return finish({ kept: false, reason: "not enough cases on both sides of the split yet", hypotheses: [], diff: "" });
+
+  // A fresh RRSI checkout: their files, our domain, this workspace's cases and current reviewer.
+  const base = rsiRoot(root);
+  const repo = path.join(base, "repo");
+  const runs = path.join(base, "runs");
+  await fsp.rm(base, { recursive: true, force: true });
+  await fsp.mkdir(base, { recursive: true });
+  await copyTree(rsi.rrsiDir, repo);
+  const domain = path.join(repo, "domains", "cgg");
+  await copyTree(rsi.domainDir, domain);
+  await fsp.mkdir(path.join(domain, "data"), { recursive: true });
+  const labels = new Map(cases.map((c) => [c.reviewCase.id, c.label] as const));
+  await fsp.writeFile(path.join(domain, "data", "tasks.json"), JSON.stringify(cases.map((c) => ({ id: c.reviewCase.id, case: c.reviewCase.id, label: c.label, split: isHeldOut(c.reviewCase.id) ? "heldout" : "evolve" })), null, 1));
+  await fsp.writeFile(path.join(domain, "data", "leak_terms.json"), JSON.stringify(leakTerms(cases)));
+  await fsp.mkdir(path.join(domain, "harness"), { recursive: true });
+  const current = reviewTemplate(root);
+  await fsp.writeFile(path.join(domain, "harness", "reviewer.md"), current);
+  await fsp.writeFile(path.join(base, ".gitignore"), "*\n");
+  const log = path.join(base, "rrsi.log");
+  let start: string;
+  try {
+    git(["init", "-q"], repo);
+    git(["add", "-A"], repo);
+    git(["commit", "-qm", "Guardian's reviewer, as it is now"], repo);
+    start = git(["rev-parse", "HEAD"], repo).trim();
+  } catch (err) {
+    return finish({ kept: false, reason: `RRSI's checkout couldn't be set up: ${err instanceof Error ? err.message : String(err)}`, hypotheses: [], diff: "" });
   }
-  return finish({ kept: verdict.keep, reason: verdict.reason, old: verdict.old, new: verdict.new, lostCatches: verdict.lostCatches, hypotheses: proposal.hypotheses, diff });
+  const env: NodeJS.ProcessEnv = { ...process.env, CGG_WORKSPACE: root, CGG_REPLAY: JSON.stringify(rsi.replay), PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1" };
+  delete env.GOAL_GUARDIAN_REVIEWING;
+  const rrsi = (args: string[]) => sh(rsi.python, [path.join(repo, "rrsi.py"), "--domain", "cgg", "--runs", runs, ...args], repo, env, log);
+
+  await progress(`Scoring the current reviewer on ${est.heldOut} cases RRSI won't see`);
+  const before = await rrsi(["heldout", "--label", "before", "--ref", start]);
+  if (before.code !== 0) return finish({ kept: false, reason: `RRSI couldn't score the current reviewer (see ${path.relative(root, log)})`, hypotheses: [], diff: "" });
+  await progress(`RRSI is searching: ${cfg.T} rounds of ${cfg.m} candidates on ${est.evolve} cases`);
+  const search = await rrsi(["run"]);
+  if (search.code !== 0) return finish({ kept: false, reason: `RRSI's search stopped (see ${path.relative(root, log)})`, hypotheses: [], diff: "" });
+  const frontier = JSON.parse(await fsp.readFile(path.join(runs, "cgg", "frontier.json"), "utf8")) as { incumbent: { t: number; commit: string } };
+  const history = (await fsp.readFile(path.join(runs, "cgg", "history.jsonl"), "utf8").catch(() => ""))
+    .split("\n").filter(Boolean).map((l) => JSON.parse(l) as { outcome?: string; hypothesis?: string });
+  const hypotheses = history.filter((h) => h.outcome === "ACCEPTED" && h.hypothesis).map((h) => String(h.hypothesis)).slice(-6);
+  if (frontier.incumbent.t === 0 || frontier.incumbent.commit === start) {
+    return finish({ kept: false, reason: "RRSI found no change that beat the current reviewer by more than the noise", hypotheses: history.filter((h) => h.outcome !== "BASELINE" && h.hypothesis).map((h) => String(h.hypothesis)).slice(-6), diff: "" });
+  }
+  const winner = git(["show", `${frontier.incumbent.commit}:domains/cgg/harness/reviewer.md`], repo);
+  const diff = lineDiff(current, winner);
+  if (!harnessUsable("reviewer", winner)) return finish({ kept: false, reason: "RRSI's winner dropped {goal} or {items}", hypotheses, diff });
+  await progress("Scoring RRSI's winner on the same held-out cases");
+  const after = await rrsi(["heldout", "--label", "after", "--ref", frontier.incumbent.commit]);
+  if (after.code !== 0) return finish({ kept: false, reason: `RRSI couldn't score its winner (see ${path.relative(root, log)})`, hypotheses, diff });
+  const old = await heldOutScore(runs, "heldout_before", labels);
+  const neu = await heldOutScore(runs, "heldout_after", labels);
+  if (!old || !neu || !old.run || !neu.run) return finish({ kept: false, reason: "none of the held-out cases could be replayed", hypotheses, diff });
+  const lostCatches = Math.max(0, old.catches - neu.catches);
+  const scores = { old: { correct: old.correct, catches: old.catches }, new: { correct: neu.correct, catches: neu.catches }, lostCatches };
+  if (lostCatches) return finish({ kept: false, reason: `RRSI's winner missed ${lostCatches} gap${lostCatches === 1 ? "" : "s"} the current reviewer caught`, hypotheses, diff, ...scores });
+  if (neu.correct <= old.correct) return finish({ kept: false, reason: `${neu.correct} right against ${old.correct} now on ${old.run} cases RRSI never saw: no better`, hypotheses, diff, ...scores });
+  await fsp.mkdir(path.dirname(candidatePath(root, id)), { recursive: true });
+  await fsp.writeFile(candidatePath(root, id), winner, "utf8");
+  return finish({ kept: true, reason: `${neu.correct} right against ${old.correct} now on ${old.run} cases RRSI never saw`, hypotheses, diff, ...scores });
 }
 
 export function improveRunning(records: AuditRecord[]): boolean {

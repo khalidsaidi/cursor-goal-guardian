@@ -10,7 +10,13 @@ When the agent reports the goal complete and Guardian's record backs every item,
 
 Each review that runs saves a copy of what it looked at under `.cursor/goal-guardian/cases/` (kept out of git; the newest 200, none over 2 MB). Each objection on the panel has **Right call** and **Reviewer was wrong**. Guardian also counts an objection the agent then fixed as right, and one you overrode by marking the goal done as wrong.
 
-Once at least 8 reviews have a verdict, with both kinds, the panel offers **Improve the reviewer**. One agent call proposes a small edit to the reviewer's instructions: at most 12 changed lines, each tagged with the idea it tests, written with earlier rejected ideas in view. Guardian replays a third of your saved cases, which the proposer never sees, with both versions. It keeps the edit only if it gets more of them right by a noise margin and misses nothing the current reviewer caught. A kept edit waits with its diff and scores until you press **Apply**. **Undo** returns to the built-in reviewer. Nothing runs unless you start it. The method follows Google Research's RRSI, written in our own code.
+Once at least 8 reviews have a verdict, with both kinds, the panel offers **Improve the reviewer**. It runs Google
+Research's RRSI (Regularized Recursive Self-Improvement, Apache-2.0), bundled unmodified with a Python of its own,
+on your labelled cases: a third are held out, RRSI searches on the rest with your own Cursor model in its analyst,
+proposer and critic roles, and its winner is replayed on the held-out third. Before it starts you see roughly how
+many reviews and model calls it will spend. A winner that gets more right there without missing a gap the current
+reviewer caught waits on the panel with its diff and scores until you press **Apply**; **Undo** goes back to the
+built-in reviewer. The VSIX grows by about 40 MB for the bundled Python.
 
 ### Removed
 - AI review. Scored on real agent runs for the first time, it found no real drift, so it no

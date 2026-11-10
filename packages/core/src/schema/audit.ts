@@ -225,6 +225,9 @@ const improveScoreSchema = z.object({ correct: z.number().int().nonnegative(), c
 /** The user asked Guardian to try improving its reviewer. */
 export const improveStartRecordSchema = z.object({ ...base, kind: z.literal("improve.start"), id: z.string() }).strict();
 
+/** How far an improvement run has got, for the panel. */
+export const improveProgressRecordSchema = z.object({ ...base, kind: z.literal("improve.progress"), id: z.string(), stage: z.string() }).strict();
+
 /** One try at improving the reviewer: what was proposed, how both versions did on held-out cases, and the call. */
 export const improveRunRecordSchema = z
   .object({
@@ -292,6 +295,7 @@ export const auditRecordSchema = z.discriminatedUnion("kind", [
   reviewFeedbackRecordSchema,
   improveStartRecordSchema,
   improveRunRecordSchema,
+  improveProgressRecordSchema,
   improveApplyRecordSchema,
   improveUndoRecordSchema,
 ]);

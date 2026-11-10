@@ -236,3 +236,9 @@ driving **real** Cursor agents — including an uninstructed agent cooperating
 purely from the session rule — live-editor verification down to the rendered panel, and a
 six-architecture CI matrix that compiles and *executes* the shipped binaries
 on Linux, macOS, and Windows, x64 and arm64 alike.
+
+## Credits
+
+Guardian's reviewer improves itself with [RRSI](https://github.com/google-research/rrsi) by Google Research
+(Apache-2.0), bundled unmodified; see `NOTICE`.
+

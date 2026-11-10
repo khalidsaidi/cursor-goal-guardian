@@ -1,0 +1,14 @@
+Cursor Goal Guardian
+Copyright 2026 Khalid Saidi
+
+This product includes software developed by Google LLC and the rrsi Authors:
+RRSI, Regularized Recursive Self-Improvement
+https://github.com/google-research/rrsi, commit be50316
+Licensed under the Apache License, Version 2.0 (see third_party/rrsi/LICENSE).
+
+third_party/rrsi holds RRSI's own files, unmodified: LICENSE, README.md,
+CONTRIBUTING.md, pyproject.toml, .gitignore, rrsi.py, rrsi/ and tests/.
+Left out because Guardian doesn't use them: domains/coding, domains/eng and
+domains/workspace (RRSI's benchmark instances), assets/ (an overview image),
+and RRSI's third_party/ (archipelago and harbor_terminus2 benchmark runners).
+Guardian's own domain for RRSI is packages/rsi.

@@ -1,5 +1,6 @@
+import path from "node:path";
 import * as vscode from "vscode";
-import { applyImprovement, controlGoal, improveReviewer, lastActiveConversation, readAuditTail, recordReviewFeedback, undoImprovement } from "@goal-guardian/core";
+import { applyImprovement, controlGoal, improveEstimate, improveReviewer, lastActiveConversation, readAuditTail, recordReviewFeedback, undoImprovement, type RsiPaths } from "@goal-guardian/core";
 
 export type GoalCommand = "goal.pause" | "goal.resume" | "goal.done" | "goal.work";
 
@@ -31,18 +32,41 @@ export async function applyGoalCommand(root: string, command: GoalCommand): Prom
   await startAgent();
 }
 
+/** Google's RRSI, Guardian's domain for it and a Python, all inside the extension; the replay runs through the hook. */
+export function bundledRsi(extensionPath: string): RsiPaths {
+  const win = process.platform === "win32";
+  return {
+    python: path.join(extensionPath, "bin", "python", win ? "python.exe" : path.join("bin", "python3")),
+    rrsiDir: path.join(extensionPath, "rsi", "rrsi"),
+    domainDir: path.join(extensionPath, "rsi", "cgg"),
+    replay: [path.join(extensionPath, "bin", `goal-guardian-hook${win ? ".exe" : ""}`), "replay-review"],
+  };
+}
+
 /**
  * The reviewer buttons: a verdict on one objection, trying an improvement, applying one, or going back to the
- * built-in reviewer. Improving takes minutes, so it runs on and the panel refreshes when it's done.
+ * built-in reviewer. Improving spends the user's plan and takes a while, so it asks first, then runs on and the
+ * panel follows its progress.
  */
-export async function applyReviewCommand(root: string, command: string, refresh: () => Promise<void>): Promise<void> {
+export async function applyReviewCommand(root: string, command: string, refresh: () => Promise<void>, extensionPath: string): Promise<void> {
   const [verb, id, index] = command.split(":");
   if ((verb === "review.right" || verb === "review.wrong") && id && index !== undefined) {
     await recordReviewFeedback(root, id, Number(index), verb === "review.right" ? "right" : "wrong");
   } else if (verb === "review.improve") {
-    void improveReviewer(root)
+    const rsi = bundledRsi(extensionPath);
+    const est = await improveEstimate(root, rsi);
+    if (!est) return;
+    const go = "Improve";
+    const answer = await vscode.window.showInformationMessage(
+      `Improve the reviewer with Google's RRSI? It learns from ${est.evolve} of your reviews and tests the result on ${est.heldOut} others. That's about ${est.reviews} reviews and up to ${est.searchCallsMax} more calls to your Cursor model.`,
+      { modal: true },
+      go,
+    );
+    if (answer !== go) return;
+    void improveReviewer(root, rsi)
       .catch((err) => vscode.window.showWarningMessage(`Goal Guardian: improving the reviewer failed: ${err instanceof Error ? err.message : String(err)}`))
       .finally(() => void refresh());
+    setTimeout(() => void refresh(), 1500);
   } else if (verb === "review.apply" && id) {
     await applyImprovement(root, id).catch((err) => vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`));
   } else if (verb === "review.undo") {

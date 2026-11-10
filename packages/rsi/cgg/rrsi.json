@@ -1,0 +1,9 @@
+{
+ "_doc": "Guardian's reviewer. S = weighted share of right verdicts on this workspace's labelled review cases (wrong flags x2). Small defaults: every evaluation and search call spends the user's Cursor plan.",
+ "T": 2, "k": 1, "m": 2, "b_min": 1, "b_max": 3, "w": 2, "m_draft": 1,
+ "delta": null, "delta_z": 2.0,
+ "beta0": 0.1, "beta1": 40.0, "w_s": 0.0, "w_c": 15.0, "w_n": 0.5, "n_prune": 4,
+ "repair_rounds": 2, "invalid_missing_frac": 0.3, "n_fail_traces": 12, "n_success_traces": 4,
+ "eval_parallel": 1,
+ "concurrency": 2
+}

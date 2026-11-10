@@ -86,7 +86,7 @@
     const im = vm.improve;
     const out = [];
     const latest = im.latest;
-    if (im.running) out.push(`<p class="review-line">Improving the reviewer from your verdicts\u2026</p>`);
+    if (im.running) out.push(`<p class="review-line">${escapeHtml(`Improving the reviewer with RRSI from your verdicts\u2026${im.stage ? ` ${im.stage}.` : ""}`)}</p>`);
     else if (latest?.kept && !latest.applied) {
       out.push(
         `<p class="review-line">${escapeHtml(`A better reviewer: ${latest.reason}.`)}</p>`,

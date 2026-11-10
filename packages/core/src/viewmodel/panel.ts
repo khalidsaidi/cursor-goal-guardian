@@ -49,6 +49,8 @@ export interface PanelViewModel {
     labelled: number;
     ready: boolean;
     running: boolean;
+    /** Where a running improvement has got to. */
+    stage: string | null;
     usingImproved: boolean;
     latest: { id: string; kept: boolean; reason: string; heldOut: number; old?: { correct: number }; new?: { correct: number }; diff: string; hypotheses: string[]; applied: boolean } | null;
   };
@@ -193,6 +195,7 @@ function buildImprove(records: AuditRecord[], usingImproved: boolean): PanelView
     labelled: labelled.length,
     ready: enoughToImprove(labelled),
     running: improveRunning(records),
+    stage: improveRunning(records) ? ([...records].reverse().find((r) => r.kind === "improve.progress") as { stage?: string } | undefined)?.stage ?? null : null,
     usingImproved,
     latest: last ? { id: last.id, kept: last.kept, reason: last.reason, heldOut: last.heldOut, ...(last.old ? { old: last.old } : {}), ...(last.new ? { new: last.new } : {}), diff: last.diff, hypotheses: last.hypotheses, applied } : null,
   };
@@ -211,7 +214,7 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       status: { lamp: "idle", word: "no goal" },
       goalRun: null,
       reviews: [],
-      improve: { labelled: 0, ready: false, running: false, usingImproved: false, latest: null },
+      improve: { labelled: 0, ready: false, running: false, stage: null, usingImproved: false, latest: null },
       goalPhase: "none",
       hooksDisabled: inputs.workspaceTrusted === false,
       tour: buildTour(inputs),
