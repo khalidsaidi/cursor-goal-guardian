@@ -7,6 +7,9 @@ import { workspaceRoot } from "../workspace.js";
 const SET_ASIDE = "set_aside";
 const STATUSES: [string, ...string[]] = [CODEX_TOOLS.update.statuses[0]!, ...CODEX_TOOLS.update.statuses.slice(1), SET_ASIDE];
 
+/** Goes first: without it agents stop on a limited request without reporting, and each such stop costs a send-back. */
+const GUARDIAN_LEAD = "Guardian: report on the goal with this tool before you stop, whenever you changed something: when it's done, when you're truly blocked, or (status `set_aside`) when the user's latest message asked for only part of the goal or for something else.";
+
 const GUARDIAN_PART = [
   "Guardian checks this report against its own record of the session's commands and files and answers at once with anything that doesn't hold; when the record agrees, an independent reviewer checks the project and may object.",
   "With status `complete`, pass proofs (one or more per done-when item) and changes (every file you changed).",
@@ -20,7 +23,7 @@ export function registerUpdateGoal(server: McpServer): void {
   server.registerTool(
     CODEX_TOOLS.update.name,
     {
-      description: `${CODEX_TOOLS.update.description}\n\n${GUARDIAN_PART}`,
+      description: `${GUARDIAN_LEAD}\n\n${CODEX_TOOLS.update.description}\n\n${GUARDIAN_PART}`,
       inputSchema: {
         status: z.enum(STATUSES).describe(`${CODEX_TOOLS.update.statusDescription} Guardian adds \`${SET_ASIDE}\`, see the tool description.`),
         proofs: z

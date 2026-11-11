@@ -108,7 +108,8 @@ describe("only the user changes the goal", () => {
 describe("update_goal", () => {
   it("carries Codex's description and statuses, plus Guardian's set_aside", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "update_goal")!;
-    expect(tool.description!.startsWith("Update the existing goal.\nSet status to `paused` only at the user's explicit request to pause this goal, never on your own initiative.")).toBe(true);
+    expect(tool.description!.startsWith("Guardian: report on the goal with this tool before you stop")).toBe(true);
+    expect(tool.description).toContain("\n\nUpdate the existing goal.\nSet status to `paused` only at the user's explicit request to pause this goal, never on your own initiative.");
     expect(tool.description).toContain("Guardian adds status `set_aside`");
     const status = (tool.inputSchema.properties as Record<string, { enum: string[]; description: string }>).status!;
     expect(status.enum).toEqual(["complete", "blocked", "paused", "set_aside"]);

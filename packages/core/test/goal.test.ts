@@ -463,7 +463,7 @@ describe("telling the agent without a visible message", () => {
     const context = await goalTurnContext(await ws());
     expect(context).toContain("A limit in an earlier message ended with that message");
     expect(context).toContain("asks to continue or finish: that means the whole goal");
-    expect(context).toContain("do only that and leave the rest of the goal alone");
+    expect(context).toContain("do only that, leave the rest of the goal alone, and call update_goal with status set_aside");
   });
 
   it("a running agent hears a pause or a new goal once, per chat, and nothing else", async () => {

@@ -384,7 +384,7 @@ export async function goalTurnContext(root: string): Promise<string | null> {
   if (phase === "none") return "No goal is on record. Guardian records the user's request as the goal, word for word, when you first change something. If this message asks to continue earlier work, look in past chats and recent commits to find out what it was.";
   if (phase !== "active") return null;
   return [
-    `This workspace has an open goal the user set. Work on it only if this message asks for it, or asks to continue or finish: that means the whole goal, and report with ${CODEX_TOOLS.update.name} when it's done. If this message limits the work or asks for something separate, do only that and leave the rest of the goal alone. A limit in an earlier message ended with that message.`,
+    `This workspace has an open goal the user set. Work on it only if this message asks for it, or asks to continue or finish: that means the whole goal, and report with ${CODEX_TOOLS.update.name} when it's done. If this message limits the work or asks for something separate, do only that, leave the rest of the goal alone, and call ${CODEX_TOOLS.update.name} with status set_aside and the message's own words in user_words before you stop. A limit in an earlier message ended with that message.`,
     ...goalBlock(contract.goal, contract.successCriteria),
   ].join("\n");
 }
@@ -401,7 +401,7 @@ export async function goalMidTurnNotice(root: string, conversationId: string | u
   await appendAudit(root, { ts: nowIso(), kind: "goal.notice", conversationId, goalHash: hash, phase });
   const justSet = phase === "active" && seen?.goalHash !== hash && records.some((r) => r.kind === "goal.set" && r.goalHash === hash && r.conversationId === conversationId);
   if (justSet) {
-    return [`Guardian recorded the user's request as the goal, word for word. Don't reword it. Use these ids when you report with ${CODEX_TOOLS.update.name}. If the user limited this message to part of it, do that part and report set_aside.`, ...goalBlock(contract.goal, contract.successCriteria)].join("\n");
+    return [`Guardian recorded the user's request as the goal, word for word. Don't reword it. Use these ids when you report with ${CODEX_TOOLS.update.name}. If the user limited this message to part of it, do that part, then call ${CODEX_TOOLS.update.name} with status set_aside and their words in user_words before you stop.`, ...goalBlock(contract.goal, contract.successCriteria)].join("\n");
   }
   // The first look in a chat only sets the baseline: the goal came with the user's message.
   if (!seen) return null;
