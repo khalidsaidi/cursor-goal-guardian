@@ -4,16 +4,10 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
-  appendAudit, controlGoal, createGoalByTool, defaultContract, engineGoal, getGuardianPaths, goalMidTurnNotice, goalPhaseOf, goalTurnContext, guardianRuleContent, nowIso, ralphActive, ralphCancel, ralphHome,
-  ralphIteration, ralphPromiseInstruction, ralphStart, ralphStop, ralphUnavailable, readAgentResponse, readAuditTail, readContractSafe, readGoalRecords, recordAgentResponse, recordShellOutput,
-  recordUserPrompt, runGoalStop, setEngineGoal, submitGoalReport, writeContract, GOAL_MAX_ROUNDS, RALPH_PROMISE,
+  appendAudit, createGoalByTool, defaultContract, engineGoal, getGuardianPaths, goalMidTurnNotice, goalPhaseOf, nowIso, readAuditTail, readContractSafe, readGoalRecords, recordShellOutput,
+  recordUserPrompt, runGoalStop, setEngineGoal, submitGoalReport, writeContract,
 } from "../src/index.js";
-
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const RALPH = path.join(repoRoot, "third_party", "claude-plugins-official", "plugins", "ralph-loop");
-const vendored = (...p: string[]): string => fs.readFileSync(path.join(RALPH, ...p), "utf8");
 
 const made: string[] = [];
 const savedEnv = { ...process.env };
@@ -100,90 +94,9 @@ const noReviewer = (): void => {
   process.env.GOAL_GUARDIAN_REVIEWER = "/nonexistent/reviewer";
 };
 
-describe("Ralph Loop's own scripts, as they are", () => {
-  it("the vendored plugin is here whole, with its licence", () => {
-    for (const f of ["LICENSE", "README.md", "hooks/stop-hook.sh", "hooks/hooks.json", "scripts/setup-ralph-loop.sh", "commands/ralph-loop.md", "commands/cancel-ralph.md", "commands/help.md"]) expect(fs.existsSync(path.join(RALPH, f))).toBe(true);
-    expect(fs.existsSync(path.join(RALPH, "..", "..", "LICENSE"))).toBe(true);
-  });
-
-  it("its setup script starts a loop in Guardian's folder, not in the project's .claude", async () => {
-    process.env.GOAL_GUARDIAN_RALPH = RALPH;
-    expect(ralphUnavailable()).toBeNull();
-    const root = await workspace();
-    const started = await ralphStart(root, "Add CSV export\nDone when:\n- sc_1: the export test passes", { maxIterations: 21, sessionId: "c1" });
-    expect(started.ran).toBe(true);
-    expect(started.said).toContain("Ralph loop activated in this session!");
-    expect(ralphActive(root)).toBe(true);
-    expect(fs.existsSync(path.join(root, ".claude"))).toBe(false);
-    const state = fs.readFileSync(path.join(ralphHome(root), ".claude", "ralph-loop.local.md"), "utf8");
-    expect(state).toContain("iteration: 1\nsession_id: c1\nmax_iterations: 21\ncompletion_promise: \"GOAL COMPLETE\"");
-    expect(state).toContain("Add CSV export\nDone when:\n- sc_1: the export test passes");
-    // Its instruction about the promise is its own script's text, word for word.
-    const said = ralphPromiseInstruction(started.said);
-    expect(said).toContain(`  <promise>${RALPH_PROMISE}</promise>`);
-    for (const line of ["CRITICAL - Ralph Loop Completion Promise", "  ✓ The statement MUST be completely and unequivocally TRUE", "  true naturally. Do not force it by lying."]) {
-      expect(said).toContain(line);
-      expect(vendored("scripts", "setup-ralph-loop.sh")).toContain(line);
-    }
-  });
-
-  it("its stop hook feeds the task back, sees its promise in the agent's last message, and stops at its own maximum", async () => {
-    process.env.GOAL_GUARDIAN_RALPH = RALPH;
-    const root = await workspace();
-    await ralphStart(root, "Add CSV export", { maxIterations: 3, sessionId: "c1" });
-    const again = await ralphStop(root, { sessionId: "c1", lastMessage: "Still working on it." });
-    // Ralph's script reads the task back from its state file as it wrote it, leading blank line included.
-    expect(again).toMatchObject({ ran: true, outcome: "continue", prompt: "\nAdd CSV export", iteration: 2 });
-    expect((again as { systemMessage: string }).systemMessage).toBe(`🔄 Ralph iteration 2 | To stop: output <promise>${RALPH_PROMISE}</promise> (ONLY when statement is TRUE - do not lie to exit!)`);
-    // A stop from another chat is none of this loop's business: Ralph leaves it alone.
-    expect(await ralphStop(root, { sessionId: "other", lastMessage: `<promise>${RALPH_PROMISE}</promise>` })).toEqual({ ran: true, outcome: "inactive" });
-    expect(ralphIteration(root)).toBe(2);
-    expect(await ralphStop(root, { sessionId: "c1", lastMessage: "More." })).toMatchObject({ outcome: "continue", iteration: 3 });
-    expect(await ralphStop(root, { sessionId: "c1", lastMessage: "More." })).toMatchObject({ ran: true, outcome: "max" });
-    expect(ralphActive(root)).toBe(false);
-    await ralphStart(root, "Add CSV export", { maxIterations: 3, sessionId: "c1" });
-    expect(await ralphStop(root, { sessionId: "c1", lastMessage: `All done.\n<promise>${RALPH_PROMISE}</promise>` })).toMatchObject({ ran: true, outcome: "promise" });
-    expect(ralphActive(root)).toBe(false);
-    expect(await ralphStop(root, { sessionId: "c1", lastMessage: "x" })).toEqual({ ran: true, outcome: "inactive" });
-  });
-
-  it("cancelling follows its cancel command: read the iteration, remove its state file", async () => {
-    process.env.GOAL_GUARDIAN_RALPH = RALPH;
-    const root = await workspace();
-    expect(await ralphCancel(root)).toBeNull();
-    await ralphStart(root, "Add CSV export", { maxIterations: 5 });
-    await ralphStop(root, { sessionId: "c1", lastMessage: "x" });
-    expect(await ralphCancel(root)).toBe(2);
-    expect(ralphActive(root)).toBe(false);
-    expect(vendored("commands", "cancel-ralph.md")).toContain("rm .claude/ralph-loop.local.md");
-  });
-
-  it("is skipped, never blocking, where the plugin isn't installed", async () => {
-    process.env.GOAL_GUARDIAN_RALPH = "";
-    const root = await workspace();
-    expect(ralphUnavailable()).toBe("Ralph Loop isn't installed");
-    expect(await ralphStart(root, "x", { maxIterations: 1 })).toMatchObject({ ran: false, reason: "Ralph Loop isn't installed" });
-    expect(await ralphStop(root, { sessionId: "c1", lastMessage: "x" })).toMatchObject({ ran: false });
-  });
-});
-
-describe("the agent's last message, as Cursor reports it", () => {
-  it("is kept per chat from the afterAgentResponse hook, out of git", async () => {
-    const root = await workspace();
-    expect(await readAgentResponse(root, "c1")).toBeNull();
-    await recordAgentResponse(root, "c1", "first");
-    await recordAgentResponse(root, "c2", "other chat");
-    await recordAgentResponse(root, "c1", `done <promise>${RALPH_PROMISE}</promise>`);
-    expect((await readAgentResponse(root, "c1"))?.text).toBe(`done <promise>${RALPH_PROMISE}</promise>`);
-    expect((await readAgentResponse(root, "c2"))?.text).toBe("other chat");
-    expect(fs.readFileSync(path.join(getGuardianPaths(root).telemetryDir, ".gitignore"), "utf8")).toContain("responses.json");
-  });
-});
-
-describe("three goal keepers side by side", () => {
-  it("a send-back carries DeepSeek's round prompt, Codex's own continuation and Ralph's own answer", async () => {
+describe("two goal keepers side by side", () => {
+  it("a send-back carries DeepSeek's round prompt and Codex's own continuation", async () => {
     noReviewer();
-    process.env.GOAL_GUARDIAN_RALPH = RALPH;
     const codex = await fakeCodex();
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
@@ -191,48 +104,36 @@ describe("three goal keepers side by side", () => {
     const msg = (await stop(root))!;
     expect(msg).toContain("<goal_round>\nObjective: \"Add CSV export\"\nRound: 1/");
     expect(msg).toContain("<goal_objective>\nAdd CSV export\n</goal_objective>\n\nCODEX SAYS: Continue working toward the active thread goal.");
-    expect(msg).toContain(`🔄 Ralph iteration 2 | To stop: output <promise>${RALPH_PROMISE}</promise> (ONLY when statement is TRUE - do not lie to exit!)\n\nAdd CSV export\nDone when:\n- sc_1: the export test passes`);
-    const order = ["<goal_round>", "CODEX SAYS", "🔄 Ralph iteration", "Guardian checks update_goal"].map((x) => msg.indexOf(x));
+    const order = ["<goal_round>", "CODEX SAYS", "Guardian checks update_goal"].map((x) => msg.indexOf(x));
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // Codex's own accounting got the turn, with the split Cursor reported.
     expect(codex.log().find((r) => r.op === "turn")).toMatchObject({ usage: { input_tokens: 80, cached_input_tokens: 10, output_tokens: 30 } });
-    expect(await kinds(root, "goal.partners")).toMatchObject([{ codex: { ran: true, continues: true }, ralph: { ran: true, outcome: "continue", iteration: 2 } }]);
+    expect(await kinds(root, "goal.partners")).toMatchObject([{ codex: { ran: true, continues: true } }]);
   }, 30_000);
 
-  it("the goal is complete only when the two tools accept and Ralph has seen its promise", async () => {
+  it("the goal is complete when Codex's handler and DeepSeek's tool both accept", async () => {
     noReviewer();
-    process.env.GOAL_GUARDIAN_RALPH = RALPH;
     const codex = await fakeCodex();
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
     await doneWork(root);
     expect((await submitGoalReport(root, report)).accepted).toBe(true);
-    await recordAgentResponse(root, "c1", "All done, tests pass.");
-    // The record backs the report, but the agent's last message carries no promise: not complete, and it's told.
-    const back = (await stop(root))!;
-    expect(back).toContain(`Ralph Loop hasn't seen its completion promise in your last message. If the goal is truly complete, end your message with <promise>${RALPH_PROMISE}</promise>.`);
-    expect(await kinds(root, "goal.end")).toEqual([]);
-    expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "complete", by: "ralph" }]);
     expect(codex.log().some((r) => r.op === "tool")).toBe(false);
-    // With the promise in its last message, all three agree.
-    await recordAgentResponse(root, "c1", `All done, tests pass.\n<promise>${RALPH_PROMISE}</promise>`);
-    expect(await stop(root, 1)).toBeNull();
+    expect(await stop(root)).toBeNull();
+    expect(await kinds(root, "goal.refused")).toEqual([]);
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "proved" }]);
     expect(codex.log().filter((r) => r.op === "tool")).toMatchObject([{ name: "update_goal", arguments: { status: "complete" } }]);
     expect((await engineGoal(root))?.phase).toBe("complete");
-    expect(ralphActive(root)).toBe(false);
   }, 30_000);
 
   it("when one accepts and another refuses, the change doesn't happen and the record says who refused", async () => {
     noReviewer();
-    process.env.GOAL_GUARDIAN_RALPH = RALPH;
     const codex = await fakeCodex();
     codex.set({ refuse: { "update_goal:complete": "Codex says no: the goal isn't complete" } });
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
     await doneWork(root);
     expect((await submitGoalReport(root, report)).accepted).toBe(true);
-    await recordAgentResponse(root, "c1", `Done.\n<promise>${RALPH_PROMISE}</promise>`);
     await stop(root);
     expect(await kinds(root, "goal.end")).toEqual([]);
     expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "complete", by: "codex", message: "Codex says no: the goal isn't complete" }]);
@@ -250,24 +151,8 @@ describe("three goal keepers side by side", () => {
     expect(await kinds(other, "goal.refused")).toMatchObject([{ change: "blocked", by: "codex" }]);
   }, 30_000);
 
-  it("Ralph seeing its promise doesn't complete a goal the record doesn't back: its loop starts again", async () => {
-    noReviewer();
-    process.env.GOAL_GUARDIAN_RALPH = RALPH;
-    process.env.GOAL_GUARDIAN_CODEX_GOALS = "";
-    const root = await workspace();
-    await doneWork(root);
-    await submitGoalReport(root, { ...report, proofs: [{ criterion: "sc_1", command: "make never-ran", quote: "12 passed" }] });
-    await recordAgentResponse(root, "c1", `<promise>${RALPH_PROMISE}</promise>`);
-    const back = (await stop(root))!;
-    expect(back).toContain("You output Ralph Loop's completion promise, but the goal isn't proved.");
-    expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "complete", by: "guardian" }]);
-    expect(await kinds(root, "goal.end")).toEqual([]);
-    expect(ralphActive(root)).toBe(true);
-  }, 30_000);
-
   it("if Codex's own scheduling starts no continuation because its goal is stopped, the run stops", async () => {
     noReviewer();
-    process.env.GOAL_GUARDIAN_RALPH = "";
     const codex = await fakeCodex();
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
@@ -278,38 +163,7 @@ describe("three goal keepers side by side", () => {
     expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "continue", by: "codex" }]);
   }, 30_000);
 
-  it("Ralph's iterations running out ends the run, like Guardian's own cap", async () => {
-    noReviewer();
-    process.env.GOAL_GUARDIAN_RALPH = RALPH;
-    process.env.GOAL_GUARDIAN_CODEX_GOALS = "";
-    const root = await workspace();
-    await doneWork(root);
-    await stop(root);
-    // Wind Ralph's own counter to its maximum, as its state file holds it.
-    const state = path.join(ralphHome(root), ".claude", "ralph-loop.local.md");
-    fs.writeFileSync(state, fs.readFileSync(state, "utf8").replace(/^iteration: .*$/m, `iteration: ${GOAL_MAX_ROUNDS + 1}`));
-    const closing = (await stop(root, 1))!;
-    expect(closing).toContain("Ralph Loop's iterations ran out.");
-    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "limit", reason: "Ralph Loop's iterations ran out" }]);
-  }, 30_000);
-
-  it("the user's message starts a Ralph loop and brings Ralph's own promise instruction; pausing cancels it", async () => {
-    process.env.GOAL_GUARDIAN_RALPH = RALPH;
-    process.env.GOAL_GUARDIAN_CODEX_GOALS = "";
-    const root = await workspace();
-    expect(await setEngineGoal(root, "Add CSV export", true)).toBe(true);
-    const context = (await goalTurnContext(root))!;
-    expect(context).toContain("Ralph Loop (Anthropic) is also running on this goal. Its own instruction:");
-    expect(context).toContain(`  <promise>${RALPH_PROMISE}</promise>`);
-    expect(context).toContain("  ✓ Do NOT output false statements to exit the loop");
-    expect(ralphActive(root)).toBe(true);
-    await controlGoal(root, "pause");
-    expect(ralphActive(root)).toBe(false);
-    expect(guardianRuleContent()).toContain(`<promise>${RALPH_PROMISE}</promise>`);
-  }, 30_000);
-
   it("a user's goal change goes through Codex's GoalService, and the agent is shown Codex's own words for it", async () => {
-    process.env.GOAL_GUARDIAN_RALPH = "";
     const codex = await fakeCodex();
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
@@ -325,7 +179,6 @@ describe("three goal keepers side by side", () => {
   }, 30_000);
 
   it("create_goal asks Codex's own handler first; its refusal means no goal is created", async () => {
-    process.env.GOAL_GUARDIAN_RALPH = "";
     const codex = await fakeCodex();
     codex.set({ refuse: { create_goal: "cannot create a new goal because this thread has an unfinished goal" } });
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;

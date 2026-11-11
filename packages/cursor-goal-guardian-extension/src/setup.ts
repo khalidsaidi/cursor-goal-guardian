@@ -39,12 +39,10 @@ const HOOK_EVENTS = [
   "afterShellExecution",
   "postToolUse",
   "postToolUseFailure",
-  // The agent's own message: Cursor's stop hook doesn't carry it, and Ralph Loop looks for its promise there.
-  "afterAgentResponse",
   "stop",
 ];
 
-const GOAL_HOOK_EVENTS = ["beforeSubmitPrompt", "afterShellExecution", "postToolUse", "postToolUseFailure", "afterAgentResponse", "stop"];
+const GOAL_HOOK_EVENTS = ["beforeSubmitPrompt", "afterShellExecution", "postToolUse", "postToolUseFailure", "stop"];
 
 type HookEntry = { command: string; loop_limit?: number };
 

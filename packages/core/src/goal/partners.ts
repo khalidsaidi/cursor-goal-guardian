@@ -1,8 +1,8 @@
 /**
- * The three goal keepers side by side. DeepSeek Harness's service (engine.ts), Codex's goal extension
- * (codexGoals.ts) and Anthropic's Ralph Loop (ralph.ts) each run their own code, unmodified, and Guardian passes
- * every event to all three. Neither is in charge of another: a change to the goal happens only if all of them
- * accept it, and if any of them says the run is over, it is over. This file holds the parts of that joining that
+ * The two goal keepers side by side. DeepSeek Harness's service (engine.ts) and Codex's goal extension
+ * (codexGoals.ts) each run their own code, unmodified, and Guardian passes every event to both. Neither is in
+ * charge of the other: a change to the goal happens only if both accept it, and if either says the run is over,
+ * it is over. This file holds the parts of that joining that
  * aren't specific to one moment of the goal loop; the moments themselves are in loop.ts.
  */
 import fsp from "node:fs/promises";

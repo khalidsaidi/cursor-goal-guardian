@@ -98,7 +98,7 @@ export function readShrunkFiles(root: string): ShrunkFile[] {
   return shrunk;
 }
 
-const KEPT_OUT = ["shell-output.jsonl", "prompts.json", "edits.jsonl", "responses.json"];
+const KEPT_OUT = ["shell-output.jsonl", "prompts.json", "edits.jsonl"];
 
 /** These hold what commands printed, what was edited and what the user typed: never let them reach a commit. */
 async function keepOutOfGit(root: string): Promise<void> {
@@ -186,39 +186,6 @@ export async function readShellOutputs(root: string): Promise<ShellOutput[]> {
     }
   }
   return out;
-}
-
-const MAX_RESPONSE = 20_000;
-const KEEP_RESPONSES = 8;
-
-/**
- * The agent's latest message in a chat, as Cursor's afterAgentResponse hook reports it. Cursor's stop hook carries
- * no message and no transcript, so this is where Ralph Loop's completion promise is looked for.
- */
-export async function recordAgentResponse(root: string, conversationId: string | undefined, text: string): Promise<void> {
-  if (!conversationId || !text.trim()) return;
-  await keepOutOfGit(root);
-  const p = getGuardianPaths(root).responses;
-  let all: Record<string, { ts: string; text: string }> = {};
-  try {
-    all = JSON.parse(await fsp.readFile(p, "utf8")) as typeof all;
-  } catch {
-    // none yet
-  }
-  all[conversationId] = { ts: nowIso(), text: text.length <= MAX_RESPONSE ? text : text.slice(-MAX_RESPONSE) };
-  const kept = Object.entries(all).sort((a, b) => a[1].ts.localeCompare(b[1].ts)).slice(-KEEP_RESPONSES);
-  await writeJsonAtomic(p, Object.fromEntries(kept));
-}
-
-/** The agent's latest message in this chat, or null where Cursor reported none. */
-export async function readAgentResponse(root: string, conversationId: string): Promise<{ ts: string; text: string } | null> {
-  try {
-    const all = JSON.parse(await fsp.readFile(getGuardianPaths(root).responses, "utf8")) as Record<string, { ts: string; text: string }>;
-    const r = all[conversationId];
-    return r && typeof r.text === "string" ? r : null;
-  } catch {
-    return null;
-  }
 }
 
 /** Messages Guardian itself sends back are not the user speaking. */

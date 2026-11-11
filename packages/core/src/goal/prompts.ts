@@ -1,7 +1,7 @@
 /**
  * Every word Guardian says to the agent about the goal. The goal-loop instructions are the original projects' own,
  * unmodified (see originals.ts): Codex's continuation prompt and objective notices, DeepSeek Harness's
- * `<goal_round>` prompt and closing instructions, and Ralph Loop's own stop-hook answer. Only what none of them has is written here: the user's latest
+ * `<goal_round>` prompt and closing instructions. Only what neither of them has is written here: the user's latest
  * message first, the facts from Guardian's own record, and how to report proof.
  */
 import { GUARDIAN_MESSAGE_PREFIX } from "./record.js";
@@ -76,9 +76,6 @@ export interface RoundFacts {
   /** The continuation prompt Codex's own scheduling produced for this stop, and the objective as it hands it over. */
   codexPrompt?: string | null;
   codexObjectiveContext?: string | null;
-  /** What Ralph Loop's own stop hook answered: its one-line system message and the task it feeds back. */
-  ralphSystemMessage?: string;
-  ralphPrompt?: string;
   unproved: string[];
   unclaimed: string[];
   extras: string[];
@@ -106,7 +103,6 @@ export function goalRoundMessage(goal: string, criteria: Criteria, f: RoundFacts
     ...(facts.length ? ["What Guardian's record shows:", ...facts, ""] : []),
     ...(f.codexPrompt ? [...(f.codexObjectiveContext ? ["<goal_objective>", esc(f.codexObjectiveContext), "</goal_objective>", ""] : []), f.codexPrompt.trimEnd()] : [codexContinuation(f.tokensUsed, f.tokenBudget ?? null)]),
     "",
-    ...(f.ralphPrompt !== undefined ? [...(f.ralphSystemMessage ? [f.ralphSystemMessage] : []), f.ralphPrompt, ""] : []),
     ...GUARDIAN_PART,
   ].join("\n");
 }

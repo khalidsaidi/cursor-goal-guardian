@@ -323,8 +323,8 @@ export const goalEngineRecordSchema = z
   .strict();
 
 /**
- * A change to the goal that didn't happen because one of the three goal keepers running side by side (DeepSeek
- * Harness's service, Codex's extension, Ralph Loop) or Guardian's own check refused it. `by` names who.
+ * A change to the goal that didn't happen because one of the two goal keepers running side by side (DeepSeek
+ * Harness's service, Codex's extension) or Guardian's own check refused it. `by` names who.
  */
 export const goalRefusedRecordSchema = z
   .object({
@@ -333,12 +333,12 @@ export const goalRefusedRecordSchema = z
     conversationId: z.string().optional(),
     goalHash: z.string(),
     change: z.string(),
-    by: z.enum(["deepseek", "codex", "ralph", "guardian"]),
+    by: z.enum(["deepseek", "codex", "guardian"]),
     message: z.string(),
   })
   .strict();
 
-/** What Codex's extension and Ralph Loop each said at one stop: ran or skipped (and why), and their decision. */
+/** What Codex's extension said at one stop: ran or skipped (and why), and its decision. */
 export const goalPartnersRecordSchema = z
   .object({
     ...base,
@@ -346,7 +346,6 @@ export const goalPartnersRecordSchema = z
     conversationId: z.string(),
     goalHash: z.string(),
     codex: z.object({ ran: z.boolean(), reason: z.string().optional(), continues: z.boolean().optional(), status: z.string().optional() }).strict(),
-    ralph: z.object({ ran: z.boolean(), reason: z.string().optional(), outcome: z.string().optional(), iteration: z.number().int().optional() }).strict(),
   })
   .strict();
 
