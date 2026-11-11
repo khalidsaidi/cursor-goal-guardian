@@ -13,6 +13,8 @@ const seen = [];
 for (const entry of entries) {
   if (!entry.isDirectory()) continue;
   const pkgPath = path.join(packagesDir, entry.name, "package.json");
+  // Folders without a package.json aren't npm packages: the Python adapters (monitor, rsi) and the Rust crate (codex-goals).
+  if (!(await fs.access(pkgPath).then(() => true, () => false))) continue;
   const pkg = JSON.parse(await fs.readFile(pkgPath, "utf8"));
   const base = String(pkg.version).split("-")[0];
   seen.push({ name: pkg.name, version: pkg.version, base });

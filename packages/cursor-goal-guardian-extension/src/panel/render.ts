@@ -60,6 +60,7 @@ const GOAL_RUN_WORD: Record<NonNullable<PanelViewModel["goalRun"]>["outcome"], s
   set_aside: "Goal set aside in that chat",
   stalled: "Goal stalled: the agent stopped making progress",
   limit: "Goal not proved: the rounds ran out",
+  budget_limited: "Goal stopped: its token budget is used up",
   stopped: "Goal run stopped",
 };
 

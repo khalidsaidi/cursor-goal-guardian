@@ -5,7 +5,7 @@
  * message first, the facts from Guardian's own record, and how to report proof.
  */
 import { GUARDIAN_MESSAGE_PREFIX } from "./record.js";
-import { CODEX_TOOLS, ROUND_LIMIT_CODE, codexContinuation, codexObjectiveBlock, codexObjectiveUpdated, deepseekGoalRound, deepseekWrapup } from "./originals.js";
+import { CODEX_TOOLS, ROUND_LIMIT_CODE, codexBudgetLimit, codexContinuation, codexObjectiveBlock, codexObjectiveUpdated, deepseekGoalRound, deepseekWrapup } from "./originals.js";
 
 const esc = (text: string): string => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -28,8 +28,8 @@ export function goalBlock(goal: string, criteria: Criteria): string[] {
 }
 
 /** Said when the user changed the goal: Codex's own notice, then the new "done when" list. */
-export function goalChangedMessage(goal: string, criteria: Criteria, tokensUsed: number): string {
-  return [codexObjectiveUpdated(shown(goal), tokensUsed), ...(criteria.length ? ["", ...doneWhen(criteria)] : []), "", "Ask the user before removing any finished work."].join("\n");
+export function goalChangedMessage(goal: string, criteria: Criteria, tokensUsed: number, tokenBudget: number | null = null): string {
+  return [codexObjectiveUpdated(shown(goal), tokensUsed, tokenBudget), ...(criteria.length ? ["", ...doneWhen(criteria)] : []), "", "Ask the user before removing any finished work."].join("\n");
 }
 
 /**
@@ -67,6 +67,8 @@ export interface RoundFacts {
   goalMaxRounds?: number;
   /** Tokens the goal has used so far, for Codex's budget lines. */
   tokensUsed: number;
+  /** The goal's token budget in Codex's store, or none. */
+  tokenBudget?: number | null;
   unproved: string[];
   unclaimed: string[];
   extras: string[];
@@ -92,7 +94,7 @@ export function goalRoundMessage(goal: string, criteria: Criteria, f: RoundFacts
     ...(criteria.length ? ["", ...doneWhen(criteria)] : []),
     "",
     ...(facts.length ? ["What Guardian's record shows:", ...facts, ""] : []),
-    codexContinuation(f.tokensUsed),
+    codexContinuation(f.tokensUsed, f.tokenBudget ?? null),
     "",
     ...GUARDIAN_PART,
   ].join("\n");
@@ -107,4 +109,9 @@ export function goalClosingMessage(goal: string, criteria: Criteria, why: string
     ...(criteria.length ? ["", ...doneWhen(criteria)] : []),
     ...(unproved.length ? ["", "Still not proved:", ...unproved.map((u) => `- ${esc(u)}`)] : []),
   ].join("\n");
+}
+
+/** The goal reached its token budget in Codex's store: Codex's own budget-limit prompt closes the run. */
+export function goalBudgetLimitMessage(goal: string, usage: { tokensUsed: number; tokenBudget: number | null; timeUsedSeconds: number }): string {
+  return [`${GUARDIAN_MESSAGE_PREFIX} the goal has used its token budget. Don't start new work.`, "", codexBudgetLimit(shown(goal), usage)].join("\n");
 }

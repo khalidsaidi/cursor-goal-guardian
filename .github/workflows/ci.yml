@@ -6,7 +6,51 @@ on:
   pull_request:
 
 jobs:
+  # Codex's goal store behind Guardian's Rust binary, built natively on each of the six shipped architectures
+  # (Rust is not cross-compiled). The binary is uploaded so a release can pick it up per platform.
+  codex-goals:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+          - { os: macos-15-intel, target: darwin-x64 }
+          - { os: macos-latest, target: darwin-arm64 }
+          - { os: windows-latest, target: win32-x64 }
+          - { os: windows-11-arm, target: win32-arm64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+        working-directory: packages/codex-goals
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/codex-goals
+      - run: cargo build --release --locked
+      - run: cargo test --release --locked
+      - name: the binary keeps a goal and its budget
+        run: |
+          BIN=target/release/goal-guardian-codex-goals
+          HOME_DIR="$RUNNER_TEMP/codex-goals-home"
+          echo '{"op":"set","objective":"CI goal","token_budget":100}' | "$BIN" --home "$HOME_DIR" | grep '"status":"active"'
+          echo '{"op":"account","tokens":150,"seconds":1}' | "$BIN" --home "$HOME_DIR" | grep '"status":"budget_limited"'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codex-goals-${{ matrix.target }}
+          path: |
+            packages/codex-goals/target/release/goal-guardian-codex-goals
+            packages/codex-goals/target/release/goal-guardian-codex-goals.exe
+          if-no-files-found: error
+
   build-test:
+    env:
+      # The Rust binary has its own job above; here the package is built without it, which Guardian tolerates.
+      GOAL_GUARDIAN_SKIP_CODEX_GOALS: "1"
     strategy:
       fail-fast: false
       matrix:

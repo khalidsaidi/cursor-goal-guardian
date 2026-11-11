@@ -165,6 +165,41 @@ async function buildSea(dir) {
   }
 }
 
+/**
+ * OpenAI Codex's goal store behind Guardian's small Rust binary (packages/codex-goals): token budgets and usage.
+ * Rust doesn't cross-compile from here, so it is built for this machine's own target with cargo; for the other
+ * targets a binary built by CI on that platform (the `codex-goals` job's artifact, unpacked to
+ * .cache/codex-goals/<target>/) is used when it is there. Without one the package ships without budgets, which
+ * Guardian tolerates: every budget call is then a no-op.
+ */
+async function addCodexGoals(target, dir) {
+  const name = `goal-guardian-codex-goals${target.startsWith("win32") ? ".exe" : ""}`;
+  const out = path.join(dir, name);
+  const prebuilt = path.join(cacheDir, "codex-goals", target, name);
+  const copy = async (from) => {
+    await fs.copyFile(from, out);
+    if (!target.startsWith("win32")) await fs.chmod(out, 0o755);
+  };
+  if (process.env.GOAL_GUARDIAN_SKIP_CODEX_GOALS) return console.log(`codex-goals: skipped for ${target} (GOAL_GUARDIAN_SKIP_CODEX_GOALS)`);
+  if (target === hostTarget()) {
+    if (spawnSync("cargo", ["--version"], { timeout: 10_000 }).status !== 0) {
+      console.log("codex-goals: cargo isn't installed, so Codex's goal store isn't built; this package ships without token budgets");
+    } else {
+      const crate = path.join(root, "packages", "codex-goals");
+      const targetDir = process.env.CARGO_TARGET_DIR ?? path.join(cacheDir, "codex-goals-target");
+      const built = spawnSync("cargo", ["build", "--release", "--locked"], { cwd: crate, stdio: "inherit", env: { ...process.env, CARGO_TARGET_DIR: targetDir } });
+      if (built.status === 0) return copy(path.join(targetDir, "release", name));
+      console.log("codex-goals: the cargo build failed, so this package ships without token budgets");
+    }
+  }
+  try {
+    await copy(prebuilt);
+    console.log(`codex-goals: used the prebuilt binary for ${target}`);
+  } catch {
+    if (target !== hostTarget()) console.log(`codex-goals: no binary for ${target} (build it on that platform, or unpack CI's artifact to ${path.relative(root, prebuilt)})`);
+  }
+}
+
 const hostOnly = process.argv.includes("--host-only");
 const targetFlag = process.argv.indexOf("--target");
 const wanted =
@@ -185,5 +220,6 @@ for (const target of wanted) {
   await fs.mkdir(dir, { recursive: true });
   if (spec.kind === "bun") await buildBun(target, spec.bunTarget, dir);
   else await buildSea(dir);
+  await addCodexGoals(target, dir);
   console.log(`compiled ${target}`);
 }

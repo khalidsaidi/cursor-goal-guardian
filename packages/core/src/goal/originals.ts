@@ -18,23 +18,38 @@ function escapeXmlText(input: string): string {
 
 /**
  * Codex's continuation prompt (templates/goals/continuation.md), in the form it sends an agent that has no
- * `update_plan` tool. Guardian sets no token budget, which steering.rs renders as "none" and "unbounded".
+ * `update_plan` tool. The usage and budget are the ones in Codex's own goal store (codexGoals.ts).
  */
-export function codexContinuation(tokensUsed: number): string {
+export function codexContinuation(tokensUsed: number, tokenBudget: number | null = null): string {
+  // steering.rs continuation_prompt: no budget is "none" and "unbounded"; remaining never goes below zero.
   return render(vendored.CODEX_CONTINUATION_WITHOUT_UPDATE_PLAN as string, {
     tokens_used: String(tokensUsed),
-    token_budget: "none",
-    remaining_tokens: "unbounded",
+    token_budget: tokenBudget === null ? "none" : String(tokenBudget),
+    remaining_tokens: tokenBudget === null ? "unbounded" : String(Math.max(tokenBudget - tokensUsed, 0)),
+  }).trimEnd();
+}
+
+/**
+ * Codex's prompt for a goal that reached its token budget (templates/goals/budget_limit.md), rendered as
+ * steering.rs budget_limit_prompt does.
+ */
+export function codexBudgetLimit(objective: string, usage: { tokensUsed: number; tokenBudget: number | null; timeUsedSeconds: number }): string {
+  return render(vendored.CODEX_BUDGET_LIMIT as string, {
+    objective: escapeXmlText(objective),
+    time_used_seconds: String(usage.timeUsedSeconds),
+    tokens_used: String(usage.tokensUsed),
+    token_budget: usage.tokenBudget === null ? "none" : String(usage.tokenBudget),
   }).trimEnd();
 }
 
 /** Codex's notice that the user edited the objective (templates/goals/objective_updated.md), rendered as steering.rs does. */
-export function codexObjectiveUpdated(objective: string, tokensUsed: number): string {
+export function codexObjectiveUpdated(objective: string, tokensUsed: number, tokenBudget: number | null = null): string {
   return render(vendored.CODEX_OBJECTIVE_UPDATED as string, {
     objective: escapeXmlText(objective),
     tokens_used: String(tokensUsed),
-    token_budget: "none",
-    remaining_tokens: "unknown",
+    // steering.rs objective_updated_prompt: no budget is "none" and "unknown".
+    token_budget: tokenBudget === null ? "none" : String(tokenBudget),
+    remaining_tokens: tokenBudget === null ? "unknown" : String(Math.max(tokenBudget - tokensUsed, 0)),
   }).trimEnd();
 }
 

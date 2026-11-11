@@ -72,3 +72,11 @@ monitors as they are, with MRT's prompts, on the bundled Python; its adapter is
 packages/monitor. The hybrid score, 0.5 x hierarchical + 0.5 x sequential, is
 one line of Guardian's, from the paper's section 3.5: MRT's repository has no
 code for it.
+
+Codex's own goal store (the codex-state crate at ac54a05, Apache-2.0) runs
+unmodified beside DeepSeek Harness's service: it is fetched from Codex's
+repository at build time and linked into packages/codex-goals, and none of it
+is copied here. It is told every change to the goal and keeps Codex's usage
+accounting and token budget. Not run yet from Codex: its tool handlers and its
+continuation scheduling. Not run yet from DeepSeek Harness: its tools, its
+round driver and its /goal command.

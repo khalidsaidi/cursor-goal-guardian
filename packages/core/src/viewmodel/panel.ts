@@ -29,7 +29,7 @@ export interface PanelViewModel {
   /** The latest run on the goal: still going, or how it ended and what backs it. */
   goalRun: {
     ts: string;
-    outcome: "working" | "proved" | "blocked" | "set_aside" | "stalled" | "limit" | "stopped";
+    outcome: "working" | "proved" | "blocked" | "set_aside" | "stalled" | "limit" | "stopped" | "budget_limited";
     /** The last review objected and the project changed afterwards, unreviewed. */
     changedSinceReview: boolean;
     round: number | null;
@@ -153,6 +153,7 @@ function goalStatus(phase: PanelViewModel["goalPhase"], run: PanelViewModel["goa
   // The record backs every item, but the review still objects to this very state: not a clean "proved".
   if (phase === "complete" && run?.outcome === "proved" && run.reviewer.length) return { lamp: "warn", word: "disputed" };
   if (phase === "complete") return run?.outcome === "proved" ? { lamp: "on", word: "proved" } : { lamp: "idle", word: "closed" };
+  if (run?.outcome === "budget_limited") return { lamp: "warn", word: "over budget" };
   if (run?.outcome === "blocked") return { lamp: "warn", word: "blocked" };
   if (run?.outcome === "stalled" || run?.outcome === "limit") return { lamp: "warn", word: "stalled" };
   return { lamp: "on", word: "active" };

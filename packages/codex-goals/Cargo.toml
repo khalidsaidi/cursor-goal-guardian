@@ -1,0 +1,36 @@
+# Guardian's command-line door to OpenAI Codex's own goal store. Codex's crates come straight from its
+# repository at the commit vendored in third_party/codex, unmodified; nothing of theirs is copied here.
+[package]
+name = "goal-guardian-codex-goals"
+version = "1.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "goal-guardian-codex-goals"
+path = "src/main.rs"
+
+[dependencies]
+codex-state = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
+codex-protocol = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
+codex-utils-absolute-path = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+anyhow = "1"
+serde_json = "1"
+
+# The same replacements Codex's own workspace makes (codex-rs/Cargo.toml [patch.crates-io]); a git dependency
+# doesn't bring them along.
+[patch.crates-io]
+crossterm = { git = "https://github.com/openai-oss-forks/crossterm", rev = "ed1cdab335221515706178d68495bba2aed1924f" }
+sqlx-core = { git = "https://github.com/transact-rs/sqlx", rev = "10462fa4414c6c7f1ed1d39bb31678e3b726878c" }
+sqlx-sqlite = { git = "https://github.com/transact-rs/sqlx", rev = "10462fa4414c6c7f1ed1d39bb31678e3b726878c" }
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "7447c427513cfe685f236e1ac0513c4ea3dd9c0b" }
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "bc589d684755a8c02da0fc7e58d0861cbfc306f1" }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 16
+
+[workspace]

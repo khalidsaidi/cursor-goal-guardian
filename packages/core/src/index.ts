@@ -12,6 +12,7 @@ export * from "./goal/record.js";
 export * from "./goal/capture.js";
 export * from "./goal/review.js";
 export * from "./goal/monitor.js";
+export * from "./goal/codexGoals.js";
 export * from "./goal/trajectory.js";
 export * from "./goal/harness.js";
 export * from "./goal/cases.js";

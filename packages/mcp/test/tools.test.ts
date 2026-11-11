@@ -105,6 +105,19 @@ describe("only the user changes the goal", () => {
   });
 });
 
+describe("the token budget", () => {
+  it("is offered on guardian_change_goal and get_goal reports usage; without Codex's store installed a budget change says so", async () => {
+    const tool = (await client.listTools()).tools.find((t) => t.name === "guardian_change_goal")!;
+    expect((tool.inputSchema.properties as Record<string, { description: string }>).token_budget!.description).toContain("Only when the user explicitly asks for a token budget");
+    const res = (await client.callTool({ name: "guardian_change_goal", arguments: { token_budget: 50000, user_words: "use at most 50000 tokens" } })) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(res.isError).toBe(true);
+    expect(res.content[0]!.text).toContain("Codex's goal store isn't installed");
+    const { goal } = (await callJson("get_goal")) as { goal: Record<string, unknown> };
+    expect(goal).toMatchObject({ token_budget: null });
+    expect(typeof goal.tokens_used).toBe("number");
+  });
+});
+
 describe("update_goal", () => {
   it("carries Codex's description and statuses, plus Guardian's set_aside", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "update_goal")!;

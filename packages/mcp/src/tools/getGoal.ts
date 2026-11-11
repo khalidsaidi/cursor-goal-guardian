@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CODEX_TOOLS, goalPhaseOf, readGoalRecords } from "@goal-guardian/core";
+import { CODEX_TOOLS, goalBudget, goalPhaseOf, readGoalRecords } from "@goal-guardian/core";
 import { readContractSafe, workspaceRoot } from "../workspace.js";
 
 /** Codex's get_goal, by its own name and description. Guardian's goal also carries the user's "done when" list. */
@@ -7,7 +7,7 @@ export function registerGetGoal(server: McpServer): void {
   server.registerTool(
     CODEX_TOOLS.get.name,
     {
-      description: `${CODEX_TOOLS.get.description}\n\nGuardian: the goal is the user's own request, recorded word for word, with its 'done when' items and their ids. There is no token budget.`,
+      description: `${CODEX_TOOLS.get.description}\n\nGuardian: the goal is the user's own request, recorded word for word, with its 'done when' items and their ids. Usage and any token budget come from Codex's own goal store.`,
       inputSchema: {},
     },
     async () => {
@@ -16,8 +16,12 @@ export function registerGetGoal(server: McpServer): void {
       const records = await readGoalRecords(root);
       const status = goalPhaseOf(records, contract);
       if (status === "none") return { content: [{ type: "text", text: JSON.stringify({ goal: null }) }] };
-      const tokensUsed = records.reduce((sum, r) => sum + (r.kind === "goal.round" ? (r.tokens ?? 0) : 0), 0);
-      const goal = { objective: contract.goal, done_when: contract.successCriteria, status, constraints: contract.constraints, tokens_used: tokensUsed, token_budget: null };
+      // Usage as Codex's store counted it; where the store isn't installed, the tokens Guardian saw and no budget.
+      const stored = await goalBudget(root);
+      const usage = stored
+        ? { tokens_used: stored.tokens_used, token_budget: stored.token_budget, time_used_seconds: stored.time_used_seconds, remaining_tokens: stored.token_budget === null ? null : Math.max(stored.token_budget - stored.tokens_used, 0), budget_status: stored.status }
+        : { tokens_used: records.reduce((sum, r) => sum + (r.kind === "goal.round" ? (r.tokens ?? 0) : 0), 0), token_budget: null };
+      const goal = { objective: contract.goal, done_when: contract.successCriteria, status, constraints: contract.constraints, ...usage };
       return { content: [{ type: "text", text: JSON.stringify({ goal }) }] };
     },
   );

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { criteriaFromTexts, ensureGuardianFiles, parseRequest, readUserPrompts, setEngineGoal, userSaid, writeContract } from "@goal-guardian/core";
+import { criteriaFromTexts, ensureGuardianFiles, parseRequest, readUserPrompts, setEngineGoal, setGoalBudget, userSaid, writeContract } from "@goal-guardian/core";
 import { readContractSafe, workspaceRoot } from "../workspace.js";
 
 /** Guardian's own tool: neither original lets the user redirect an open goal from chat. */
@@ -9,18 +9,35 @@ export function registerChangeGoal(server: McpServer): void {
     "guardian_change_goal",
     {
       description:
-        "Change the goal when the user changes it, or add 'done when' items when the user listed none. Guardian records the user's first request by itself, word for word, so don't call this to declare it.",
+        "Change the goal when the user changes it, add 'done when' items when the user listed none, or set the goal's token budget when the user explicitly asks for one. Guardian records the user's first request by itself, word for word, so don't call this to declare it.",
       inputSchema: {
         user_words: z.string().optional().describe("The user's new goal, quoted exactly from their message. These words become the goal; only the user changes it."),
         add_criteria: z
           .array(z.string().min(1))
           .optional()
           .describe("Only if the user listed no 'done when' items: new ones to add. Existing items can't be changed or removed."),
+        token_budget: z
+          .number()
+          .int()
+          .positive()
+          .nullable()
+          .optional()
+          .describe("Only when the user explicitly asks for a token budget, or to raise or remove one (null removes it): pass their request in user_words. The budget and the usage counted against it are kept by Codex's goal store."),
       },
     },
-    async ({ user_words, add_criteria }) => {
+    async ({ user_words, add_criteria, token_budget }) => {
       const root = await workspaceRoot();
       try {
+        if (token_budget !== undefined) {
+          // Codex sets a budget only on an explicit request: Guardian asks to see the request, as for any change.
+          const said = await readUserPrompts(root);
+          if (said && !userSaid(user_words, said)) {
+            return { isError: true, content: [{ type: "text" as const, text: "Budget not changed: only the user sets the token budget. Pass their request in user_words, quoted exactly from their message." }] };
+          }
+          const answer = await setGoalBudget(root, token_budget);
+          const text = answer.ran ? JSON.stringify({ goal: answer.goal }) : `Budget not changed: ${answer.reason ?? "Codex's goal store didn't answer"}.`;
+          return { ...(answer.ran ? {} : { isError: true }), content: [{ type: "text" as const, text }] };
+        }
         const current = await readContractSafe(root);
         const changesGoal = user_words !== undefined && parseRequest(user_words).goal !== current.goal.trim();
         // Where Cursor reports the user's messages, the goal only changes on the user's own words.

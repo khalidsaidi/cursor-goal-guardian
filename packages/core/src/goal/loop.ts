@@ -11,7 +11,8 @@ import { readContractSafe } from "../safeReaders.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalEndRecord, GoalReportRecord, GoalControlRecord, GoalReviewRecord, GoalRoundRecord, UserMessageRecord } from "../schema/audit.js";
 import { evaluateReport, projectPath, userSaid, type GoalEvaluation } from "./evaluate.js";
-import { CLOSING, goalBlock, goalChangedMessage, goalClosingMessage, goalRoundMessage } from "./prompts.js";
+import { CLOSING, goalBlock, goalBudgetLimitMessage, goalChangedMessage, goalClosingMessage, goalRoundMessage } from "./prompts.js";
+import { budgetOf, codexGoals, resolveCodexGoals, type CodexGoal, type CodexGoalAnswer } from "./codexGoals.js";
 import { BLOCKED_AFTER_CONSECUTIVE_ROUNDS, CODEX_TOOLS, ROUND_LIMIT_CODE, deepseekBlockThreshold } from "./originals.js";
 import { captureGoal } from "./capture.js";
 import { EngineRefused, engineApply, type EngineOp } from "./engine.js";
@@ -169,13 +170,65 @@ export function legacyGoalPhase(all: AuditRecord[], contract: Pick<Contract, "go
  * One change through DeepSeek's goal service, with the contract's words and, for a workspace older than the engine,
  * the phase Guardian's own records showed. Returns null when their service refuses; anything else is thrown.
  */
-async function engine(root: string, contract: Pick<Contract, "goal" | "successCriteria">, op: EngineOp, objective = contract.goal): Promise<{ goal: EngineGoal | null } | null> {
+async function engine(root: string, contract: Pick<Contract, "goal" | "successCriteria">, op: EngineOp, objective = contract.goal, mirror = true): Promise<{ goal: EngineGoal | null } | null> {
   try {
-    return { goal: await engineApply(root, objective, legacyGoalPhase(await readGoalRecords(root), contract), op) };
+    const done = { goal: await engineApply(root, objective, legacyGoalPhase(await readGoalRecords(root), contract), op) };
+    if (mirror) await tellCodexStore(root, objective, op);
+    return done;
   } catch (err) {
     if (err instanceof EngineRefused) return null;
     throw err;
   }
+}
+
+/** Guardian's blocker code for a goal stopped by Codex's token budget. */
+const BUDGET_LIMIT_CODE = "budget-limit";
+
+/**
+ * Codex's goal store is told each change DeepSeek's service accepted, so its usage and budget stay with the same
+ * goal: the objective (a new goal starts its usage from zero, an edit keeps it) and the status. Never blocks.
+ */
+async function tellCodexStore(root: string, objective: string, op: EngineOp): Promise<void> {
+  if (!resolveCodexGoals() || op.type === "round") return;
+  if (!objective.trim()) {
+    await codexGoals(root, { op: "clear" });
+    return;
+  }
+  if (op.type === "sync" || op.type === "create") await codexGoals(root, { op: "set", objective, ...(op.type === "create" ? { fresh: true } : {}) });
+  else await codexGoals(root, { op: "status", status: op.type === "pause" ? "paused" : op.type === "resume" ? "active" : op.type === "complete" ? "complete" : "blocked" });
+}
+
+/** The goal's usage and budget as Codex's store has them, or null where the store isn't installed or has no goal. */
+export async function goalBudget(root: string): Promise<CodexGoal | null> {
+  return resolveCodexGoals() ? (await codexGoals(root, { op: "get" })).goal : null;
+}
+
+/**
+ * Set, raise or remove (null) the goal's token budget in Codex's store. A goal that had stopped at its budget goes
+ * on if Codex's own rule now lets it be active again: usage still at or over the budget keeps it stopped.
+ */
+export async function setGoalBudget(root: string, tokenBudget: number | null): Promise<CodexGoalAnswer> {
+  const contract = await readContractSafe(root);
+  if (!contract.goal.trim()) return { ran: false, reason: "No goal is set.", goal: null };
+  const set = await codexGoals(root, { op: "set", objective: contract.goal, token_budget: tokenBudget });
+  if (!set.ran || set.goal?.status !== "budget_limited") return set;
+  const active = await codexGoals(root, { op: "status", status: "active" });
+  if (active.goal?.status === "active" && engineView(await readGoalRecords(root))?.phase === "blocked") await engine(root, contract, { type: "resume" }, contract.goal, false);
+  return active;
+}
+
+/** This turn's tokens and seconds go to Codex's store; its answer says where the budget stands. */
+async function accountTurn(root: string, seq: Sequence, conversationId: string, tokens: number | undefined): Promise<CodexGoal | null> {
+  if (!resolveCodexGoals()) return null;
+  const starts = seq.records.filter((r) => (r.kind === "user.message" || r.kind === "goal.round") && r.conversationId === conversationId).map((r) => Date.parse(r.ts));
+  const seconds = starts.length ? Math.max(0, Math.round((Date.now() - Math.max(...starts)) / 1000)) : 0;
+  const request = { op: "account" as const, tokens: Math.max(0, tokens ?? 0), seconds };
+  const first = await codexGoals(root, request);
+  if (!first.ran || first.goal) return first.goal;
+  // The store has no goal yet (one set before the store was installed, or in the panel): give it this one first.
+  const contract = await readContractSafe(root);
+  if (!contract.goal.trim() || !(await codexGoals(root, { op: "set", objective: contract.goal })).goal) return null;
+  return (await codexGoals(root, request)).goal;
 }
 
 /** Record a goal in DeepSeek's service: a new one, or the open one with the user's new words. False when refused. */
@@ -354,6 +407,9 @@ export async function runGoalStop(root: string, input: { conversationId?: string
   if (loopCount === 0 && !seq.changedThisTurn && !seq.report) return null;
   if (loopCount > 0 && seq.rounds.length === 0) return null;
 
+  // Goal work happened this turn: its tokens and time go to Codex's store, whatever the turn's outcome.
+  const usage = await accountTurn(root, seq, conversationId, input.tokens);
+
   let unproved: string[] = [];
   let unclaimed = stillChanged(seq);
   let extras: string[] = [];
@@ -409,6 +465,13 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     notes.unshift("- The goal on record changed. Ask the user before removing any finished work.");
   }
 
+  // Codex's store says the goal has reached its token budget: no more send-backs, and Codex's own prompt closes it.
+  if (usage?.status === "budget_limited") {
+    await engine(root, contract, { type: "block", code: BUDGET_LIMIT_CODE, message: `${usage.tokens_used} of ${usage.token_budget} tokens used` }, contract.goal, false);
+    await end(root, seq, conversationId, hash, "budget_limited", { unproved, reason: `${usage.tokens_used} of ${usage.token_budget} tokens used` }, input.tokens);
+    return goalBudgetLimitMessage(contract.goal, budgetOf(usage));
+  }
+
   const idle = noProgress(seq, conversationId, lastRound, unproved);
   const idleRounds = idle ? [...seq.rounds].reverse().findIndex((r) => !r.idle) : -1;
   const idleInARow = idle ? (idleRounds === -1 ? seq.rounds.length : idleRounds) + 1 : 0;
@@ -444,8 +507,9 @@ export async function runGoalStop(root: string, input: { conversationId?: string
   notes.push(...reviewer.map((l) => `- ${l}`));
   await appendAudit(root, { ts: nowIso(), kind: "goal.round", conversationId, goalHash: hash, round, idle, ...(reviewer.length ? { reviewer } : {}), ...(input.tokens ? { tokens: input.tokens } : {}), ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited });
   const latestMessage = (await readUserPrompts(root))?.at(-1);
-  const tokensUsed = seq.rounds.reduce((sum, r) => sum + (r.tokens ?? 0), input.tokens ?? 0);
-  return goalRoundMessage(contract.goal, contract.successCriteria, { latestMessage, round, maxRounds: GOAL_MAX_ROUNDS, goalRound: admitted.goal.roundsStarted, goalMaxRounds: admitted.goal.maxGoalRounds, tokensUsed, unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited, notes });
+  // Usage and budget from Codex's store; where it isn't installed, the tokens Guardian saw and no budget.
+  const tokensUsed = usage ? usage.tokens_used : seq.rounds.reduce((sum, r) => sum + (r.tokens ?? 0), input.tokens ?? 0);
+  return goalRoundMessage(contract.goal, contract.successCriteria, { latestMessage, round, maxRounds: GOAL_MAX_ROUNDS, goalRound: admitted.goal.roundsStarted, goalMaxRounds: admitted.goal.maxGoalRounds, tokensUsed, tokenBudget: usage?.token_budget ?? null, unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited, notes });
 }
 
 /** Goes with every message the user sends, so the goal survives compaction and old chats reopened. Not shown as a message. */
@@ -454,7 +518,14 @@ export async function goalTurnContext(root: string): Promise<string | null> {
   const records = await readGoalRecords(root);
   // Guardian's policy for DeepSeek's blocked phase: this message from the user is the human-authorized edge that
   // resumes the goal. A paused goal is different: only the panel resumes it, as their own tool also refuses to.
-  if (contract.goal.trim() && engineView(records)?.phase === "blocked") await engine(root, contract, { type: "resume" });
+  if (contract.goal.trim() && engineView(records)?.phase === "blocked") {
+    // Stopped at its token budget: a message alone doesn't lift that. The user raises or removes the budget.
+    const lastEnd = [...records].reverse().find((r) => r.kind === "goal.end" && r.goalHash === goalHash(contract));
+    if (lastEnd?.kind === "goal.end" && lastEnd.outcome === "budget_limited") {
+      return [`This workspace's goal stopped at its token budget (${lastEnd.reason ?? "budget used up"}). Don't work on it unless this message raises or removes the budget: then call guardian_change_goal with token_budget and the user's words in user_words, and carry on.`, ...goalBlock(contract.goal, contract.successCriteria)].join("\n");
+    }
+    await engine(root, contract, { type: "resume" });
+  }
   const phase = goalPhaseOf(records, contract);
   if (phase === "none") return "No goal is on record. Guardian records the user's request as the goal, word for word, when you first change something. If this message asks to continue earlier work, look in past chats and recent commits to find out what it was.";
   if (phase !== "active") return null;
@@ -482,8 +553,9 @@ export async function goalMidTurnNotice(root: string, conversationId: string | u
   if (!seen) return null;
   // A first goal being declared isn't a change, and the chat that declared it already knows it.
   if (seen.goalHash !== hash && contract.goal.trim() && seen.phase !== "none") {
-    const tokensUsed = records.reduce((sum, r) => sum + (r.kind === "goal.round" && r.conversationId === conversationId ? (r.tokens ?? 0) : 0), 0);
-    return goalChangedMessage(contract.goal, contract.successCriteria, tokensUsed);
+    const stored = await goalBudget(root);
+    const tokensUsed = stored ? stored.tokens_used : records.reduce((sum, r) => sum + (r.kind === "goal.round" && r.conversationId === conversationId ? (r.tokens ?? 0) : 0), 0);
+    return goalChangedMessage(contract.goal, contract.successCriteria, tokensUsed, stored?.token_budget ?? null);
   }
   return phase === "paused" ? CLOSING.paused : null;
 }

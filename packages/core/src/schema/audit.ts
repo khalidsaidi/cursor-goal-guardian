@@ -274,7 +274,7 @@ export const goalEndRecordSchema = z
     kind: z.literal("goal.end"),
     conversationId: z.string(),
     goalHash: z.string(),
-    outcome: z.enum(["proved", "blocked", "set_aside", "stalled", "limit", "stopped"]),
+    outcome: z.enum(["proved", "blocked", "set_aside", "stalled", "limit", "stopped", "budget_limited"]),
     rounds: z.number().int().nonnegative().optional(),
     seconds: z.number().int().nonnegative().optional(),
     tokens: z.number().int().nonnegative().optional(),
