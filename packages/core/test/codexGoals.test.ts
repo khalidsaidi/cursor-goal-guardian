@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   appendAudit, codexBudgetLimit, codexContinuation, codexGoals, codexGoalsHome, codexObjectiveUpdated, controlGoal, defaultContract, getGuardianPaths, goalBudget, goalPhaseOf, goalTurnContext, nowIso,
   readAuditTail, readContractSafe, readGoalRecords, recordUserPrompt, resolveCodexGoals, runGoalStop, setEngineGoal, setGoalBudget, type CodexGoalRequest,
+  codexSteering, codexTool, codexToolSpecs, codexTurn, codexUserGoal,
 } from "../src/index.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -180,7 +181,8 @@ describe("Codex's goal store beside the goal loop", () => {
   });
 });
 
-const realBinary = path.join(repoRoot, "dist-bin", `${process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux"}-${os.arch() === "arm64" ? "arm64" : "x64"}`, `goal-guardian-codex-goals${process.platform === "win32" ? ".exe" : ""}`);
+// GG_CODEX_GOALS_BINARY points the real-binary tests at a build outside dist-bin.
+const realBinary = process.env.GG_CODEX_GOALS_BINARY ?? path.join(repoRoot, "dist-bin", `${process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux"}-${os.arch() === "arm64" ? "arm64" : "x64"}`, `goal-guardian-codex-goals${process.platform === "win32" ? ".exe" : ""}`);
 
 describe.skipIf(!fs.existsSync(realBinary))("the real binary: Codex's own store", () => {
   it("sets a goal, accounts past its budget, limits it, and goes on once the budget is raised", async () => {
@@ -194,4 +196,120 @@ describe.skipIf(!fs.existsSync(realBinary))("the real binary: Codex's own store"
     expect((await codexGoals(root, { op: "teleport" } as unknown as CodexGoalRequest))).toMatchObject({ ran: false });
     expect(fs.existsSync(path.join(codexGoalsHome(root), "goals_1.sqlite"))).toBe(true);
   }, 30_000);
+});
+
+/** Stands in for the binary's requests on Codex's whole goal extension: canned answers in the binary's shapes, and a log. */
+async function fakeExtension(): Promise<{ file: string; log: () => Array<Record<string, unknown>> }> {
+  const dir = await tmp("gg-codex-fake-ext-");
+  const file = path.join(dir, "ext");
+  const log = path.join(dir, "requests.jsonl");
+  const goal = { goal_id: "g1", objective: "Add CSV export", status: "active", token_budget: 5000, tokens_used: 450, time_used_seconds: 12, created_at_ms: 1, updated_at_ms: 2 };
+  const answers = {
+    tool_specs: { ok: true, tools: [{ name: "update_goal", spec: { type: "function", name: "update_goal", description: "Update the existing goal." } }] },
+    tool: { ok: true, call: { accepted: false, refusal: "cannot create a new goal because this thread has an unfinished goal; complete the existing goal first" }, goal, events: { goal_updated: [], warnings: [] } },
+    turn: { ok: true, goal, events: { goal_updated: [{ turnId: "t1" }], warnings: [] } },
+    user_goal: { ok: true, goal, fragment: { type: "message", role: "user", content: [{ type: "input_text", text: "<codex_internal_context source=\"user_goal\">\nUser set the goal: \"Add CSV export\"\n</codex_internal_context>" }] }, events: { goal_updated: [], warnings: [] } },
+    steering: { ok: true, goal, steering: { kind: "continuation", answer: { continue: true, prompt: "Continue working toward the active thread goal.", goal_objective_context: { name: "goal_objective", output: "Add CSV export" } } } },
+  };
+  await fsp.writeFile(file, `#!/usr/bin/env node
+const fs = require("fs");
+const req = JSON.parse(fs.readFileSync(0, "utf8"));
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(req) + "\\n");
+const answers = ${JSON.stringify(answers)};
+process.stdout.write(JSON.stringify(answers[req.op] ?? { ok: false, error: "unknown op" }) + "\\n");
+`);
+  await fsp.chmod(file, 0o755);
+  return { file, log: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>) : []) };
+}
+
+describe("Codex's whole goal extension, through the binary", () => {
+  it("is a no-op where the binary isn't installed: every call says so and nothing throws", async () => {
+    process.env.GOAL_GUARDIAN_CODEX_GOALS = "";
+    const root = await workspace();
+    expect(await codexToolSpecs(root)).toMatchObject({ ran: false, tools: [] });
+    expect(await codexTool(root, "update_goal", { status: "complete" })).toMatchObject({ ran: false, accepted: false, refusal: null, goal: null });
+    expect(await codexTurn(root, { turnId: "t1", usage: { input_tokens: 5 } })).toMatchObject({ ran: false, goal: null });
+    expect(await codexUserGoal(root, { objective: "x" })).toMatchObject({ ran: false, fragmentText: "", cleared: false });
+    expect(await codexSteering(root, { kind: "continuation" })).toMatchObject({ ran: false, continues: false, prompt: null });
+    expect(fs.existsSync(codexGoalsHome(root))).toBe(false);
+  });
+
+  it("sends each request in the binary's shape and reads Codex's answers", async () => {
+    const ext = await fakeExtension();
+    process.env.GOAL_GUARDIAN_CODEX_GOALS = ext.file;
+    const root = await workspace();
+    expect((await codexToolSpecs(root)).tools).toEqual([{ name: "update_goal", spec: { type: "function", name: "update_goal", description: "Update the existing goal." } }]);
+    const refused = await codexTool(root, "create_goal", { objective: "Another" }, { turnId: "t7", usage: { input_tokens: 10, output_tokens: 2 } });
+    expect(refused).toMatchObject({ ran: true, accepted: false, refusal: "cannot create a new goal because this thread has an unfinished goal; complete the existing goal first", goal: { status: "active" } });
+    expect((await codexTurn(root, { turnId: "t1", usage: { input_tokens: 400, output_tokens: 50 }, seconds: 12 })).events.goal_updated).toHaveLength(1);
+    const user = await codexUserGoal(root, { objective: "Add CSV export", token_budget: 5000 });
+    expect(user.fragmentText).toBe('<codex_internal_context source="user_goal">\nUser set the goal: "Add CSV export"\n</codex_internal_context>');
+    expect(await codexSteering(root, { kind: "continuation" })).toEqual({ ran: true, continues: true, prompt: "Continue working toward the active thread goal.", goalObjectiveContext: "Add CSV export", status: null });
+    expect(ext.log()).toEqual([
+      { op: "tool_specs" },
+      { op: "tool", name: "create_goal", arguments: { objective: "Another" }, turn_id: "t7", usage: { input_tokens: 10, output_tokens: 2 } },
+      { op: "turn", turn_id: "t1", usage: { input_tokens: 400, output_tokens: 50 }, seconds: 12 },
+      { op: "user_goal", objective: "Add CSV export", token_budget: 5000 },
+      { op: "steering", kind: "continuation", update_plan: false },
+    ]);
+  });
+});
+
+/** Whether the built binary is the one with Codex's whole goal extension (an older build has only the store). */
+const realHasExtension = fs.existsSync(realBinary) && (() => {
+  try {
+    const out = execFileSync(realBinary, ["--home", fs.mkdtempSync(path.join(os.tmpdir(), "gg-codex-probe-"))], { input: JSON.stringify({ op: "tool_specs" }), encoding: "utf8", timeout: 20_000 });
+    return (JSON.parse(out.trim().split("\n").pop() ?? "{}") as { ok?: boolean }).ok === true;
+  } catch {
+    return false;
+  }
+})();
+
+describe.skipIf(!realHasExtension)("the real binary: Codex's own tool handlers, accounting and scheduling", () => {
+  const spec = fs.readFileSync(path.join(repoRoot, "third_party", "codex", "codex-rs", "ext", "goal", "src", "spec.rs"), "utf8");
+
+  it("its tool definitions are the ones in Codex's spec.rs", async () => {
+    process.env.GOAL_GUARDIAN_CODEX_GOALS = realBinary;
+    const { tools } = await codexToolSpecs(await workspace());
+    expect(tools.map((t) => t.name)).toEqual(["get_goal", "create_goal", "update_goal"]);
+    const by = Object.fromEntries(tools.map((t) => [t.name, t.spec]));
+    expect(spec).toContain(`"${by.get_goal!.description}"`);
+    expect(spec).toContain(`r#"${by.update_goal!.description}"#`);
+    expect(spec).toContain(`r#"${by.create_goal!.description!.replace("use update_goal only", "use {UPDATE_GOAL_TOOL_NAME} only")}"#`);
+    const status = (by.update_goal!.parameters as { properties: { status: { enum: string[]; description: string } } }).properties.status;
+    expect(status.enum).toEqual(["complete", "blocked", "paused"]);
+    expect(spec).toContain(`"${status.description}"`);
+  }, 30_000);
+
+  it("create_goal is refused while a goal is unfinished, and update_goal complete goes through Codex's handler", async () => {
+    process.env.GOAL_GUARDIAN_CODEX_GOALS = realBinary;
+    const root = await workspace();
+    expect(await codexTool(root, "create_goal", { objective: "Add CSV export" })).toMatchObject({ ran: true, accepted: true, goal: { status: "active", objective: "Add CSV export" } });
+    const second = await codexTool(root, "create_goal", { objective: "Another" });
+    expect(second).toMatchObject({ accepted: false, refusal: "cannot create a new goal because this thread has an unfinished goal; complete the existing goal first" });
+    expect((await codexTurn(root, { turnId: "t1", usage: { input_tokens: 400, cached_input_tokens: 100, output_tokens: 50 }, seconds: 7 })).goal).toMatchObject({ tokens_used: 350, time_used_seconds: 7 });
+    const done = await codexTool(root, "update_goal", { status: "complete" }, { turnId: "t2" });
+    expect(done).toMatchObject({ accepted: true, goal: { status: "complete", tokens_used: 350 } });
+    expect((done.result as { goal: { status: string } }).goal.status).toBe("complete");
+    expect((await codexTool(root, "update_goal", { status: "active" })).accepted).toBe(false);
+  }, 30_000);
+
+  it("the continuation it schedules is Codex's template as Codex renders it, with the objective in its own context item", async () => {
+    process.env.GOAL_GUARDIAN_CODEX_GOALS = realBinary;
+    const root = await workspace();
+    const user = await codexUserGoal(root, { objective: "Add CSV export", token_budget: 5000 });
+    expect(user.fragmentText).toBe('<codex_internal_context source="user_goal">\nUser set the goal: "Add CSV export"\n</codex_internal_context>');
+    await codexTurn(root, { turnId: "t1", usage: { input_tokens: 400, output_tokens: 50 } });
+    const next = await codexSteering(root, { kind: "continuation" });
+    expect(next).toMatchObject({ ran: true, continues: true, goalObjectiveContext: "Add CSV export" });
+    // The same text Guardian renders from the vendored template: both come from Codex's continuation.md.
+    expect(next.prompt).toBe(codexContinuation(450, 5000));
+    const limit = await codexSteering(root, { kind: "budget_limit" });
+    expect(limit.status).toBe("budget_limited");
+    expect(limit.prompt).toBe(codexBudgetLimit("Add CSV export", { tokensUsed: 5001, tokenBudget: 5000, timeUsedSeconds: 0 }));
+    const edited = await codexSteering(root, { kind: "objective_updated", newObjective: "Add CSV and JSON export" });
+    expect(edited.prompt).toBe(codexObjectiveUpdated("Add CSV and JSON export", 450, 5000));
+    await codexUserGoal(root, { status: "paused" });
+    expect(await codexSteering(root, { kind: "continuation" })).toMatchObject({ ran: true, continues: false, prompt: null });
+  }, 90_000);
 });

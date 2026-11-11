@@ -1,5 +1,6 @@
-# Guardian's command-line door to OpenAI Codex's own goal store. Codex's crates come straight from its
-# repository at the commit vendored in third_party/codex, unmodified; nothing of theirs is copied here.
+# Guardian's command-line door to OpenAI Codex's own goal package: its goal extension (tool handlers, accounting,
+# steering, the user-facing goal service) and its goal store. Codex's crates come straight from its repository at
+# the commit vendored in third_party/codex, unmodified; nothing of theirs is copied here.
 [package]
 name = "goal-guardian-codex-goals"
 version = "1.0.0"
@@ -15,7 +16,16 @@ path = "src/main.rs"
 codex-state = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
 codex-protocol = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
 codex-utils-absolute-path = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+codex-goal-extension = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
+codex-extension-api = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
+codex-core = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
+codex-analytics = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
+codex-tools = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
+# Codex's own test support: a real Codex thread whose model endpoint is a local server. Used to hand Codex's
+# continuation turn back as data (src/continuation.rs).
+core_test_support = { git = "https://github.com/openai/codex", rev = "ac54a05173d090b9fdfa181ea49b92f45aff2681" }
+chrono = "0.4"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "time", "sync"] }
 anyhow = "1"
 serde_json = "1"
 
@@ -26,6 +36,10 @@ crossterm = { git = "https://github.com/openai-oss-forks/crossterm", rev = "ed1c
 sqlx-core = { git = "https://github.com/transact-rs/sqlx", rev = "10462fa4414c6c7f1ed1d39bb31678e3b726878c" }
 sqlx-sqlite = { git = "https://github.com/transact-rs/sqlx", rev = "10462fa4414c6c7f1ed1d39bb31678e3b726878c" }
 tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "7447c427513cfe685f236e1ac0513c4ea3dd9c0b" }
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "bc589d684755a8c02da0fc7e58d0861cbfc306f1" }
+v8 = { git = "https://github.com/openai-oss-forks/rusty_v8.git", rev = "90a65f887a0c0f048f3784afbcb320b373c8a2e0" }
+
+[patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
 tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "bc589d684755a8c02da0fc7e58d0861cbfc306f1" }
 
 [profile.release]
