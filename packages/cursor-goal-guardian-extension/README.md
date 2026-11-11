@@ -134,8 +134,16 @@ record shows, until one of these happens:
   panel says it isn't proved, with rounds, time and tokens spent. An agent that never reports, usually because Guardian's MCP
   server is switched off, is left alone in that chat after it stalls once.
 
-You're in charge from the panel. **Pause goal** stops the chat at work and the send-backs,
-and the agent can't pause or lift it. **Resume goal** and **Work on the goal** start the agent in a new
+When the record backs every item, two independent checks run before "complete" is
+accepted, both on your own Cursor model. A reviewer works in a throwaway copy of the
+project and tries to prove each "done when" line isn't really done, and lists changes no
+line needs. A monitor reads the run step by step, from Guardian's own record of the
+commands, their output and the edits, and scores how far it strayed from what you asked.
+Their objections go back to the agent like anything else that doesn't hold, at most twice
+per run; after that the record decides and a standing objection is shown to you.
+
+You're in charge from the panel. **Pause goal** stops the chat at work and the send-backs.
+The agent can pause only by quoting your request to pause, and can never lift a pause. **Resume goal** and **Work on the goal** start the agent in a new
 chat. **Mark goal done** closes a goal you're happy with, proved or not.
 
 Every file the agent changed has to be tied to a "done when" line or called extra.
@@ -144,9 +152,12 @@ you to decide. Only you change an existing goal: where Cursor reports your messa
 agent has to quote your words to change it. If the agent edits Guardian's goal files, the
 panel says so.
 
-Works with any language or tool, because Guardian only compares text. It never runs your
-project's commands and makes no AI calls, but each round is an agent turn on your Cursor
-plan, including one short turn when you ask for something unrelated after the goal is set.
+Works with any language or tool, because Guardian's own check only compares text and never
+runs your project's commands. Each round is an agent turn on your Cursor plan, including one
+short turn when you ask for something unrelated after the goal is set. The review at "done"
+is one more agent call, and the monitor about 5 to 10 short ones; both are skipped, never
+blocking, when `cursor-agent` isn't installed, the project isn't a git repository, or they
+take too long.
 In a git repository it also reads `git status` and `git diff`, so files changed by commands
 count too. It keeps your last 3 messages and recent command output in the workspace's
 Guardian folder, excluded from git.
@@ -174,7 +185,7 @@ Plan mode. Cursor only runs project hooks in a trusted workspace.
 | | ✓ Agent loads the goal at every session start (survives resets) |
 | | ✓ Only your own words change an existing goal |
 | | ✓ `/guardian` briefing · `/guardian-goal` to declare/change the goal |
-| | ✓ Four agent tools (read contract, update goal, report on the goal, session status) |
+| | ✓ Three agent tools: `get_goal` and `update_goal` (Codex's own names and descriptions) and `guardian_change_goal` |
 | | ✓ Works in Cursor's agent hub and the IDE — one-time connect approval |
 | **Watching** | ✓ Every shell command, edit, and tool call observed (~60ms, invisible) |
 | **The record** | ✓ One file holds the goal; an append-only tape holds what happened |
@@ -239,6 +250,13 @@ on Linux, macOS, and Windows, x64 and arm64 alike.
 
 ## Credits
 
-Guardian's reviewer improves itself with [RRSI](https://github.com/google-research/rrsi) by Google Research
-(Apache-2.0), bundled unmodified; see `NOTICE`.
+Guardian stands on other people's work and uses it as it is, unmodified; see `NOTICE`.
+
+- The goal loop's instructions to the agent are those of [OpenAI Codex](https://github.com/openai/codex)'s
+  goal extension (Apache-2.0) and [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)'s goal
+  packages (MIT), word for word.
+- The monitor is the code of "Reliable Weak-to-Strong Monitoring of LLM Agents",
+  [MRT](https://github.com/scaleapi/mrt) by Scale AI (MIT).
+- The reviewer improves itself with [RRSI](https://github.com/google-research/rrsi) by Google Research
+  (Apache-2.0).
 

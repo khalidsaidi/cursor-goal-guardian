@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### The goal loop speaks the originals' own words
+
+Guardian's send-back instructions were a rewording of other projects' goal features. They are now those projects' own text, unmodified, with credit in `NOTICE`:
+
+- **OpenAI Codex** (Apache-2.0): its continuation prompt goes out with every round, as Codex sends it; a changed goal is announced with its objective-updated prompt.
+- **DeepSeek Harness** (MIT): its `<goal_round>` prompt heads every round and its closing instructions end a run, both from its own functions; an early "blocked" is refused in its words.
+
+Guardian's own part is what neither has: your latest message first, the facts from its record, and how to report proof.
+
+### Tools renamed to the originals'
+
+The agent's tools are now `get_goal` and `update_goal`, with Codex's names, descriptions and statuses, plus Guardian's proof fields and `set_aside`. `guardian_change_goal` replaces `guardian_update_goal`. `guardian_get_contract`, `guardian_get_status` and `guardian_report_goal` are gone. The workspace rule is rewritten on upgrade. The agent can now pause a goal, but only by quoting your request to pause.
+
+### The paper's monitor at "done"
+
+Alongside the item review, the monitor from "Reliable Weak-to-Strong Monitoring of LLM Agents" (Scale AI's MRT, MIT, bundled unmodified) reads the run piece by piece from Guardian's own record of commands, outputs and edits, with MRT's prompts, on your own Cursor model. Its hierarchical and sequential scores are combined as the paper defines; from 3 of 5 its summary goes back to the agent like a reviewer objection, and it shows on the panel. It costs about 5 to 10 short model calls per review, and is skipped, never blocking, when it can't run or takes too long. Guardian now also records what each edit changed (`telemetry/edits.jsonl`, kept out of git).
+
 ### Independent review at "done"
 
 When the agent reports the goal complete and Guardian's record backs every item, one independent review runs before Guardian accepts it. A separate headless agent on your own Cursor login and default model (`cursor-agent`) works in a throwaway copy of the project. It tries to prove each "done when" item isn't really done, and lists changes no item needs. Its objections go back to the agent as part of the same loop, at most twice per run. After that the record decides, and any objection still standing is shown on the panel as the reviewer's opinion. Without `cursor-agent`, or if the review fails or takes longer than 90 seconds, it's skipped and noted, never blocking. Each review costs one agent request on your Cursor plan.

@@ -26,6 +26,24 @@ Only Cursor's `stop` hook can send an agent back, and only as a visible message.
 
 The agent's report is judged again at each stop because the project may have moved since.
 
+## Whose words the agent hears
+
+The goal loop's instructions are the original projects' own, unmodified. Their sources are vendored in `third_party/` and `scripts/gen-vendored.mjs` copies the text, and transpiles the two TypeScript functions, into `packages/core/src/goal/vendored.generated.ts`; `originals.test.ts` fails if that file is stale or any text differs from its source.
+
+| Part of a send-back | From |
+|---|---|
+| The user's latest message, and "decide from their words first" | Guardian |
+| `<goal_round>`: objective, round n of 20, how to continue | DeepSeek Harness, `goal-round-driver/src/prompt.ts`, its own function |
+| The "done when" list and what Guardian's record shows | Guardian |
+| Continuation behaviour, work from evidence, no-progress check, fidelity, completion audit, blocked audit | OpenAI Codex, `ext/goal/templates/goals/continuation.md`, rendered as Codex does for an agent without `update_plan` |
+| How to report proof, account for changed files, and `set_aside` | Guardian |
+
+A changed goal is announced with Codex's `objective_updated.md`. An accepted `complete` or `blocked` answers with DeepSeek Harness's closing instruction (`tool-goal/src/wrapup.ts`); so does a run that ran out of rounds or stalled, with DeepSeek's `round-limit` blocker code or Guardian's `no-progress`. An early `blocked` is refused in DeepSeek's words, at DeepSeek's threshold of 3 rounds, which is also the number Codex's prompt names.
+
+The MCP tools are Codex's: `get_goal` and `update_goal`, with Codex's names, descriptions and statuses (`complete`, `blocked`, `paused`). Guardian adds what it needs to check a claim (`proofs`, `changes`, `removed`, `reason`, `user_words`) and the status `set_aside`. `guardian_change_goal` is Guardian's own: neither original lets the user redirect an open goal from chat.
+
+Not run: Codex's Rust runtime, which is built into Codex's own agent, and DeepSeek Harness's goal service, round driver and tool plumbing, which are built on its own framework. In Cursor the stop hook plays the driver's part. DeepSeek Harness's own tool file calls its tools "Codex-shaped": Codex is the upstream of both.
+
 ## Proof
 
 No model and no assumption about language or tools. The agent names the proof; Guardian compares text against what it recorded itself:
@@ -36,6 +54,19 @@ No model and no assumption about language or tools. The agent names the proof; G
 ## Independent review
 
 When the record backs every item, one review runs before "complete" is accepted (`packages/core/src/goal/review.ts`). `cursor-agent`, on the user's own login and default model, runs headless in a throwaway copy (a shared clone with the working tree laid over it, no `.cursor`, credentials stripped except Cursor's own). It is asked to prove each item isn't done and to list changes no item needs, and answers in JSON. Its objections go back through the same loop. There are at most 2 reviews per run; after that the record decides and a standing objection goes on `goal.end` for the user. No reviewer, an error, unreadable output or more than 90 s means skipped, recorded as `goal.review` with `ran: false`. For tests, `GOAL_GUARDIAN_REVIEWER` replaces the binary and `GOAL_GUARDIAN_REVIEW_PROMPT` the prompt.
+
+## The monitor
+
+Alongside that review, the monitor from "Reliable Weak-to-Strong Monitoring of LLM Agents" reads the run piece by piece (`packages/core/src/goal/monitor.ts`). Its code is MRT's own, vendored unmodified in `third_party/mrt` (github.com/scaleapi/mrt, MIT), with MRT's prompts; Guardian's adapter is `packages/monitor`, and it runs on the bundled Python.
+
+- **What it reads.** The run as Guardian saw it (`trajectory.ts`): each command with its output and each edit with its text, from `telemetry/shell-output.jsonl` and `telemetry/edits.jsonl`. Hooks see actions, not the agent's prose, so this is what the paper calls an action-only trajectory. The user's query is the goal and its "done when" list.
+- **How.** MRT's hierarchical monitor scores each chunk and aggregates the summaries; its sequential monitor reads the chunks in order, carrying its conversation forward. Both use MRT's 1 to 5 scale and chunk size 5, as in the paper's own runs (`hierarchical_5_likert_reminder_v2`, `sequential_5_likert_reminder_v2`). A run over 20 messages gets larger chunks so each style makes at most 4 chunk calls. The two run side by side, one process each.
+- **The score.** The paper's hybrid, 0.5 x hierarchical + 0.5 x sequential (section 3.5; MRT's repository has no code for it, so that line is Guardian's). From 3 of 5 the monitor's own summary goes back to the agent as an objection, through the same loop as the reviewer's.
+- **Cost.** About 5 to 10 calls to the user's Cursor model per review, where the item review is one. Cursor ends a tool call that is silent for 120 s, and progress notices reset that clock, so `update_goal` sends them when the client asks for progress; the monitor then gets 300 s, otherwise 100 s. Over budget, no model, or no score means skipped and recorded, never blocking.
+
+MRT's modules import pydantic, the provider SDKs and its benchmark at the top, none of which the monitor path runs. The adapter satisfies those imports with empty stand-ins, so no MRT file is edited and nothing is installed.
+
+RRSI improves the item reviewer's prompt only. The monitor's prompts are MRT's and are not tuned.
 
 ## Learning from this workspace
 
@@ -125,6 +156,7 @@ Cursor 3.17.19, driven in debug mode on 2026-11-04, with the packaged VSIX on na
 These need a model that answers, so usage after 11/12:
 
 - A `completed` stop giving a real send-back from Guardian's own hook, and the agent answering it.
-- The agent calling `guardian_report_goal`, including which MCP server it reaches on native Windows.
+- The agent calling `update_goal`, including which MCP server it reaches on native Windows.
+- Whether Cursor passes a progress token on tool calls, which decides the monitor's budget.
 - Edits and failed commands from a real agent turn firing their hooks.
 - How the model sees `additional_context`.
