@@ -117,13 +117,14 @@ describe("two goal keepers side by side", () => {
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
     await doneWork(root);
-    expect((await submitGoalReport(root, report)).accepted).toBe(true);
-    expect(codex.log().some((r) => r.op === "tool")).toBe(false);
-    expect(await stop(root)).toBeNull();
-    expect(await kinds(root, "goal.refused")).toEqual([]);
-    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "proved" }]);
+    // The report itself is where both are asked: Codex's handler, then DeepSeek's tool. Both said yes, so the goal
+    // is complete at once. The reviewer wasn't there to check it, so it is recorded as unchecked, not proved.
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
     expect(codex.log().filter((r) => r.op === "tool")).toMatchObject([{ name: "update_goal", arguments: { status: "complete" } }]);
     expect((await engineGoal(root))?.phase).toBe("complete");
+    expect(await kinds(root, "goal.refused")).toEqual([]);
+    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "unchecked", skipped: [expect.stringContaining("the reviewer didn't run")] }]);
+    expect(await stop(root)).toBeNull();
   }, 30_000);
 
   it("when one accepts and another refuses, the change doesn't happen and the record says who refused", async () => {
@@ -133,8 +134,9 @@ describe("two goal keepers side by side", () => {
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
     await doneWork(root);
-    expect((await submitGoalReport(root, report)).accepted).toBe(true);
-    await stop(root);
+    // Codex's refusal is the answer the agent gets, and nothing is completed or recorded as ended.
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, refusedBy: "codex", message: "Not completed: Codex says no: the goal isn't complete" });
+    expect(await stop(root)).toContain("Call update_goal again");
     expect(await kinds(root, "goal.end")).toEqual([]);
     expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "complete", by: "codex", message: "Codex says no: the goal isn't complete" }]);
     // Codex was asked first and refused, so DeepSeek's service was never asked to complete anything.

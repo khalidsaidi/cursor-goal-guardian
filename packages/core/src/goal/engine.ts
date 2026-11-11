@@ -64,6 +64,8 @@ export interface EngineResult {
   goal: EngineGoal | null;
   /** Their driver's round prompt, when it started a round. */
   prompt?: string;
+  /** Why no round started, when the reason is on Guardian's side of the adapter (no user message on their log). */
+  declined?: string;
   tool?: EngineToolResult;
   command?: { kind: string; text: string };
 }
@@ -320,17 +322,39 @@ function openUserTurn(o: Open): void {
   o.session.append("user/message", o.t.createUserMessage({ content: [{ type: "text", text: USER_TURN_TEXT }], source: { kind: "user" } }), { surfaceOp: "append" });
 }
 
+/** The open turn was opened by a message Cursor's hook reported from the user: their "direct human request". */
+function userTurnOpen(o: Open): boolean {
+  const turn = openTurn(o);
+  if (turn === null) return false;
+  let inside = false;
+  let human = false;
+  for (const e of events(o)) {
+    if (e.type === "turn/start") inside = e.data.turn === turn;
+    else if (inside && e.type === "user/message" && e.data?.source?.kind === "user") human = true;
+  }
+  return human;
+}
+
 /**
- * Their tools need an open model turn. Cursor only runs its agent on a message from the user, so when no hook
- * reported that message (an older Cursor, or a call outside any hook), the turn is recorded as the user's here.
+ * A message from the user is on their log since the goal last stopped (their pause, block, complete or clear).
+ * Their rule is that continuation is armed only on a human-authorized edge; a new process starts disarmed. The
+ * edge Guardian accepts is that real message, reported by Cursor's hook: nothing is armed without one.
  */
-function ensureTurn(o: Open): void {
-  if (openTurn(o) === null) openUserTurn(o);
+function humanSpokeSinceStop(o: Open): boolean {
+  let spoke = false;
+  for (const e of events(o)) {
+    if (e.type === "user/message" && e.data?.source?.kind === "user") spoke = true;
+    // Their resume is itself the human-authorized edge (the user's /goal resume, or the panel's button).
+    else if (e.type === "goal/change" && e.data?.operation === "resume") spoke = true;
+    else if (e.type === "goal/change" && ["pause", "block", "complete", "clear"].includes(String(e.data?.operation))) spoke = false;
+  }
+  return spoke;
 }
 
 /** One call through their tool pipeline, as their agent's own tool call, with the stand-in as the caller. */
 async function callTool(o: Open, name: string, args: Record<string, unknown>): Promise<EngineToolResult> {
-  ensureTurn(o);
+  // No turn is opened here: their tools need an open model turn, and only a real event opens one (the user's
+  // message at Cursor's prompt hook, or a goal round). Without one their own refusal comes back.
   o.setStatus("running");
   const result = await o.ctx.agents.withInitiator(o.agent, async () => {
     const input = { signal: new AbortController().signal, callId: o.t.ToolCallId(`guardian-${Date.now()}-${Math.random().toString(36).slice(2)}`), name, arguments: args, agent: o.agent };
@@ -361,30 +385,33 @@ const mustCommand = (r: { kind: string; text: string }): void => {
 const readsAsControl = (objective: string): boolean => /^(clear|pause|resume|edit)(\s|$)/i.test(objective.trim());
 
 /**
- * A new goal in the user's words. Their create_goal tool takes it when the user's message opened this turn; outside
- * such a turn it is the user's own control, their /goal command. Only an objective their command would misread as
- * a control word goes to their service directly.
+ * A new goal in the user's words. In a turn the user's message opened, their create_goal tool takes it, and what it
+ * refuses is refused. With no such turn on their log (the goal was typed in Guardian's panel, or Cursor reported no
+ * message), it is the user's own control, their /goal command. Neither route is tried after the other refused, and
+ * their service is never called directly.
  */
 async function createGoal(o: Open, objective: string): Promise<void> {
-  const tool = await callTool(o, "create_goal", { objective });
-  if (!tool.isError) return;
-  if (readsAsControl(objective)) o.goals.create(o.agent, { objective });
-  else mustCommand(await runCommand(o, objective));
+  if (userTurnOpen(o)) return must(await callTool(o, "create_goal", { objective }));
+  if (readsAsControl(objective)) throw new EngineRefused("their /goal command would read this goal's first word as a control; send it as a message so their create_goal tool can take it", "GOAL_COMMAND_REFUSED");
+  mustCommand(await runCommand(o, objective));
 }
 
-/** The open goal with new words: their update_goal edit in the user's turn, else their /goal edit. */
+/** The open goal with new words: their update_goal edit in the user's turn, else the user's own /goal edit. */
 async function editGoal(o: Open, goal: any, objective: string): Promise<void> {
-  const tool = await callTool(o, "update_goal", { goal_id: goal.id, revision: goal.revision, action: "edit", objective });
-  if (tool.isError) mustCommand(await runCommand(o, `edit ${objective}`));
+  if (userTurnOpen(o)) return must(await callTool(o, "update_goal", { goal_id: goal.id, revision: goal.revision, action: "edit", objective }));
+  mustCommand(await runCommand(o, `edit ${objective}`));
 }
 
 /**
- * The agent stopped and Guardian wants it sent back. The turn ends, the stand-in goes idle, the goal is re-armed
- * with their `resume` (each hook process starts disarmed, as after their session resume), and their driver takes it
- * from there: it reserves the round and passes its prompt to `followup`. That prompt is admitted to their session
- * as their agent admits a queued round, and returned for Cursor's stop hook to deliver.
+ * The agent stopped. The turn ends, the stand-in goes idle, and their driver decides whether a round starts: it
+ * reserves the round and passes its prompt to `followup`. That prompt is admitted to their session as their agent
+ * admits a queued round, and returned for Cursor's stop hook to deliver.
+ *
+ * Each hook process starts with the goal disarmed, as after their own session resume, where their rule is that only
+ * a human-authorized `resume` arms it again. The edge Guardian uses is on their log: a real message from the user,
+ * recorded at Cursor's prompt hook, since the goal last stopped. With none, nothing is armed and no round starts.
  */
-async function driveRound(o: Open): Promise<string | undefined> {
+async function driveRound(o: Open, out: { declined?: string }): Promise<string | undefined> {
   closeTurn(o);
   o.setStatus("idle");
   o.followups.length = 0;
@@ -392,6 +419,11 @@ async function driveRound(o: Open): Promise<string | undefined> {
   const goal = o.goals.get(o.agent);
   if (!goal || goal.phase !== "active") return undefined;
   if (goal.activation !== "armed") {
+    if (!humanSpokeSinceStop(o)) {
+      o.setStatus("running");
+      out.declined = "their round driver starts no round: the goal is disarmed, and no message from the user is on their log since it last stopped";
+      return undefined;
+    }
     try {
       o.goals.resume(o.agent, { id: goal.id, revision: goal.revision });
     } catch (err) {
@@ -444,7 +476,7 @@ export async function engineRun(root: string, objective: string | undefined, leg
       o = await open(seed, full);
     }
     const { goals, agent } = o;
-    const out: Omit<EngineResult, "goal"> = {};
+    const out: { prompt?: string; declined?: string; tool?: EngineToolResult; command?: { kind: string; text: string } } = {};
     const hadGoalBefore = seed.some((e) => e.type === "goal/change");
     const ref = (g: any): { id: string; revision: number } => ({ id: g.id, revision: g.revision });
     try {
@@ -474,7 +506,7 @@ export async function engineRun(root: string, objective: string | undefined, leg
       else if (op.type === "command") out.command = await runCommand(o, op.input);
       else if (op.type === carried) {
         // the phase carried over from Guardian's older records is the change asked for
-      } else if (op.type === "round") out.prompt = await driveRound(o);
+      } else if (op.type === "round") out.prompt = await driveRound(o, out);
       else if (goal && op.type === "pause") {
         if (op.by === "agent") must(await callTool(o, "update_goal", { goal_id: goal.id, revision: goal.revision, action: "pause" }));
         else mustCommand(await runCommand(o, "pause"));

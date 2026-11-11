@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { buildPanelViewModel, defaultContract, goalHash, type AuditRecord } from "@goal-guardian/core";
+import { buildPanelViewModel, defaultContract, goalHash, reviewLabels, type AuditRecord } from "@goal-guardian/core";
 import { doctorIntegration, runUninstall, wireIntegration } from "../src/setup.js";
 import { renderSections } from "../src/panel/render.js";
 import { applyGoalCommand, WORK_PROMPT } from "../src/goalControls.js";
@@ -183,24 +183,50 @@ describe("the reviewer on the panel, and improving it", () => {
     expect(goal).toContain("you said: reviewer was wrong");
   });
 
-  it("offers an improvement once enough verdicts of both kinds exist, then shows the kept proposal with Apply", () => {
+  it("improves by itself, with no button: it says what it is doing and what it costs, then what it did, with an Undo", () => {
     const records: AuditRecord[] = [];
     for (let i = 0; i < 8; i += 1) {
       records.push(objected(`rev_${i}`, 60 - i));
       records.push({ ts: at(50 - i), kind: "review.feedback", reviewId: `rev_${i}`, index: 0, label: i < 3 ? "right" : "wrong" } as AuditRecord);
       if (i >= 3) records.push({ ts: at(50 - i), kind: "review.feedback", reviewId: `rev_${i}`, index: 1, label: "wrong" } as AuditRecord);
     }
-    expect(renderSections(vm(records)).goal).toContain('data-cmd="review.improve"');
-    records.push({ ts: at(5), kind: "improve.start", id: "improve_1" } as AuditRecord);
-    expect(renderSections(vm(records)).goal).toContain("Improving the reviewer");
+    const waiting = renderSections(vm(records)).goal;
+    expect(waiting).not.toContain("review.improve");
+    expect(waiting).toContain("8 reviews have a verdict");
+    records.push({ ts: at(5), kind: "improve.start", id: "improve_1", auto: true, reviews: 22, searchCallsMax: 174 } as AuditRecord);
+    const running = renderSections(vm(records)).goal;
+    expect(running).toContain("Guardian is improving its reviewer with RRSI from your verdicts.");
+    expect(running).toContain("About 22 reviews and up to 174 more calls to your Cursor model.");
     records.push({ ts: at(2), kind: "improve.run", id: "improve_1", kept: true, reason: "4 right against 2 now on 4 cases it never saw", train: 5, heldOut: 4, old: { correct: 2, catches: 1 }, new: { correct: 4, catches: 1 }, lostCatches: 0, seconds: 300, calls: 9, hypotheses: ["extras the user wanted"], diff: "+ QUIET" } as AuditRecord);
     const kept = renderSections(vm(records)).goal;
-    expect(kept).toContain("A better reviewer: 4 right against 2 now");
-    expect(kept).toContain('data-cmd="review.apply:improve_1"');
+    expect(kept).toContain("Guardian improved its reviewer from your verdicts: 4 right against 2 now");
     expect(kept).toContain("+ QUIET");
-    records.push({ ts: at(1), kind: "improve.apply", runId: "improve_1" } as AuditRecord);
+    records.push({ ts: at(1), kind: "improve.apply", runId: "improve_1", auto: true } as AuditRecord);
     const applied = renderSections(vm(records, true)).goal;
+    expect(applied).toContain("It is in use now.");
     expect(applied).not.toContain("review.apply:");
     expect(applied).toContain('data-cmd="review.undo"');
+  });
+
+  it("a run the review passed can be called not done: that review is then a miss to learn from", () => {
+    const passed: AuditRecord = { ts: at(6), kind: "goal.review", ...base, id: "rev_p", caseSaved: true, fails: [], extra: [] };
+    const ended: AuditRecord = { ts: at(5), kind: "goal.end", conversationId: "c", goalHash: "h", outcome: "proved", proved: [] };
+    expect(renderSections(vm([passed, ended])).goal).toContain('data-cmd="review.missed:rev_p"');
+    const said = [passed, ended, { ts: at(4), kind: "review.feedback", reviewId: "rev_p", index: 0, label: "missed" } as AuditRecord];
+    const goal = renderSections(vm(said)).goal;
+    expect(goal).not.toContain("review.missed:");
+    expect(goal).toContain("you said: this wasn't done");
+    expect(reviewLabels(said).get("rev_p")).toEqual({ label: "right", source: "missed" });
+  });
+
+  it("says plainly when a goal is complete but unchecked, disputed, or unverified", () => {
+    const end = (outcome: "unchecked" | "disputed" | "unverified", rest: Record<string, unknown> = {}): AuditRecord => ({ ts: at(5), kind: "goal.end", conversationId: "c", goalHash: "h", outcome, ...rest }) as AuditRecord;
+    const unchecked = renderSections(vm([end("unchecked", { skipped: ["the reviewer didn't run: cursor-agent isn't installed"] })])).goal;
+    expect(unchecked).toContain("Goal complete but unchecked, not proved");
+    expect(unchecked).toContain("Not independently checked: the reviewer didn&#39;t run: cursor-agent isn&#39;t installed");
+    expect(renderSections(vm([end("disputed", { reviewer: ["Reviewer: sc_1 isn't done: a placeholder"] })])).goal).toContain("Goal disputed, not proved: the review still objects");
+    expect(vm([end("disputed")]).status).toEqual({ lamp: "warn", word: "disputed" });
+    expect(vm([end("unverified", { reason: "Codex's goal program isn't installed" })]).status).toEqual({ lamp: "warn", word: "unverified" });
+    expect(renderSections(vm([end("unverified", { reason: "Codex's goal program isn't installed" })])).goal).toContain("a goal keeper&#39;s code didn&#39;t run");
   });
 });

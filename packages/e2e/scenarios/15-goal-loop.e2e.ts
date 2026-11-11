@@ -32,7 +32,7 @@ describe("15 [deterministic] shipped binaries: the goal loop", () => {
     hook({ hook_event_name: "afterShellExecution", command, output, duration: 5 });
   };
   const stop = (loop_count: number) => hook({ hook_event_name: "stop", status: "completed", loop_count });
-  const report = async (args: Record<string, unknown>): Promise<{ accepted: boolean; unproved: string[]; unclaimed: string[] }> => {
+  const report = async (args: Record<string, unknown>): Promise<{ accepted: boolean; outcome?: string; unproved: string[]; unclaimed: string[] }> => {
     hook({ hook_event_name: "beforeMCPExecution", mcp_server_name: "goal-guardian", tool_name: "update_goal" });
     const res = (await client.callTool({ name: "update_goal", arguments: args })) as { content: Array<{ text: string }> };
     return JSON.parse(res.content[0]!.text);
@@ -82,15 +82,25 @@ describe("15 [deterministic] shipped binaries: the goal loop", () => {
 
     // Runs it again, still keeping the extra: told once, then left for the user.
     ran("bun test", "1 pass\n0 fail");
-    const held = await report({ ...claim, changes: [...claim.changes, { file: "README.md", serves: "extra" }] });
-    expect(held.accepted).toBe(true);
+    const withExtra = { ...claim, changes: [...claim.changes, { file: "README.md", serves: "extra" }] };
+    const told = await report(withExtra);
+    expect(told.accepted).toBe(false);
+    expect(told.unproved).toEqual(["README.md: you called this extra"]);
     expect(String(stop(2).followup_message)).toContain("so undo it unless the user asked for it: README.md");
+
+    // Kept anyway and reported again: now it is for the user to decide. This report is where the goal is completed:
+    // Codex's own handler and DeepSeek Harness's own tool, both in the shipped binaries, each accept it. No reviewer
+    // or evaluator runs in this scenario, so the run is recorded as complete but unchecked, never as proved.
+    const held = await report(withExtra);
+    expect(held.accepted).toBe(true);
+    expect(held.outcome).toBe("unchecked");
     expect(stop(3)).toEqual({});
 
     const end = tape().filter((r) => r.kind === "goal.end");
-    expect(end).toMatchObject([{ outcome: "proved", extras: ["README.md"], proved: [{ criterion: "sc_1", command: "bun test", quote: "1 pass" }] }]);
+    expect(end).toMatchObject([{ outcome: "unchecked", skipped: expect.arrayContaining([expect.stringContaining("didn't run")]), extras: ["README.md"], proved: [{ criterion: "sc_1", command: "bun test", quote: "1 pass" }] }]);
+    expect(tape().filter((r) => r.kind === "goal.refused")).toEqual([]);
 
-    // Proved stays proved: later turns aren't sent back.
+    // Complete stays complete: later turns aren't sent back.
     edit("src/other.ts");
     expect(stop(0)).toEqual({});
   });

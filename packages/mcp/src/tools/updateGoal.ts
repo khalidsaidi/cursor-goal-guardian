@@ -12,7 +12,8 @@ const STATUSES: [string, ...string[]] = [CODEX_TOOLS.update.statuses[0]!, ...COD
 const GUARDIAN_LEAD = "Guardian: report on the goal with this tool before you stop, whenever you changed something: when it's done, when you're truly blocked, or (status `set_aside`) when the user's latest message asked for only part of the goal or for something else.";
 
 const GUARDIAN_PART = [
-  "Guardian checks this report against its own record of the session's commands and files and answers at once with anything that doesn't hold; when the record agrees, an independent reviewer checks the project and may object.",
+  "Guardian checks this report against its own record of the session's commands and files and answers at once with anything that doesn't hold; when the record agrees, an independent reviewer checks the project and an evaluator judges the run and the finished project, and either may object.",
+  "A goal is completed only by this report being accepted by both goal keepers' own code, Codex's and DeepSeek Harness's: what either refuses is the answer you get. The answer's `outcome` says how the run ended: `proved` (both accepted, both checks passed), `unchecked` (both accepted, but a check didn't run), `disputed` (the review still objects to the same state after its reviews ran out) or `unverified` (a goal keeper's code didn't run). After `disputed` or `unverified`, don't report again: tell the user and stop.",
   "With status `complete`, pass proofs (one or more per done-when item) and changes (every file you changed).",
   "With status `blocked`, pass reason.",
   "Guardian adds status `set_aside`: the user's latest message limited the work to part of the goal or asked for something else. Pass their words in user_words. It covers that message only, and a request to continue or finish never counts.",

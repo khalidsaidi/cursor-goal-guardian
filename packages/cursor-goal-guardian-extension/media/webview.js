@@ -39,7 +39,10 @@
   }
   var GOAL_RUN_WORD = {
     working: "Goal: agent sent back",
-    proved: "Goal proved on Guardian's record",
+    proved: "Goal proved: both goal keepers accepted it and both checks passed",
+    unchecked: "Goal complete but unchecked, not proved",
+    disputed: "Goal disputed, not proved: the review still objects",
+    unverified: "Goal unverified, not proved: a goal keeper's code didn't run",
     blocked: "Goal blocked",
     set_aside: "Goal set aside in that chat",
     stalled: "Goal stalled: the agent stopped making progress",
@@ -66,12 +69,14 @@
       ...g.changes.filter((c) => c.serves !== "extra").map((c) => `Changed for ${c.serves}: ${c.files.join(", ")}`),
       ...g.extras.map((f) => `Not for any done-when item, your call: ${f}`),
       ...vm.reviews.length ? [] : g.reviewer.map((l) => `Reviewer's opinion: ${l.replace(/^Reviewer: /, "")}`),
+      ...g.skipped.map((s) => `Not independently checked: ${s}`),
       ...g.changedSinceReview ? ["The last review objected, and the agent changed the project after it. That final state wasn't reviewed again."] : [],
       ...g.goalFileEdited ? ["The agent edited Guardian's goal files during this run."] : []
     ];
-    return `<p class="review-line">${escapeHtml(head)}</p>${lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("")}`;
+    const missed = g.passedReview ? g.saidMissed ? `<p class="review-line"><span class="review-said">you said: this wasn't done. The reviewer will learn from having missed it.</span></p>` : `<p class="review-line">The review found nothing wrong with this. <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>` : "";
+    return `<p class="review-line">${escapeHtml(head)}</p>${lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("")}${missed}`;
   }
-  var SOURCE_WORD = { user: "your call", fixed: "the agent fixed it", overruled: "you marked the goal done over it" };
+  var SOURCE_WORD = { user: "your call", fixed: "the agent fixed it", overruled: "you marked the goal done over it", missed: "you said the work wasn't done" };
   function renderReviews(vm) {
     if (!vm.reviews.length) return "";
     const blocks = vm.reviews.map((r) => {
@@ -89,18 +94,17 @@
     const im = vm.improve;
     const out = [];
     const latest = im.latest;
-    if (im.running) out.push(`<p class="review-line">${escapeHtml(`Improving the reviewer with RRSI from your verdicts\u2026${im.stage ? ` ${im.stage}.` : ""}`)}</p>`);
-    else if (latest?.kept && !latest.applied) {
+    const cost = im.cost ? ` About ${im.cost.reviews} reviews and up to ${im.cost.searchCallsMax} more calls to your Cursor model.` : "";
+    if (im.running) out.push(`<p class="review-line">${escapeHtml(`Guardian is improving its reviewer with RRSI from your verdicts.${im.stage ? ` ${im.stage}.` : ""}${cost}`)}</p>`);
+    else if (latest?.kept) {
       out.push(
-        `<p class="review-line">${escapeHtml(`A better reviewer: ${latest.reason}.`)}</p>`,
+        `<p class="review-line">${escapeHtml(`Guardian improved its reviewer from your verdicts: ${latest.reason}.${latest.applied ? " It is in use now." : " It isn't in use."}${cost}`)}</p>`,
         ...latest.hypotheses.map((h) => `<p class="review-line">${escapeHtml(`Idea tested: ${h}`)}</p>`),
         `<pre class="review-diff">${escapeHtml(latest.diff)}</pre>`,
-        `<div class="goal-controls"><button class="link" data-cmd="review.apply:${escapeHtml(latest.id)}">Apply</button></div>`
+        ...latest.applied ? [] : [`<div class="goal-controls"><button class="link" data-cmd="review.apply:${escapeHtml(latest.id)}">Use it again</button></div>`]
       );
-    } else {
-      if (latest && !latest.kept) out.push(`<p class="review-line">${escapeHtml(`Last try kept the current reviewer: ${latest.reason}.`)}</p>`);
-      if (im.ready) out.push(`<p class="review-line">${im.labelled} reviews have a verdict. Guardian can try to improve its reviewer from them and test it on the ones it doesn't learn from.</p><div class="goal-controls"><button class="link" data-cmd="review.improve">Improve the reviewer</button></div>`);
-    }
+    } else if (latest) out.push(`<p class="review-line">${escapeHtml(`Guardian tried to improve its reviewer and kept the current one: ${latest.reason}.${cost}`)}</p>`);
+    else if (im.labelled) out.push(`<p class="review-line">${escapeHtml(`${im.labelled} review${im.labelled === 1 ? " has" : "s have"} a verdict. With enough of both kinds, Guardian improves its reviewer from them by itself.`)}</p>`);
     if (im.usingImproved) out.push(`<p class="review-line">This workspace uses its improved reviewer. <button class="link" data-cmd="review.undo">Undo</button></p>`);
     return out.join("");
   }

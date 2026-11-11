@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  appendAudit, applyImprovement, candidatePath, defaultContract, estimateImprove, getGuardianPaths, harnessPath, improveReviewer, isHeldOut,
+  appendAudit, applyImprovement, autoImprove, candidatePath, defaultContract, estimateImprove, labelsFingerprint, recordReviewFeedback, getGuardianPaths, harnessPath, improveReviewer, isHeldOut,
   labelledCases, loadCases, materializeCase, nowIso, readAuditTail, replayCase, reviewLabels, reviewTemplate, saveCase, undoImprovement, REVIEW_PROMPT,
   type AuditRecord, type RsiPaths,
 } from "../src/index.js";
@@ -258,5 +258,47 @@ describe.skipIf(posixOnly)("one improvement try with Google's RRSI, start to fin
     const root = await repo();
     expect((await improveReviewer(root, rsiPaths())).status).toBe("not-enough");
     expect(await labelledCases(root)).toEqual([]);
+  });
+});
+
+describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
+  it("runs with no click once there are enough verdicts, applies what its gate kept, and doesn't run again on the same verdicts", async () => {
+    const root = await labelledWorkspace();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    const result = await autoImprove(root, rsiPaths());
+    expect(result?.status).toBe("done");
+    expect(result!.run).toMatchObject({ kept: true, auto: true, labels: labelsFingerprint(await labelledCases(root)) });
+    // Kept by the gate (better on held-out cases, no catch lost), so it is in use at once, and on the record as automatic.
+    expect(reviewTemplate(root)).toContain("QUIET");
+    const records = await readAuditTail(root, 500);
+    expect(records.find((r) => r.kind === "improve.start")).toMatchObject({ auto: true, reviews: expect.any(Number), searchCallsMax: expect.any(Number) });
+    expect(records.find((r) => r.kind === "improve.apply")).toMatchObject({ runId: result!.run!.id, auto: true });
+    // The same verdicts again: nothing to do. A few more verdicts than last time: still not a new batch.
+    expect(await autoImprove(root, rsiPaths())).toBeNull();
+    await undoImprovement(root);
+    expect(reviewTemplate(root)).toBe(REVIEW_PROMPT);
+  }, 300_000);
+
+  it("does nothing without enough verdicts of both kinds, or while a run is going", async () => {
+    const root = await repo();
+    expect(await autoImprove(root, rsiPaths())).toBeNull();
+    const busy = await labelledWorkspace();
+    await appendAudit(busy, { ts: nowIso(), kind: "improve.start", id: "improve_running" });
+    expect(await autoImprove(busy, rsiPaths())).toBeNull();
+  });
+
+  it("learns from a miss: a review that passed work the user then says wasn't done should have objected", async () => {
+    const root = await repo();
+    await saveCase(root, "rev_pass", contract, { prompt: REVIEW_PROMPT, fails: [], extra: [] }, nowIso());
+    await appendAudit(root, review("rev_pass", "h", { fails: [], extra: [] }));
+    expect(reviewLabels(await readAuditTail(root, 100)).size).toBe(0);
+    await recordReviewFeedback(root, "rev_pass", 0, "missed");
+    expect(reviewLabels(await readAuditTail(root, 100)).get("rev_pass")).toEqual({ label: "right", source: "missed" });
+    // It is a replayable case like any other, labelled as one the reviewer should have flagged.
+    expect(await labelledCases(root)).toMatchObject([{ label: "right", source: "missed", reviewCase: { id: "rev_pass", flagged: false } }]);
+    // "Missed" said about a review that did object isn't a verdict on its objections.
+    await appendAudit(root, review("rev_obj", "h2"));
+    await recordReviewFeedback(root, "rev_obj", 0, "missed");
+    expect(reviewLabels(await readAuditTail(root, 100)).has("rev_obj")).toBe(false);
   });
 });

@@ -29,7 +29,13 @@ export interface PanelViewModel {
   /** The latest run on the goal: still going, or how it ended and what backs it. */
   goalRun: {
     ts: string;
-    outcome: "working" | "proved" | "blocked" | "set_aside" | "stalled" | "limit" | "stopped" | "budget_limited";
+    outcome: "working" | "proved" | "unchecked" | "disputed" | "unverified" | "blocked" | "set_aside" | "stalled" | "limit" | "stopped" | "budget_limited";
+    /** Checks that didn't run on the state the run ended in, each with why. */
+    skipped: string[];
+    /** The id of the review that passed this run, if one did: the user can say it missed something. */
+    passedReview: string | null;
+    /** The user has said the work this run's review passed wasn't done. */
+    saidMissed: boolean;
     /** The last review objected and the project changed afterwards, unreviewed. */
     changedSinceReview: boolean;
     round: number | null;
@@ -45,7 +51,7 @@ export interface PanelViewModel {
     tokens: number | null;
   } | null;
   /** Recent reviews that objected, each objection open to the user's verdict. */
-  reviews: Array<{ id: string; lines: string[]; feedback: Array<ReviewLabel | null>; label: { label: ReviewLabel; source: "user" | "fixed" | "overruled" } | null }>;
+  reviews: Array<{ id: string; lines: string[]; feedback: Array<ReviewLabel | null>; label: { label: ReviewLabel; source: "user" | "fixed" | "overruled" | "missed" } | null }>;
   /** Guardian improving its own reviewer from those verdicts. */
   improve: {
     labelled: number;
@@ -55,6 +61,8 @@ export interface PanelViewModel {
     stage: string | null;
     usingImproved: boolean;
     latest: { id: string; kept: boolean; reason: string; heldOut: number; old?: { correct: number }; new?: { correct: number }; diff: string; hypotheses: string[]; applied: boolean } | null;
+    /** What the running or latest try costs on the user's Cursor plan: reviews replayed and, at most, search calls. */
+    cost: { reviews: number; searchCallsMax: number } | null;
   };
   /** Cursor doesn't load project hooks in an untrusted workspace. */
   hooksDisabled: boolean;
@@ -137,11 +145,16 @@ function buildGoalRun(records: AuditRecord[]): PanelViewModel["goalRun"] {
   for (let i = records.length - 1; i >= 0; i -= 1) {
     const r = records[i]!;
     if (r.kind === "goal.round") {
-      return { ts: r.ts, outcome: "working", changedSinceReview: false, round: r.round, detail: [...r.unproved], extras: r.extras, changes: [], reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: null, seconds: null, tokens: r.tokens ?? null };
+      return { ts: r.ts, outcome: "working", skipped: [], passedReview: null, saidMissed: false, changedSinceReview: false, round: r.round, detail: [...r.unproved], extras: r.extras, changes: [], reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: null, seconds: null, tokens: r.tokens ?? null };
     }
     if (r.kind === "goal.end") {
-      const detail = r.outcome === "proved" ? (r.proved ?? []).map(proofLine) : r.reason ? [r.reason] : (r.unproved ?? []);
-      return { ts: r.ts, outcome: r.outcome, changedSinceReview: r.changedSinceReview === true, round: null, detail, extras: r.extras ?? [], changes: groupChanges(r.changes ?? []), reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: r.rounds ?? null, seconds: r.seconds ?? null, tokens: r.tokens ?? null };
+      const backed = r.outcome === "proved" || r.outcome === "unchecked";
+      const detail = backed ? (r.proved ?? []).map(proofLine) : r.reason ? [r.reason] : (r.unproved ?? []);
+      // The review that let this run through, when one ran and raised nothing: what "this wasn't done" would label.
+      const before = records.slice(0, i).reverse().find((x) => x.kind === "goal.review" && x.goalHash === r.goalHash);
+      const passedReview = backed && before?.kind === "goal.review" && before.ran && before.id && before.fails.length + before.extra.length === 0 ? before.id : null;
+      const saidMissed = passedReview !== null && records.some((x) => x.kind === "review.feedback" && x.reviewId === passedReview && x.label === "missed");
+      return { ts: r.ts, outcome: r.outcome, skipped: r.skipped ?? [], passedReview, saidMissed, changedSinceReview: r.changedSinceReview === true, round: null, detail, extras: r.extras ?? [], changes: groupChanges(r.changes ?? []), reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: r.rounds ?? null, seconds: r.seconds ?? null, tokens: r.tokens ?? null };
     }
   }
   return null;
@@ -150,9 +163,13 @@ function buildGoalRun(records: AuditRecord[]): PanelViewModel["goalRun"] {
 function goalStatus(phase: PanelViewModel["goalPhase"], run: PanelViewModel["goalRun"]): PanelViewModel["status"] {
   if (phase === "none") return { lamp: "idle", word: "no goal" };
   if (phase === "paused") return { lamp: "idle", word: "paused" };
-  // The record backs every item, but the review still objects to this very state: not a clean "proved".
+  // An older record: proved with the review's objection still attached. Newer ones end as "disputed" outright.
   if (phase === "complete" && run?.outcome === "proved" && run.reviewer.length) return { lamp: "warn", word: "disputed" };
+  // Both goal keepers accepted it, but a check didn't run: complete, and not proved.
+  if (phase === "complete" && run?.outcome === "unchecked") return { lamp: "warn", word: "unchecked" };
   if (phase === "complete") return run?.outcome === "proved" ? { lamp: "on", word: "proved" } : { lamp: "idle", word: "closed" };
+  if (run?.outcome === "disputed") return { lamp: "warn", word: "disputed" };
+  if (run?.outcome === "unverified") return { lamp: "warn", word: "unverified" };
   if (run?.outcome === "budget_limited") return { lamp: "warn", word: "over budget" };
   if (run?.outcome === "blocked") return { lamp: "warn", word: "blocked" };
   if (run?.outcome === "stalled" || run?.outcome === "limit") return { lamp: "warn", word: "stalled" };
@@ -174,7 +191,7 @@ const REVIEWS_SHOWN = 3;
 function buildReviews(records: AuditRecord[]): PanelViewModel["reviews"] {
   const labels = reviewLabels(records);
   const feedback = new Map<string, Map<number, ReviewLabel>>();
-  for (const r of records) if (r.kind === "review.feedback") feedback.set(r.reviewId, (feedback.get(r.reviewId) ?? new Map()).set(r.index, r.label));
+  for (const r of records) if (r.kind === "review.feedback" && r.label !== "missed") feedback.set(r.reviewId, (feedback.get(r.reviewId) ?? new Map()).set(r.index, r.label));
   return records
     .filter((r): r is GoalReviewRecord & { id: string } => r.kind === "goal.review" && Boolean(r.id) && objectionLines(r).length > 0)
     .slice(-REVIEWS_SHOWN)
@@ -193,6 +210,7 @@ function buildImprove(records: AuditRecord[], usingImproved: boolean): PanelView
   const applies = records.filter((r) => r.kind === "improve.apply" || r.kind === "improve.undo");
   const lastApply = applies[applies.length - 1];
   const applied = Boolean(last && usingImproved && lastApply?.kind === "improve.apply" && lastApply.runId === last.id);
+  const lastStart = [...records].reverse().find((r) => r.kind === "improve.start");
   return {
     labelled: labelled.length,
     ready: enoughToImprove(labelled),
@@ -200,6 +218,7 @@ function buildImprove(records: AuditRecord[], usingImproved: boolean): PanelView
     stage: improveRunning(records) ? ([...records].reverse().find((r) => r.kind === "improve.progress") as { stage?: string } | undefined)?.stage ?? null : null,
     usingImproved,
     latest: last ? { id: last.id, kept: last.kept, reason: last.reason, heldOut: last.heldOut, ...(last.old ? { old: last.old } : {}), ...(last.new ? { new: last.new } : {}), diff: last.diff, hypotheses: last.hypotheses, applied } : null,
+    cost: lastStart?.kind === "improve.start" && lastStart.reviews !== undefined ? { reviews: lastStart.reviews, searchCallsMax: lastStart.searchCallsMax ?? 0 } : null,
   };
 }
 
@@ -216,7 +235,7 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
       status: { lamp: "idle", word: "no goal" },
       goalRun: null,
       reviews: [],
-      improve: { labelled: 0, ready: false, running: false, stage: null, usingImproved: false, latest: null },
+      improve: { labelled: 0, ready: false, running: false, stage: null, usingImproved: false, latest: null, cost: null },
       goalPhase: "none",
       hooksDisabled: inputs.workspaceTrusted === false,
       tour: buildTour(inputs),

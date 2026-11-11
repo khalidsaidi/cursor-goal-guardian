@@ -21,9 +21,12 @@ The user steers through chat; Guardian keeps the record. Follow this protocol:
    keep going on the rest. Tell the user about it when you close. Ask only when nothing is left to do.
 6. When every 'done when' item is done, call `update_goal` with status `complete` and your proof.
    Guardian checks it against its own record and sends you back with what doesn't hold. When the
-   record agrees, an independent reviewer checks the project and may send objections back: fix what
-   holds up, and answer what doesn't with evidence. Never remove finished work to make it fit the
-   record: if they disagree, tell the user and ask.
+   record agrees, an independent reviewer and an evaluator check the work and may send objections
+   back: fix what holds up, and answer what doesn't with evidence. The goal is complete only when
+   both goal keepers' own code (Codex's and DeepSeek Harness's) accept that report. If the answer
+   says `unchecked`, say in your closing message that the work wasn't independently checked; if it
+   says `disputed` or `unverified`, tell the user why and stop. Never remove finished work to make
+   it fit the record: if they disagree, tell the user and ask.
 7. When the user changes direction ('actually, let's...'), call `guardian_change_goal` with their
    words in `user_words`: those words become the goal. Only the user changes the goal.
 8. When the user asks about progress or 'where were we', answer from `get_goal`, not memory. Stay

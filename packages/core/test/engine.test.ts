@@ -23,6 +23,8 @@ async function ws(goal = "Add CSV export", criteria = ["the export test passes"]
   await fs.mkdir(p.telemetryDir, { recursive: true });
   await fs.writeFile(p.config, "{}");
   await fs.writeFile(p.contract, JSON.stringify({ ...defaultContract(), goal, successCriteria: criteriaFromTexts(criteria), constraints: [] }));
+  // Cursor's prompt hook reports the user's message before any work: the turn their tools and driver judge by.
+  await recordUserPrompt(root, goal, "c1", "agent");
   return root;
 }
 const view = async (root: string) => engineView(await readGoalRecords(root));
@@ -182,10 +184,9 @@ describe("Guardian's flows go through the service", () => {
     const answer = await submitGoalReport(root, { status: "complete", proofs: [{ criterion: "sc_1", command: "make test", quote: "12 passed" }, { criterion: "sc_2", command: "make test", quote: "12 passed" }], changes: [{ file: "a.js", serves: "sc_1" }] });
     delete process.env.GOAL_GUARDIAN_REVIEWER;
     expect(answer.accepted).toBe(true);
-    // Accepted, but the goal is completed where the run ends, with its receipts.
-    expect((await view(root))!.phase).toBe("active");
-    expect(await stop(root, 2)).toBeNull();
+    // Their update_goal tool completed it in that same report, in the goal round their driver had admitted.
     expect(await view(root)).toMatchObject({ phase: "complete", roundsStarted: 2 });
+    expect(await stop(root, 2)).toBeNull();
     expect(await phase(root)).toBe("complete");
   });
 

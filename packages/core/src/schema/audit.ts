@@ -245,14 +245,26 @@ export const reviewFeedbackRecordSchema = z
     kind: z.literal("review.feedback"),
     reviewId: z.string(),
     index: z.number().int().nonnegative(),
-    label: z.enum(["right", "wrong"]),
+    /** right and wrong judge an objection; missed says a review that passed should have objected. */
+    label: z.enum(["right", "wrong", "missed"]),
   })
   .strict();
 
 const improveScoreSchema = z.object({ correct: z.number().int().nonnegative(), catches: z.number().int().nonnegative() }).strict();
 
 /** The user asked Guardian to try improving its reviewer. */
-export const improveStartRecordSchema = z.object({ ...base, kind: z.literal("improve.start"), id: z.string() }).strict();
+export const improveStartRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("improve.start"),
+    id: z.string(),
+    /** Started by Guardian itself once enough verdicts had come in. */
+    auto: z.boolean().optional(),
+    /** What the run is expected to spend on the user's Cursor plan: reviews replayed, and model calls for the search at most. */
+    reviews: z.number().int().nonnegative().optional(),
+    searchCallsMax: z.number().int().nonnegative().optional(),
+  })
+  .strict();
 
 /** How far an improvement run has got, for the panel. */
 export const improveProgressRecordSchema = z.object({ ...base, kind: z.literal("improve.progress"), id: z.string(), stage: z.string() }).strict();
@@ -263,6 +275,10 @@ export const improveRunRecordSchema = z
     ...base,
     kind: z.literal("improve.run"),
     id: z.string(),
+    /** The labelled cases this run learned from, as one fingerprint: a new batch of labels gives a new one. */
+    labels: z.string().optional(),
+    /** Started by Guardian itself, not by a click. */
+    auto: z.boolean().optional(),
     kept: z.boolean(),
     reason: z.string(),
     train: z.number().int().nonnegative(),
@@ -278,7 +294,7 @@ export const improveRunRecordSchema = z
   .strict();
 
 /** The user switched the workspace to an improved reviewer, or back to the built-in one. */
-export const improveApplyRecordSchema = z.object({ ...base, kind: z.literal("improve.apply"), runId: z.string() }).strict();
+export const improveApplyRecordSchema = z.object({ ...base, kind: z.literal("improve.apply"), runId: z.string(), auto: z.boolean().optional() }).strict();
 export const improveUndoRecordSchema = z.object({ ...base, kind: z.literal("improve.undo") }).strict();
 
 export const goalEndRecordSchema = z
@@ -287,7 +303,16 @@ export const goalEndRecordSchema = z
     kind: z.literal("goal.end"),
     conversationId: z.string(),
     goalHash: z.string(),
-    outcome: z.enum(["proved", "blocked", "set_aside", "stalled", "limit", "stopped", "budget_limited"]),
+    /**
+     * proved: both goal keepers accepted the completion and both checks ran clean. unchecked: both accepted, but a
+     * check didn't run or the last state wasn't reviewed. disputed: the review still objects to the very state
+     * reported, after its reviews ran out. unverified: a goal keeper's own code didn't run, so nothing could be accepted.
+     */
+    outcome: z.enum(["proved", "unchecked", "disputed", "unverified", "blocked", "set_aside", "stalled", "limit", "stopped", "budget_limited"]),
+    /** Whose rule ended the run, where it wasn't the agent's own report: Guardian's stall rule, Cursor's follow-up limit, or a goal keeper. */
+    by: z.enum(["guardian", "cursor", "deepseek", "codex"]).optional(),
+    /** Checks that didn't run on this state, each with why. */
+    skipped: z.array(z.string()).optional(),
     rounds: z.number().int().nonnegative().optional(),
     seconds: z.number().int().nonnegative().optional(),
     tokens: z.number().int().nonnegative().optional(),

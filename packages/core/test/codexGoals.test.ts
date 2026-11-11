@@ -141,7 +141,8 @@ describe("Codex's goal store beside the goal loop", () => {
     await turn(root, "add the export");
     // The goal was in the contract before the store knew it: the first accounting gives it to the store.
     const first = await stop(root, 400);
-    expect(store.log().map((r) => r.op)).toEqual(["account", "set", "account"]);
+    // ... and the goal reaches both goal keepers before the round, which tells this store-only build once more.
+    expect(store.log().map((r) => r.op)).toEqual(["account", "set", "account", "set"]);
     expect(store.log()[0]).toMatchObject({ op: "account", tokens: 400 });
     expect(first).toContain("- Tokens used: 400\n- Token budget: none\n- Tokens remaining: unbounded");
     expect((await setGoalBudget(root, 1000)).goal).toMatchObject({ token_budget: 1000, tokens_used: 400, status: "active" });

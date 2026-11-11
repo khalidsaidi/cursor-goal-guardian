@@ -27,17 +27,23 @@ export interface LabelledCase {
   reviewCase: ReviewCase;
   /** right: it should have objected; wrong: it shouldn't have. */
   label: ReviewLabel;
-  source: "user" | "fixed" | "overruled";
+  source: "user" | "fixed" | "overruled" | "missed";
 }
 
-export async function recordReviewFeedback(root: string, reviewId: string, index: number, label: ReviewLabel): Promise<void> {
+/** New labelled cases needed since the last try before Guardian tries again by itself. */
+export const NEW_LABELS_PER_RUN = 4;
+
+export async function recordReviewFeedback(root: string, reviewId: string, index: number, label: ReviewLabel | "missed"): Promise<void> {
   await appendAudit(root, { ts: nowIso(), kind: "review.feedback", reviewId, index, label });
 }
 
 const isEditOf = (r: AuditRecord): boolean => r.kind === "action.observed" && r.actionType === "edit";
 
 /**
- * Labels for reviews that objected, from what people did. The user's own word wins. Without it, an objection the
+ * Labels from what people did. A review that passed the work can be labelled too: when the user says the goal
+ * wasn't done after all, that review missed it, and it should have objected.
+ *
+ * For reviews that objected: The user's own word wins. Without it, an objection the
  * agent fixed (files changed, then the next review on that goal passed) was right, and the user marking the goal done
  * while it still stood was wrong. The agent arguing back is not a label.
  */
@@ -62,8 +68,13 @@ export function reviewLabels(records: AuditRecord[]): Map<string, { label: Revie
   for (let [id, feedback] of said) {
     const review = reviews.find((r) => r.id === id);
     const total = review ? review.fails.length + review.extra.length : 0;
+    // The user said the work this review passed wasn't done: it should have objected.
+    if (review && total === 0 && feedback.some((f) => f.label === "missed")) {
+      out.set(id, { label: "right", source: "missed" });
+      continue;
+    }
     // The evaluator's lines come after the reviewer's own and aren't what RRSI improves: a verdict on one isn't a label.
-    feedback = feedback.filter((f) => f.index < total);
+    feedback = feedback.filter((f) => f.index < total && f.label !== "missed");
     // One objection the user calls right makes the review right to object; it was wrong only if every one was.
     if (feedback.some((f) => f.label === "right")) out.set(id, { label: "right", source: "user" });
     else if (total > 0 && feedback.length >= total) out.set(id, { label: "wrong", source: "user" });
@@ -248,7 +259,7 @@ export interface ImproveResult {
  * own domain, scores the current reviewer on the held-out cases, lets RRSI search on the rest, and scores RRSI's
  * winner on the same held-out cases. A winner that does better there without losing a catch waits for the user.
  */
-export async function improveReviewer(root: string, rsi: RsiPaths): Promise<ImproveResult> {
+export async function improveReviewer(root: string, rsi: RsiPaths, opts: { auto?: boolean } = {}): Promise<ImproveResult> {
   const records = await readAuditTail(root, AUDIT_WINDOW);
   if (improveRunning(records)) return { status: "running" };
   const cases = await labelledCases(root, records);
@@ -257,10 +268,11 @@ export async function improveReviewer(root: string, rsi: RsiPaths): Promise<Impr
   const started = Date.now();
   const cfg = rsiConfig(rsi);
   const est = estimateImprove(cases, cfg);
-  await appendAudit(root, { ts: nowIso(), kind: "improve.start", id });
+  const labelSet = labelsFingerprint(cases);
+  await appendAudit(root, { ts: nowIso(), kind: "improve.start", id, ...(opts.auto ? { auto: true } : {}), reviews: est.reviews, searchCallsMax: est.searchCallsMax });
   const progress = (stage: string): Promise<void> => appendAudit(root, { ts: nowIso(), kind: "improve.progress", id, stage });
   const finish = async (rest: Omit<ImproveRunRecord, "ts" | "kind" | "id" | "train" | "heldOut" | "seconds" | "calls">): Promise<ImproveResult> => {
-    const run: ImproveRunRecord = { ts: nowIso(), kind: "improve.run", id, train: est.evolve, heldOut: est.heldOut, seconds: Math.round((Date.now() - started) / 1000), calls: est.reviews, ...rest };
+    const run: ImproveRunRecord = { ts: nowIso(), kind: "improve.run", id, labels: labelSet, ...(opts.auto ? { auto: true } : {}), train: est.evolve, heldOut: est.heldOut, seconds: Math.round((Date.now() - started) / 1000), calls: est.reviews, ...rest };
     await appendAudit(root, run);
     return { status: "done", run };
   };
@@ -338,10 +350,34 @@ export function improveRunning(records: AuditRecord[]): boolean {
 }
 
 /** Switch the workspace to a kept proposal. */
-export async function applyImprovement(root: string, runId: string): Promise<void> {
+export async function applyImprovement(root: string, runId: string, auto = false): Promise<void> {
   const text = await fsp.readFile(candidatePath(root, runId), "utf8");
   await writeHarness(root, "reviewer", text);
-  await appendAudit(root, { ts: nowIso(), kind: "improve.apply", runId });
+  await appendAudit(root, { ts: nowIso(), kind: "improve.apply", runId, ...(auto ? { auto: true } : {}) });
+}
+
+/** One fingerprint for a set of labelled cases: which reviews, and what each was judged. */
+export function labelsFingerprint(cases: LabelledCase[]): string {
+  return createHash("sha256").update(cases.map((c) => `${c.reviewCase.id}:${c.label}`).sort().join("\n")).digest("hex").slice(0, 16);
+}
+
+/**
+ * Guardian improving its reviewer by itself. It runs when there are enough labelled cases of both kinds and at least
+ * NEW_LABELS_PER_RUN more than the last try had, never two at once. RRSI's result is applied only when the gate in
+ * improveReviewer kept it: more right on cases RRSI never saw, and no gap the current reviewer caught lost. Every
+ * run and every apply is on the record, and the panel shows it with an Undo. Null when there was nothing to do.
+ */
+export async function autoImprove(root: string, rsi: RsiPaths): Promise<ImproveResult | null> {
+  const records = await readAuditTail(root, AUDIT_WINDOW);
+  if (improveRunning(records)) return null;
+  const cases = await labelledCases(root, records);
+  if (!enoughToImprove(cases)) return null;
+  const runs = records.filter((r): r is ImproveRunRecord => r.kind === "improve.run");
+  const last = runs[runs.length - 1];
+  if (last && (last.labels === labelsFingerprint(cases) || cases.length < last.train + last.heldOut + NEW_LABELS_PER_RUN)) return null;
+  const result = await improveReviewer(root, rsi, { auto: true });
+  if (result.run?.kept) await applyImprovement(root, result.run.id, true);
+  return result;
 }
 
 /** Back to the built-in reviewer. */

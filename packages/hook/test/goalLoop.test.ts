@@ -20,10 +20,13 @@ async function ws(): Promise<TestWorkspace> {
   return w;
 }
 const stop = (loop_count = 0) => ({ hook_event_name: "stop", status: "completed", loop_count });
+/** The user's message, as Cursor's prompt hook reports it before the agent works: no round starts without one. */
+const asked = (root: string, prompt = "fix the parser") => run(root, { hook_event_name: "beforeSubmitPrompt", prompt, composer_mode: "agent" });
 
 describe("the goal loop through the built hook", () => {
   it("an editing turn is sent back with the goal and the facts, in Cursor's shape", async () => {
     const w = await ws();
+    asked(w.root);
     run(w.root, { hook_event_name: "afterFileEdit", file_path: path.join(w.root, "src/csv.js") });
     const out = run(w.root, stop());
     expect(String(out.followup_message)).toMatch(/^Goal Guardian: round 1 of 20[\s\S]*Fix the CSV parser[\s\S]*not accounted for: src\/csv\.js/);
@@ -80,6 +83,7 @@ describe("the goal loop through the built hook", () => {
   it("escapes non-ASCII goal text in what it prints", async () => {
     const w = await makeWorkspace({ goal: "Corrige le problème 日本", successCriteria: ["ok"] });
     made.push(w);
+    asked(w.root, "corrige-le");
     run(w.root, { hook_event_name: "afterFileEdit", file_path: path.join(w.root, "a.js") });
     const res = spawnSync(process.execPath, [DIST], { input: JSON.stringify({ workspace_roots: [w.root], conversation_id: "c1", ...stop() }), encoding: "utf8" });
     expect(res.stdout).toMatch(/^[\x00-\x7f]*$/);
@@ -88,6 +92,7 @@ describe("the goal loop through the built hook", () => {
 
   it("carries the turn's tokens from the stop hook", async () => {
     const w = await ws();
+    asked(w.root);
     run(w.root, { hook_event_name: "afterFileEdit", file_path: path.join(w.root, "a.js") });
     run(w.root, { ...stop(), input_tokens: 700, output_tokens: 300, cache_read_tokens: 9000 });
     expect(auditOfKind(await readAudit(w.root), "goal.round")[0]).toMatchObject({ tokens: 1000 });

@@ -4,6 +4,7 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { makeWorkspace, readAudit, auditOfKind, type TestWorkspace } from "cursor-goal-guardian-testkit";
+import { recordUserPrompt } from "@goal-guardian/core";
 
 let ws: TestWorkspace;
 let client: Client;
@@ -19,6 +20,8 @@ beforeAll(async () => {
     successCriteria: ["Users can export the report table as CSV"],
     constraints: ["No new dependencies"],
   });
+  // Cursor's prompt hook reports the user's message before the agent calls a tool: the turn their tools judge by.
+  await recordUserPrompt(ws.root, "Ship the CSV export feature", "c1", "agent");
   client = new Client({ name: "mcp-contract-tests", version: "0.0.0" });
   const transport = new StdioClientTransport({
     command: path.join(process.cwd(), "node_modules", ".bin", "tsx"),
@@ -68,6 +71,9 @@ describe("guardian_change_goal", () => {
   afterEach(async () => { await fs.writeFile(contractFile(), saved); });
 
   it("the user's words become the goal, a list in them the done-when items, and items can be added", async () => {
+    // The words have to be the user's own: Cursor's prompt hook reported them.
+    await recordUserPrompt(ws.root, "Ship the CSV export feature, plus filters", "c1", "agent");
+    await recordUserPrompt(ws.root, "Ship it.\n- one thing\n- another thing", "c1", "agent");
     const result = await callJson("guardian_change_goal", {
       user_words: "Ship the CSV export feature, plus filters",
       add_criteria: ["Filter state is preserved in the export"],

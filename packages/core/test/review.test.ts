@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  appendAudit, defaultContract, getGuardianPaths, makeReviewCopy, nowIso, parseReview, readAuditTail, recordShellOutput, recordUserPrompt,
+  appendAudit, defaultContract, getGuardianPaths, goalPhaseOf, readContractSafe, makeReviewCopy, nowIso, parseReview, readAuditTail, recordShellOutput, recordUserPrompt,
   resolveReviewer, reviewLines, reviewPrompt, runGoalStop, runReview, submitGoalReport, MAX_REVIEWS, REVIEW_PROMPT,
 } from "../src/index.js";
 
@@ -191,17 +191,19 @@ describe("the reviewer in the goal loop", () => {
     expect(await stop(other)).toBeNull();
   });
 
-  it(`reviews ${MAX_REVIEWS} times at most per run; after that the record decides and the last objection goes to the user`, async () => {
+  it(`reviews ${MAX_REVIEWS} times at most per run; the same report after that is recorded as disputed, never proved`, async () => {
     const root = await doneWork();
     process.env.GOAL_GUARDIAN_REVIEWER = await answering(OBJECTS);
     for (let n = 0; n < MAX_REVIEWS; n += 1) {
       expect((await submitGoalReport(root, report)).accepted).toBe(false);
       expect(await stop(root, n)).toContain("Reviewer:");
     }
-    expect((await submitGoalReport(root, report)).accepted).toBe(true);
+    // The third identical report: the objection to this very state stands. The run ends disputed and the goal stays open.
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, outcome: "disputed", unproved: expect.arrayContaining(["Reviewer: sc_1 isn't done: the export is a comment, not code"]) });
     expect(await stop(root, MAX_REVIEWS)).toBeNull();
     expect(await kinds(root, "goal.review")).toHaveLength(MAX_REVIEWS);
-    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "proved", reviewer: expect.arrayContaining(["Reviewer: sc_1 isn't done: the export is a comment, not code"]) }]);
+    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "disputed", reviewer: expect.arrayContaining(["Reviewer: sc_1 isn't done: the export is a comment, not code"]) }]);
+    expect(goalPhaseOf(await readAuditTail(root, 1000), await readContractSafe(root))).toBe("active");
   });
 
   it("an objection the agent answered by changing the project isn't left standing: that state just wasn't reviewed again", async () => {
@@ -216,10 +218,11 @@ describe("the reviewer in the goal loop", () => {
     await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js", conversationId: "c1" });
     await tick();
     await recordShellOutput(root, { command: "make test", output: "12 passed", durationMs: 0 });
-    expect((await submitGoalReport(root, report)).accepted).toBe(true);
+    // Both goal keepers accept it, but this state was never reviewed: complete and unchecked, not proved.
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
     expect(await stop(root, MAX_REVIEWS)).toBeNull();
     const [end] = await kinds(root, "goal.end");
-    expect(end).toMatchObject({ outcome: "proved", changedSinceReview: true });
+    expect(end).toMatchObject({ outcome: "unchecked", changedSinceReview: true, skipped: [expect.stringContaining("wasn't reviewed again")] });
     expect(end).not.toHaveProperty("reviewer");
   });
 });

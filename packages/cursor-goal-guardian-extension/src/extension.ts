@@ -6,7 +6,7 @@ import {
   readContractSafe,
   writeContract,
 } from "@goal-guardian/core";
-import { applyGoalCommand, applyReviewCommand } from "./goalControls.js";
+import { applyGoalCommand, applyReviewCommand, improveInBackground } from "./goalControls.js";
 import { PanelController } from "./panel/panelController.js";
 import { StatusBar } from "./statusBar.js";
 import { applySetup, connectWorkspace, doctorIntegration, offerMcpEnableGuidance, runUninstall } from "./setup.js";
@@ -49,6 +49,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
   const statusBar = new StatusBar(context);
   controller.onDidUpdate((vm) => statusBar.update(vm));
+  // Whenever what the panel shows changes (a verdict, a fixed objection, a goal marked done), Guardian checks whether
+  // there is enough new to learn from and, if so, improves its reviewer in the background by itself.
+  controller.onDidUpdate(() => {
+    if (root) improveInBackground(root, context.extensionPath, () => controller.refresh());
+  });
 
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(PanelController.viewType, controller));
 

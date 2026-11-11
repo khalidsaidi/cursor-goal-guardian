@@ -1,6 +1,6 @@
 import path from "node:path";
 import * as vscode from "vscode";
-import { applyImprovement, controlGoal, improveEstimate, improveReviewer, lastActiveConversation, readAuditTail, recordReviewFeedback, undoImprovement, type RsiPaths } from "@goal-guardian/core";
+import { applyImprovement, autoImprove, controlGoal, lastActiveConversation, readAuditTail, recordReviewFeedback, undoImprovement, type RsiPaths } from "@goal-guardian/core";
 
 export type GoalCommand = "goal.pause" | "goal.resume" | "goal.done" | "goal.work";
 
@@ -44,32 +44,38 @@ export function bundledRsi(extensionPath: string): RsiPaths {
 }
 
 /**
- * The reviewer buttons: a verdict on one objection, trying an improvement, applying one, or going back to the
- * built-in reviewer. Improving spends the user's plan and takes a while, so it asks first, then runs on and the
- * panel follows its progress.
+ * The reviewer buttons: a verdict on one objection, saying a passed goal wasn't done, using a kept improvement
+ * again, or going back to the built-in reviewer. Improving itself has no button: see improveInBackground.
  */
 export async function applyReviewCommand(root: string, command: string, refresh: () => Promise<void>, extensionPath: string): Promise<void> {
   const [verb, id, index] = command.split(":");
   if ((verb === "review.right" || verb === "review.wrong") && id && index !== undefined) {
     await recordReviewFeedback(root, id, Number(index), verb === "review.right" ? "right" : "wrong");
-  } else if (verb === "review.improve") {
-    const rsi = bundledRsi(extensionPath);
-    const est = await improveEstimate(root, rsi);
-    if (!est) return;
-    const go = "Improve";
-    const answer = await vscode.window.showInformationMessage(
-      `Improve the reviewer with Google's RRSI? It learns from ${est.evolve} of your reviews and tests the result on ${est.heldOut} others. That's about ${est.reviews} reviews and up to ${est.searchCallsMax} more calls to your Cursor model.`,
-      { modal: true },
-      go,
-    );
-    if (answer !== go) return;
-    void improveReviewer(root, rsi)
-      .catch((err) => vscode.window.showWarningMessage(`Goal Guardian: improving the reviewer failed: ${err instanceof Error ? err.message : String(err)}`))
-      .finally(() => void refresh());
-    setTimeout(() => void refresh(), 1500);
+  } else if (verb === "review.missed" && id) {
+    await recordReviewFeedback(root, id, 0, "missed");
   } else if (verb === "review.apply" && id) {
     await applyImprovement(root, id).catch((err) => vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`));
   } else if (verb === "review.undo") {
     await undoImprovement(root);
   }
+  improveInBackground(root, extensionPath, refresh);
+}
+
+let improving = false;
+
+/**
+ * Guardian improves its reviewer by itself, in the background, whenever enough new verdicts have come in: no
+ * button and no dialog. core's autoImprove decides whether there is anything to do and applies only a result
+ * that passed its gate; the panel shows each run, what it cost, and an Undo. Called after every panel refresh and
+ * every verdict, it does nothing when a run is already going.
+ */
+export function improveInBackground(root: string, extensionPath: string, refresh: () => Promise<void>): void {
+  if (improving) return;
+  improving = true;
+  void autoImprove(root, bundledRsi(extensionPath))
+    .then((result) => (result ? refresh() : undefined))
+    .catch(() => undefined)
+    .finally(() => {
+      improving = false;
+    });
 }

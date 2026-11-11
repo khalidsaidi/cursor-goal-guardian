@@ -14,6 +14,7 @@ export * from "./goal/review.js";
 export * from "./goal/evaluator.js";
 export * from "./goal/codexGoals.js";
 export * from "./goal/trajectory.js";
+export * from "./goal/evidence.js";
 export * from "./goal/harness.js";
 export * from "./goal/cases.js";
 export * from "./goal/improve.js";
