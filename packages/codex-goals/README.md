@@ -18,8 +18,11 @@ that runs all of it, unmodified, for Guardian.
   - `src/continuation.rs`: Codex's continuation scheduling. See below.
 - The store's sqlite files live in `<workspace>/.cursor/goal-guardian/codex/`, kept out of git. Codex's
   runtime creates its other databases there too (state, logs, memories, queue); Guardian uses only the goals.
-- DeepSeek Harness's goal service stays the authority for the goal's phase, revision and rounds. Codex's store
-  is told the same changes and keeps the usage and the budget (`packages/core/src/goal/codexGoals.ts`).
+- Guardian's own goal file is the master copy of the goal. Codex's store holds a copy, is told the same changes,
+  and keeps the usage and the budget; its handlers can refuse a change (`packages/core/src/goal/codexGoals.ts`).
+  Its `complete` is a status change: it judges nothing, and Guardian's own checks decide whether a goal is done.
+  Guardian does not re-create Codex's goal behind the user's back: if the store has no goal, or a paused or
+  blocked one while the goal is active, the run is recorded as unverified until a real user message resyncs it.
 
 ```bash
 cargo build --release --locked
@@ -27,10 +30,11 @@ cargo test --release --locked
 echo '{"op":"set","objective":"Add CSV export","token_budget":50000}' | target/release/goal-guardian-codex-goals --home /tmp/gg-codex
 ```
 
-`scripts/compile-binaries.mjs` builds it for this machine's target when cargo is installed. Rust isn't
-cross-compiled: CI's `codex-goals` job builds it natively on all six shipped architectures and uploads each
-binary; unpack one to `.cache/codex-goals/<target>/` and the packaging picks it up. A package built without
-the binary works as before, without token budgets.
+`scripts/compile-binaries.mjs` builds it for this machine's target when cargo is installed. It has been built
+and run on Linux x64 only (about 197 MB stripped). Rust isn't cross-compiled; a binary built on another platform
+and unpacked to `.cache/codex-goals/<target>/` is picked up by the packaging, but none has been built yet: the CI
+job that would build it exists only in commits that haven't been pushed, so it has never run. A package built without the binary still sends the agent back, but no goal can
+end as proved: runs end unverified.
 
 ## The one adaptation: the continuation turn comes back as data
 

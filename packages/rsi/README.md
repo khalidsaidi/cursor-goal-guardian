@@ -1,7 +1,11 @@
 # packages/rsi: Guardian's domain for Google's RRSI
 
-Guardian improves its own reviewer with RRSI (Regularized Recursive Self-Improvement,
-github.com/google-research/rrsi), vendored unmodified in `third_party/rrsi`. This folder is our side:
+Guardian retunes its reviewer's prompt with RRSI (Regularized Recursive Self-Improvement,
+github.com/google-research/rrsi), vendored unmodified in `third_party/rrsi`. The extension starts a run by itself
+once a workspace has at least 8 labelled reviews of both kinds, and again for every 4 new ones; a result is applied
+only if it loses no catch and gets more right on held-out cases, and the panel has an Undo. It changes the
+reviewer's prompt only, not the evaluator. It has not yet run on a user's real verdicts: the only runs so far are
+on a study rig and against a stand-in agent. This folder is our side:
 
 - `cgg/`: an RRSI domain. Guardian copies it to `domains/cgg/` of a throwaway RRSI checkout it assembles
   under `.cursor/goal-guardian/rsi/` (see `packages/core/src/goal/improve.ts`).

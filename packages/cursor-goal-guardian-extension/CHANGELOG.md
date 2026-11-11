@@ -2,42 +2,39 @@
 
 ## Unreleased
 
-### The goal loop speaks the originals' own words
+Built and run on Linux x64 only so far.
 
-Guardian's send-back instructions were a rewording of other projects' goal features. They are now those projects' own text, unmodified, with credit in `NOTICE`:
+### Other projects' goal code runs beside Guardian's own
 
-- **OpenAI Codex** (Apache-2.0): its continuation prompt goes out with every round, as Codex sends it; a changed goal is announced with its objective-updated prompt.
-- **DeepSeek Harness** (MIT): its `<goal_round>` prompt heads every round and its closing instructions end a run, both from its own functions; an early "blocked" is refused in its words.
+The goal's words and "done when" items stay in Guardian's own goal file, and Guardian's own checks still come first when the agent is sent back and when "done" is accepted. Two projects' goal code now runs beside it, unmodified, with credit in `NOTICE`; each is consulted on every round and can refuse a change, and the goal's phase is read from DeepSeek Harness's record:
 
-Guardian's own part is what neither has: your latest message first, the facts from its record, and how to report proof.
+- **OpenAI Codex**'s goal package (Apache-2.0): holds a copy of the goal, can refuse a change, is asked whether to continue each round, and supplies the continuation instructions, usage accounting and an optional token budget.
+- **DeepSeek Harness**'s four goal packages (MIT): hold a copy of the goal's phase and rounds, can refuse a change, its round driver is asked about each round, and it supplies the round prompt and closing instructions. An early "blocked" is refused by its rule.
 
-### Tools renamed to the originals'
+Their text is most of what the agent is sent on a send-back. Guardian's own part is your latest message first, the facts from its record, and how to report proof. Neither project's code judges whether a goal is done. The Linux package is a 171 MB download that unpacks to 440 MB, and the moment the agent stops and is sent back takes about 0.55 seconds of Guardian's own time (measured on the built programs).
 
-The agent's tools are now `get_goal` and `update_goal`, with Codex's names, descriptions and statuses, plus Guardian's proof fields and `set_aside`. `guardian_change_goal` replaces `guardian_update_goal`. `guardian_get_contract`, `guardian_get_status` and `guardian_report_goal` are gone. The workspace rule is rewritten on upgrade. The agent can now pause a goal, but only by quoting your request to pause.
+### Tools
 
-### Google's evaluator at "done"
+The agent's tools are now `get_goal`, `create_goal` and `update_goal` (each call goes through Codex's and DeepSeek Harness's own tool code as well as Guardian's checks), `goal_command` (DeepSeek Harness's `/goal` command, only when your message is that command) and `guardian_change_goal`, which replaces `guardian_update_goal`. `guardian_get_contract`, `guardian_get_status` and `guardian_report_goal` are gone. The workspace rule is rewritten on upgrade. The agent can pause a goal only by quoting a request to pause from your latest message.
 
-Alongside the item review, the evaluator from Google's Agent Development Kit (Apache-2.0, bundled unmodified) judges the run from Guardian's own record of commands, outputs and edits, on your own Cursor model: one yes-or-no rubric for each of your "done when" lines, word for word, and one for work you didn't ask for. Each rubric it judges not met goes back to the agent like a reviewer objection, in the judge's words, and shows on the panel. It costs five short model calls per review, and is skipped, never blocking, when it can't run or takes too long. Guardian now also records what each edit changed (`telemetry/edits.jsonl`, kept out of git). Only the Linux x64 build carries the evaluator so far.
+### Two checks at "done", and honest outcomes
 
-### Independent review at "done"
+When the agent reports the goal complete and Guardian's record backs every item, two checks run on your own Cursor model before it is accepted:
 
-When the agent reports the goal complete and Guardian's record backs every item, one independent review runs before Guardian accepts it. A separate headless agent on your own Cursor login and default model (`cursor-agent`) works in a throwaway copy of the project. It tries to prove each "done when" item isn't really done, and lists changes no item needs. Its objections go back to the agent as part of the same loop, at most twice per run. After that the record decides, and any objection still standing is shown on the panel as the reviewer's opinion. Without `cursor-agent`, or if the review fails or takes longer than 90 seconds, it's skipped and noted, never blocking. Each review costs one agent request on your Cursor plan.
+- **The reviewer**, Guardian's own: a separate headless agent (`cursor-agent`) in a throwaway copy of the project tries to prove each "done when" item isn't really done and lists changes no item needs. It must give a clear verdict on every item.
+- **The evaluator**, from Google's Agent Development Kit (Apache-2.0, bundled unmodified): it judges Guardian's record of the run, with the real diff and each cited proof added as evidence, against each "done when" item and for unrequested work. It doesn't see the project itself, so when it alone objects, the reviewer checks that claim against the project before it counts.
 
-### The reviewer learns from this workspace
+A goal now ends as one of: **proved** (the proof held and neither check objected), **unchecked** (a check didn't run or didn't answer for an item), **disputed** (an objection wasn't resolved; the same work isn't reviewed twice), **unverified** (part of Guardian couldn't run), **blocked**, **set aside**, **stalled**, out of rounds, or **over budget**. A proof that cites a file not in the project is refused, and a goal file rewritten without you is put back. A review costs one reviewer call, about five evaluator calls, and one more reviewer call when the evaluator alone objects. Guardian also records what each edit changed (`telemetry/edits.jsonl`, kept out of git).
 
-Each review that runs saves a copy of what it looked at under `.cursor/goal-guardian/cases/` (kept out of git; the newest 200, none over 2 MB). Each objection on the panel has **Right call** and **Reviewer was wrong**. Guardian also counts an objection the agent then fixed as right, and one you overrode by marking the goal done as wrong.
+### The reviewer is retuned from your verdicts
 
-Once at least 8 reviews have a verdict, with both kinds, the panel offers **Improve the reviewer**. It runs Google
-Research's RRSI (Regularized Recursive Self-Improvement, Apache-2.0), bundled unmodified with a Python of its own,
-on your labelled cases: a third are held out, RRSI searches on the rest with your own Cursor model in its analyst,
-proposer and critic roles, and its winner is replayed on the held-out third. Before it starts you see roughly how
-many reviews and model calls it will spend. A winner that gets more right there without missing a gap the current
-reviewer caught waits on the panel with its diff and scores until you press **Apply**; **Undo** goes back to the
-built-in reviewer. The VSIX grows by about 40 MB for the bundled Python.
+Each review that runs saves a copy of what it looked at under `.cursor/goal-guardian/cases/` (kept out of git; the newest 200, none over 2 MB). Each objection on the panel has **Right call** and **Reviewer was wrong**, and a goal the review passed has **This wasn't done**. Guardian also counts an objection the agent then fixed as right.
+
+Once at least 8 reviews have a verdict, with both kinds, and again for every 4 new ones, Guardian runs Google Research's RRSI (Apache-2.0, bundled unmodified with a Python of its own) by itself on your labelled cases: a third are held out, RRSI searches on the rest with your own Cursor model, and its winner is replayed on the held-out third. A winner that gets more right there without missing a gap the current reviewer caught is applied, and the panel shows it with **Undo**. It changes the reviewer's prompt only. It has not yet run on anyone's real verdicts.
 
 ### Removed
-- AI review. Scored on real agent runs for the first time, it found no real drift, so it no
-  longer runs or spends your plan. Older workspaces keep working; its old settings are ignored.
+- The session AI review from 1.0 (a different feature from the reviewer above). Scored on real agent runs for
+  the first time, it found no real drift. Older workspaces keep working; its old settings are ignored.
 
 - Word-matching drift flags, with their nudges, the "off the track" section and the
   on-course lamp. On 72 scored agent runs they fired 131 times: the one run a blind judge
@@ -64,16 +61,7 @@ built-in reviewer. The VSIX grows by about 40 MB for the bundled Python.
   them. It only recorded, the goal loop needs hooks anyway, and it taped the person's saves as
   agent edits. Reads and Tab completions are no longer hooked either.
 
-### Added
-- The goal loop. When the agent stops after editing files, it's sent back with your
-  goal and what Guardian's record shows until the goal is proved, truly blocked, set
-  aside, stalled, or out of rounds (20). Proof is checked against commands and output
-  Guardian recorded itself, for any language or tool. Each changed file must be tied to
-  a "done when" line or called extra. No AI calls; each round is an agent turn. Not yet
-  measured.
-- New tool `guardian_report_goal`. Pause (which also stops the running chat), resume
-  and mark done are in the panel. Only you can use them.
-- Only the user changes an existing goal: `guardian_update_goal` now needs their words.
+### Fixed
 - Fixed: Guardian's hook couldn't read Cursor's payload on native Windows, or its workspace path.
 - Updates now refresh the rule in connected workspaces, so the agent's instructions can't go stale.
 

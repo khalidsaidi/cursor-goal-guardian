@@ -1,5 +1,7 @@
 # User-facing content strategy — Goal Guardian 1.0
 
+> **Historical record.** This file describes earlier versions of Goal Guardian and has not been updated. It names tools that no longer exist (`guardian_get_contract`, `guardian_get_status`, `guardian_report_goal`, `guardian_update_goal` and others); the current ones are `get_goal`, `create_goal`, `update_goal`, `goal_command` and `guardian_change_goal`. For the current design see `docs/goal-design.md`.
+
 ## The job to be done
 Convert a visitor into an installer in 10 seconds, an installer into a
 successful first session in 5 minutes (even a junior developer), and a user

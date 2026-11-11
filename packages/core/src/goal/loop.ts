@@ -10,7 +10,7 @@ import { newId, nowIso } from "../clock.js";
 import { readContractSafe } from "../safeReaders.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalEndRecord, GoalReportRecord, GoalControlRecord, GoalReviewRecord, GoalRoundRecord, UserMessageRecord } from "../schema/audit.js";
-import { evaluateReport, projectPath, userAsked, userSaid, type GoalEvaluation } from "./evaluate.js";
+import { evaluateReport, projectPath, userAsked, userSaidLatest, type GoalEvaluation } from "./evaluate.js";
 import { CLOSING, goalBlock, goalBudgetLimitMessage, goalChangedMessage, goalClosingMessage, goalRoundMessage } from "./prompts.js";
 import { budgetOf, codexGoals, codexTool, codexTurn, resolveCodexGoals, type CodexGoal, type CodexGoalAnswer, type CodexToolAnswer, type CodexUsage } from "./codexGoals.js";
 import { reviewEvidence } from "./evidence.js";
@@ -157,8 +157,8 @@ export function agentMode(mode: string | null | undefined): boolean {
 export type GoalPhase = "none" | "active" | "paused" | "complete";
 
 /**
- * Where the goal stands. DeepSeek Harness's goal service is the authority: its own fold over the engine events in
- * these records gives the phase. Their `blocked` is a goal Guardian still shows as open (the run that blocked says
+ * Where the goal stands, read from DeepSeek Harness's own fold over the engine events Guardian saved in these
+ * records. Guardian keeps those events in step with its own goal file, which is the master copy. Their `blocked` is a goal Guardian still shows as open (the run that blocked says
  * so); a completed goal whose words differ from the contract's has been replaced by a new request. Records with no
  * engine events (a workspace from before the engine) are read the old way.
  */
@@ -268,7 +268,7 @@ export async function codexGetGoal(root: string): Promise<unknown> {
   return asked.answer ? codexSaid(asked.answer) : { did_not_run: asked.missing };
 }
 
-const NOT_THE_USERS = "only the user sets or changes the goal. Pass the objective in their own words, quoted exactly from their message.";
+const NOT_THE_USERS = "only the user sets or changes the goal. Pass the objective in their own words, quoted exactly from their latest message.";
 
 /**
  * Their create_goal, for the agent. Guardian's own rule comes first (the goal is the user's words), then their tool
@@ -277,7 +277,7 @@ const NOT_THE_USERS = "only the user sets or changes the goal. Pass the objectiv
 export async function createGoalByTool(root: string, objective: string, maxGoalRounds?: number): Promise<EngineToolResult> {
   await guardContract(root).catch(() => false);
   const prompts = await readUserPrompts(root);
-  if (prompts && !userSaid(objective, prompts)) return { isError: true, text: `Not created: ${NOT_THE_USERS}`, contexts: [] };
+  if (prompts && !userSaidLatest(objective, prompts)) return { isError: true, text: `Not created: ${NOT_THE_USERS}`, contexts: [] };
   const { goal, items } = parseRequest(objective);
   const hash = goalHash(await readContractSafe(root));
   // Codex's own create_goal handler is asked first: like DeepSeek's, it refuses while an unfinished goal exists. The
@@ -306,7 +306,7 @@ export async function updateGoalByTool(root: string, args: { goal_id?: string; r
   const pass: Record<string, unknown> = { action: args.action, ...(args.goal_id ? { goal_id: args.goal_id } : {}), ...(args.revision ? { revision: args.revision } : {}), ...(args.max_goal_rounds ? { max_goal_rounds: args.max_goal_rounds } : {}) };
   if (args.action === "edit" && args.objective?.trim()) {
     const prompts = await readUserPrompts(root);
-    if (prompts && !userSaid(args.objective, prompts)) return { isError: true, text: `Not changed: ${NOT_THE_USERS}`, contexts: [] };
+    if (prompts && !userSaidLatest(args.objective, prompts)) return { isError: true, text: `Not changed: ${NOT_THE_USERS}`, contexts: [] };
     const parsed = parseRequest(args.objective);
     items = parsed.items;
     pass.objective = parsed.goal;

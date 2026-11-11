@@ -1,83 +1,105 @@
 # The goal: design
 
-One goal per workspace, owned by the user. It lives in the contract; its hash is its identity, so changing it starts everything over.
+One goal per workspace, owned by the user. The goal's words and its "done when" items live in Guardian's own file, `.cursor/goal-guardian/contract.json`, and what happened lives in the audit log beside it. The goal's phase is read from DeepSeek Harness's fold over its events, which Guardian saves in that log (`goalPhaseOf` in `loop.ts`); when one of their tools or their `/goal` command changes the objective, the contract follows their log (`contractFollowsEngine`). The goal's hash is its identity, so changing it starts everything over. Linux x64 is the only platform the current build has been run on.
+
+Guardian's own checks gate first, both for sending the agent back and for accepting "done". OpenAI Codex's and DeepSeek Harness's goal code, unmodified, is then asked: each holds the goal's state in its own store, each can refuse a change (a refusal is the agent's answer), each is consulted on every round (DeepSeek Harness's driver must admit it and Codex's scheduling must not decline), and their text is most of what the agent is sent. Neither judges whether a goal is done: in both, "complete" is a plain status change.
 
 ## Phases
 
 | Phase | Entered by | Left by |
 |---|---|---|
 | active | a goal being set, or the user resuming | see below |
-| paused | the user, or the agent quoting the user's words | the user only, from the panel |
-| complete | Guardian's record proving it, or the user marking it done | the user changing the goal |
+| paused | the user from the panel, the user's own `/goal pause` message, or the agent quoting a request to pause from the user's latest message | the user only: from the panel, or by sending `/goal resume` as their message |
+| complete | a report accepted as below, or the user marking it done | the user changing the goal |
 
-A run is the agent's work on the goal in one chat. It ends proved, blocked, set aside, stalled, out of rounds, or stopped.
+DeepSeek Harness's "blocked" phase is shown as an open goal; the user's next message in an agent mode resumes it, which is Guardian's rule.
+
+## How a run ends
+
+A run is the agent's work on the goal in one chat. `goal.end` in the audit log records one of:
+
+| Outcome | When |
+|---|---|
+| proved | The agent's proofs hold against Guardian's record, the reviewer and the evaluator both answered for every item and neither objects, and Codex's handler and DeepSeek Harness's tool both accepted the report |
+| unchecked | As proved, but the reviewer or the evaluator didn't run or didn't answer for an item (no `cursor-agent`, not a git repository, over time, unreadable answer), or the project changed after the last review and no review was left |
+| disputed | A review objected, and either nothing changed since or the reviews for this run were used up. The same project state and report are never reviewed twice, so it stays disputed until the project changes |
+| unverified | Codex's binary or DeepSeek Harness's packages didn't run, their stores disagree (for example Codex's goal is paused or missing), the goal log was busy, or Guardian's stop handler failed |
+| blocked | The agent reported blocked and DeepSeek Harness's tool accepted it: from its third goal round, or at once in a turn the user's message opened, which is recorded as accepted at the agent's word and shown as "blocked (unverified)" |
+| set_aside | The agent quoted, from the user's latest message, a request for only part of the goal or for something else. It covers that message only |
+| stalled | Guardian's rule: three rounds in a row with no change, the same files and the same open items |
+| limit | Cursor's 20 follow-ups for one message, or DeepSeek Harness's cap of 256 rounds for one goal |
+| stopped | The turn was cancelled or failed, or DeepSeek Harness's round driver declined to start a round |
+| budget_limited | A token budget was set at the user's request and Codex's store says it is used up |
+
+Nothing here blocks the agent. Every outcome but proved still lets it stop; the outcome is what the panel and the record show.
 
 ## The loop
 
-Only Cursor's `stop` hook can send an agent back, and only as a visible message. At each stop, in order:
+Only Cursor's `stop` hook can send an agent back, and only as a visible message. At each stop:
 
 1. A cancelled or failed turn closes the run and is never restarted.
-2. Not active: silence.
-3. Nothing changed since the user's latest message and no report: silence. Asking or answering isn't goal work.
-4. A report on a different goal doesn't count. Otherwise judge the latest report.
-5. Three rounds with no edit, the same files and the same open items: stalled.
-6. 20 rounds for one user message: out of rounds.
-7. Otherwise send the agent back with the goal and the facts.
+2. No active goal, a mode that isn't agent work, or nothing changed since the user's latest message with no report: silence.
+3. If the goal file differs from the last goal the user authorised, it is put back and the agent is told (`guard.ts`).
+4. An accepted `set_aside` or `blocked` ends the run.
+5. Guardian's stall rule and Cursor's follow-up limit end it.
+6. Otherwise DeepSeek Harness's round driver is asked to admit a round and Codex is asked for its continuation. If DeepSeek Harness's code can't run, or Codex's goal is in a state it won't continue from while DeepSeek Harness's is active, the run ends unverified. If Codex's binary didn't run at all, the agent is still sent back, with a note that the goal can't be recorded as proved until it does. If the driver declines, the run ends stopped or at its round limit.
+7. The agent is sent back. Each `goal.round` records what Guardian's gates, DeepSeek Harness's driver and Codex's scheduling each decided.
 
-The agent's report is judged again at each stop because the project may have moved since.
+A goal is captured when a turn has changed the project: an edit, or a command after which the tree, the commit, or (outside git) the folder listing differs from when the user's message arrived. Shell-only changes in gitignored paths aren't seen, and a turn that changes nothing is not sent back.
 
-## Whose words the agent hears
-
-The goal loop's instructions are the original projects' own, unmodified. Their sources are vendored in `third_party/` and `scripts/gen-vendored.mjs` copies the text, and transpiles the two TypeScript functions, into `packages/core/src/goal/vendored.generated.ts`; `originals.test.ts` fails if that file is stale or any text differs from its source.
+## What the agent is sent
 
 | Part of a send-back | From |
 |---|---|
 | The user's latest message, and "decide from their words first" | Guardian |
-| `<goal_round>`: objective, round n of 20, how to continue | DeepSeek Harness, `goal-round-driver/src/prompt.ts`, its own function |
+| `<goal_round>`: objective, round n of 256, how to continue | DeepSeek Harness's round driver |
 | The "done when" list and what Guardian's record shows | Guardian |
-| Continuation behaviour, work from evidence, no-progress check, fidelity, completion audit, blocked audit | OpenAI Codex, `ext/goal/templates/goals/continuation.md`, rendered as Codex does for an agent without `update_plan` |
+| Continuation behaviour, work from evidence, no-progress check, fidelity, completion audit, blocked audit, with usage and budget | Codex's own continuation, in the form it gives an agent without `update_plan` |
 | How to report proof, account for changed files, and `set_aside` | Guardian |
 
-A changed goal is announced with Codex's `objective_updated.md`. An accepted `complete` or `blocked` answers with DeepSeek Harness's closing instruction (`tool-goal/src/wrapup.ts`); so does a run that ran out of rounds or stalled, with DeepSeek's `round-limit` blocker code or Guardian's `no-progress`. An early `blocked` is refused in DeepSeek's words, at DeepSeek's threshold of 3 rounds, which is also the number Codex's prompt names.
+Their text is about three quarters of a send-back. A changed goal is announced with Codex's objective-updated notice and its "User set the goal" fragment; an accepted `complete` or `blocked` answers with DeepSeek Harness's closing instruction. When Codex's binary isn't present, Codex's text comes from the copies `scripts/gen-vendored.mjs` reads out of `third_party/codex`, and the run can't end proved.
 
-The MCP tools are Codex's: `get_goal` and `update_goal`, with Codex's names, descriptions and statuses (`complete`, `blocked`, `paused`). Guardian adds what it needs to check a claim (`proofs`, `changes`, `removed`, `reason`, `user_words`) and the status `set_aside`. `guardian_change_goal` is Guardian's own: neither original lets the user redirect an open goal from chat.
+The MCP tools are `get_goal`, `create_goal` and `update_goal` (each call goes through Codex's handler and DeepSeek Harness's tool, and the agent gets both answers), `goal_command` (DeepSeek Harness's `/goal` command, run only when the user's latest message is that command) and Guardian's own `guardian_change_goal`. `update_goal` carries Codex's statuses, DeepSeek Harness's parameters, and what Guardian needs to check a claim (`proofs`, `changes`, `removed`, `reason`, `user_words`) with its own status `set_aside`.
 
-The goal's state is kept by DeepSeek Harness's real goal service, from its published packages at the vendored version, run with a stand-in agent as its own tests do (`packages/core/src/goal/engine.ts`). Every change of phase, objective, revision or round count is one of its `GoalService` calls, saved as `goal.engine` records and replayed in each new process; `goalPhaseOf` reads its `foldGoal`. A send-back is admitted as one of its goal rounds, against its cap of 256 per goal; Cursor's 20 per message still applies. Its "blocked" phase is resumed by the user's next agent-mode message, which is Guardian's policy; "paused" only from the panel, which is also its own rule.
+## How the originals run
 
-Not run yet: DeepSeek Harness's round driver and tool plumbing, and Codex's Rust code. Codex's goal crate builds and passes its tests unmodified, and its goal store runs standalone; its continuation scheduling starts Codex's own turns, so in Cursor the stop hook plays that part. DeepSeek Harness's own tool file calls its tools "Codex-shaped": Codex is the upstream of both.
+**DeepSeek Harness** (`packages/core/src/goal/engine.ts`): its four goal packages from the published npm build 0.2.2-rc.1, bundled into the hook and MCP programs, with a stand-in agent as its own tests use. Guardian tells its session when the user speaks, with the user's real message, and when the agent stops. Its events are saved as `goal.engine` records and replayed in each new process. When the contract and its goal differ, Guardian edits its goal to match; if its log can't be replayed, Guardian resets it. Adapted: one line of `dsh-llm` inlined at build time (`scripts/dsh-bundle.mjs`); a `Promise.withResolvers` polyfill; the driver's prompt delivered by Cursor's stop hook; and, because its "armed" state lasts one process, Guardian re-arms the goal with its `resume` once per stop and records its round-limit block itself when `resume` refuses at the cap.
+
+**Codex** (`packages/codex-goals`, `codexGoals.ts`): a small Rust program of Guardian's linking Codex's goal extension and store at `ac54a05`, fetched by git at build time. Guardian calls its tool handlers and definitions, its turn accounting, its handling of a goal the user changes, and its continuation. Adapted: the continuation is produced in a thread started with Codex's own test support, whose model endpoint is a local capture server, and read back. Its goal is not re-created behind the user's back: a missing or paused goal in its store is unverified until a real user message resyncs it.
 
 ## Proof
 
-No model and no assumption about language or tools. The agent names the proof; Guardian compares text against what it recorded itself:
+No model and no assumption about language or tools. The agent names the proof; Guardian compares text against what it recorded itself (`evaluate.ts`):
 
-- A command must be on the record, have started after the last edit, have printed the quoted line, and the project must not have changed since (`git status` and `git diff`).
+- A command must be on the record, have started after the last edit, have printed the quoted line, and the project must not have changed since (`git status` and `git diff`). A command that only prints text proves nothing, and one that names a path found nowhere in the project is refused.
 - A file must be inside the project, exist, and hold the quoted line.
 
 ## Independent review
 
-When the record backs every item, one review runs before "complete" is accepted (`packages/core/src/goal/review.ts`). `cursor-agent`, on the user's own login and default model, runs headless in a throwaway copy (a shared clone with the working tree laid over it, no `.cursor`, credentials stripped except Cursor's own). It is asked to prove each item isn't done and to list changes no item needs, and answers in JSON. Its objections go back through the same loop. There are at most 2 reviews per run; after that the record decides and a standing objection goes on `goal.end` for the user. No reviewer, an error, unreadable output or more than 90 s means skipped, recorded as `goal.review` with `ran: false`. For tests, `GOAL_GUARDIAN_REVIEWER` replaces the binary and `GOAL_GUARDIAN_REVIEW_PROMPT` the prompt.
+When the record backs every item, two checks run before "complete" is accepted, both on the user's own Cursor model through `cursor-agent`.
 
-## The evaluator
+**The reviewer** (`review.ts`) is Guardian's own: a headless agent in a throwaway copy of the project (a shared clone with the working tree laid over it, no `.cursor`, credentials stripped except Cursor's own), with Guardian's prompt. It tries to prove each item isn't done and lists changes no item needs. It must give a clear verdict on every item: a no in any words is an objection, and a missing or unclear verdict leaves the run unchecked.
 
-Alongside that review, Google's Agent Development Kit judges the run (`packages/core/src/goal/evaluator.ts`). The code is ADK's own `RubricBasedMultiTurnTrajectoryEvaluator`, vendored unmodified in `third_party/adk-python` (github.com/google/adk-python, Apache-2.0); Guardian's adapter is `packages/evaluator`, and it runs on the bundled Python.
+**The evaluator** (`evaluator.ts`, `packages/evaluator`) is Google ADK's `RubricBasedMultiTurnTrajectoryEvaluator`, vendored unmodified in `third_party/adk-python`, with ADK's judge prompt, five samples and aggregation, on the bundled Python. It never sees the project itself. It judges Guardian's record of the run (each command with its output, each edit with its text) plus evidence Guardian adds (`evidence.ts`): the real `git status` and diff, and each cited proof, with anything missing marked absent. The rubrics are the user's "done when" items word for word and one of Guardian's about unrequested work. Guardian also prepends one line telling the judge not to delegate. ADK's evaluators that call Vertex AI are not used.
 
-- **What it reads.** The run as Guardian saw it (`trajectory.ts`): each command with its output and each edit with its text, from `telemetry/shell-output.jsonl` and `telemetry/edits.jsonl`, given to ADK as one invocation whose events are those tool calls and results, with the user's request as the user turn and the agent's own completion report as the final response.
-- **What it judges.** ADK's rubrics are properties answered yes or no. Each of the user's "done when" items is one rubric, word for word; Guardian adds one of its own: "The agent changed nothing that the user's request does not need."
-- **How.** ADK's judge prompt, five samples per judgement (its default) and its aggregation of them. The samples run side by side, which is ADK's own `parallelism_limit` option. The judge model is a `BaseLlm` registered with ADK's registry that asks the user's Cursor model through `cursor-agent`.
-- **What comes back.** Each rubric judged not met goes to the agent as an objection in the judge's own words, through the same loop as the reviewer's.
-- **Cost.** Five calls to the user's Cursor model per review, where the item review is one. Cursor ends a tool call that is silent for 120 s, and progress notices reset that clock, so `update_goal` sends them when the client asks for progress; the evaluator then gets 300 s, otherwise 100 s. Over budget, no model, or no verdict means skipped and recorded, never blocking.
+Because the evaluator reads a log, it can object to something the agent later fixed. So when the evaluator objects to something the reviewer did not, the reviewer checks each such claim against the project in one more call: a confirmed claim goes back to the agent, a claim dismissed with evidence is kept on the record and shown, and a claim it can't settle stands.
 
-ADK is built on pydantic and google-genai, so it needs real packages, not only the standard library: the 17 it loads are pinned in `packages/evaluator/requirements.txt` and installed as wheels beside the bundled Python when the extension is packaged (about 37 MB on linux-x64, the only platform wired so far). ADK's `MultiTurnTrajectoryQuality` and `MultiTurnTaskSuccess` evaluators hand the judging to Vertex AI and need a Google Cloud project, so they aren't used.
-
-RRSI improves the item reviewer's prompt only. The evaluator's prompt is ADK's and is not tuned.
+Objections go back through the same loop. There are at most 2 reviews per run, or up to 4 when the project changed after an objection. Cost per review: one reviewer call, about five evaluator calls, and one more reviewer call when the evaluator alone objects. Cursor ends a tool call that is silent for 120 s, and progress notices reset that clock, so `update_goal` sends them when the client asks for progress; the evaluator then gets 300 s, otherwise 100 s, and the reviewer 90 s. ADK needs real packages: the 17 it loads are pinned in `packages/evaluator/requirements.txt` and installed beside the bundled Python when the extension is packaged.
 
 ## Learning from this workspace
 
-Every review that ran is saved as a case: goal, items, base commit, the work as a binary patch plus new files, the prompt and the verdict (`packages/core/src/goal/cases.ts`). Labels come from what people did (`improve.ts`, `reviewLabels`): the user's verdict on an objection wins; otherwise an objection the agent fixed before a passing review counts as right, and one the user overrode by marking the goal done counts as wrong. The agent arguing back is not a label.
+Every review that ran is saved as a case: goal, items, base commit, the work as a binary patch plus new files, the prompt and the verdict (`cases.ts`). Labels come from the user's verdict on an objection, from the user saying a passed goal wasn't done, and from what the agent did after an objection (`improve.ts`, `reviewLabels`). The agent arguing back is not a label.
 
-`improveReviewer` runs Google Research's RRSI, vendored unmodified in `third_party/rrsi` (commit be50316, Apache-2.0, see `NOTICE`). Guardian assembles a throwaway RRSI checkout under `.cursor/goal-guardian/rsi/`: RRSI's files, Guardian's domain (`packages/rsi/cgg`), the labelled cases split by a stable hash (a third held out), and the current reviewer prompt as the harness. The domain replays one review with a candidate prompt through `goal-guardian-hook replay-review`, and sends RRSI's analyst, digester, proposer and critic calls to `cursor-agent` by replacing `rrsi.llm.generate` at import. Guardian scores the current reviewer on the held-out cases, runs `rrsi.py run` (baseline, calibration, T rounds of m candidates with RRSI's own edit budget, history, leakage critic and selection), and scores RRSI's winner on the same held-out cases. A winner that gets more right without missing a gap the current one caught waits for the user to apply it. Defaults are small (`packages/rsi/cgg/rrsi.json`: T=2, m=2, k=1) because every evaluation and search call spends the user's plan; the panel shows the estimate before it starts. The VSIX bundles python-build-standalone 3.12.16 (release 20261026, checksum-pinned per platform, GUI toolkits, pip and the test suite pruned).
+Once there are at least 8 labelled reviews of both kinds, and again for every 4 new ones, the extension runs Google Research's RRSI by itself (`autoImprove`), vendored unmodified in `third_party/rrsi`, with Guardian's domain (`packages/rsi/cgg`) and its model calls sent to `cursor-agent`. A third of the cases are held out. A new reviewer prompt is applied only if it loses no catch and gets more right on the held-out cases; every run and apply is on the record and the panel has an Undo. It changes the reviewer's prompt only, not the evaluator.
 
-Tested end to end with a stand-in agent (`packages/core/test/improve.test.ts`, `packages/rsi/tests`). It hasn't run on real labelled cases or a real Cursor model yet.
+It has never improved anything from a user's real feedback. What exists is one study run and one replay, both on constructed cases (see the README).
+
+## What Guardian doesn't do
+
+- It never blocks. The agent can always stop; the send-back is a message.
+- It doesn't defend its own files. An agent that forges lines in the audit log, deletes it, or writes its own reviewer prompt under `.cursor/goal-guardian` can reach "proved". Only a rewritten goal file is caught and restored.
+- It can't tell whether a command really tests what the agent says. The reviewer is the check on that.
+- Outside a git repository the reviewer doesn't run, and a path named inside a cited command isn't checked for existence (there is no file list to check against). A file proof that cites a missing file is refused everywhere.
 
 ## Decisions
 
@@ -85,20 +107,21 @@ Tested end to end with a stand-in agent (`packages/core/test/improve.test.ts`, `
 - **Internal Cursor commands are used only for the panel buttons.** If one disappears, the goal state is still right.
 - **Hook output is plain ASCII, and outcomes are in JSON, never exit codes.** A non-zero exit makes Cursor ignore stdout.
 - **User pause survives any later message.** Otherwise any "ok" would let the agent lift it. An abort only ends the run: the next message starts a new one.
-- **Blocked needs 3 turns**, counted by machine. Whether it's the same obstacle stays the agent's call.
-- **Stating user words is checked against what the user actually sent**, for changing the goal, pausing and setting aside. A quote too short to be a request must match the whole message.
+- **Blocked follows DeepSeek Harness's rule**: refused before the third goal round, accepted at once in a turn the user's message opened. Guardian marks the second case as accepted at the agent's word.
+- **Stating user words is checked against the user's latest message**, for setting or changing the goal, its token budget, pausing and setting aside (`userSaidLatest`, `userAsked`). For pausing and setting aside, a quote that is only a piece of the goal doesn't count. One too short to be a request must match the whole message.
+- **The agent writes "done when" items in one case only**: a goal that has none at all (`guardian_change_goal` with `add_criteria`). Once a goal has any, `add_criteria` is refused.
 - **The goal is workspace-level, runs are per chat.** A proved goal is proved everywhere; a set-aside is one message.
 
-## What Cursor does
+## What Cursor did, as observed
 
-From reading Cursor 3.17.19's code, in a local copy, and its hook docs. Some commands and fields below are internal, so an update can change them; each has a fallback. Recheck this table against a new copy when Cursor updates.
+These are observations, not current guarantees. They come from reading Cursor 3.17.19's code in a local copy on Linux (WSL), and its hook docs, in the first week of November 2026. Nothing here has been rechecked against a later Cursor. Some commands and fields below are internal, so an update can change them; each has a fallback. The right-hand column says what Guardian did with each at that time.
 
 **Hooks**
 
 | Topic | Behaviour | What Guardian does |
 |---|---|---|
 | Send-back | `stop` returns `followup_message`, submitted as a normal visible message | The loop |
-| `loop_limit` | At the limit the hook isn't run. The counter resets on any non-follow-up message | Limit 21: 20 rounds and a closing message |
+| `loop_limit` | At the limit the hook isn't run. The counter resets on any non-follow-up message | Limit 21: 20 follow-ups and a closing message |
 | User's queued message | Runs first. The stop for that turn may be `aborted` or missing. A follow-up goes to the queue's end while generating | A missing stop is normal: the next stop picks up the run |
 | Failed command | `afterShellExecution` always fires, with no exit code. Failure shows as `postToolUseFailure`, or `postToolUse` with `exitCode` in a JSON string, depending on the executor | Reads both, for tool `Shell` |
 | Background command | No `afterShellExecution` | Never counts as proof |
@@ -111,37 +134,29 @@ From reading Cursor 3.17.19's code, in a local copy, and its hook docs. Some com
 | Untrusted workspace | Project hooks silently don't load | Panel says so |
 | Other stop hooks | Run in parallel; the last follow-up wins, and user-level beats project-level | A user's own stop hook can replace our send-back |
 
-**Windows**
+**Windows** (seen on native Windows with Cursor 3.17.19 and builds of Guardian from before 2026-11-10; not rechecked since)
 
 - Hooks run through PowerShell with the payload piped from a temp file, and the pipe's output starts with a byte-order mark. The hook strips it.
 - `workspace_roots` arrives as `/c:/Users/...`. The hook converts it.
 - Windows PowerShell 5.1 garbles non-ASCII text in the payload. The hook prints plain ASCII, and quotes of the user's words compare ASCII only. Non-ASCII file paths can still be garbled there.
-- Tested with the real `.exe` through Cursor's exact wrapper, not yet in the app.
+- The hook `.exe` of those earlier builds was run through Cursor's exact wrapper, not inside the app. The current build has run on Linux x64 only.
 
-**Command-line agent**
+**Command-line agent** (Cursor's CLI 2026.10.22, headless, on the Linux rig, November 2026)
 
-Interactive runs fire `stop` and honour the follow-up. Headless runs fire tool hooks but no `stop`, so there's no loop.
+Headless runs fire tool hooks but no `stop`, so there's no loop.
 
-**Commands the panel uses**
+**Commands the panel uses** (Cursor 3.17.19, native Windows, 2026-11-04)
 
 | Button | Command | Fallback |
 |---|---|---|
 | Pause goal | `composer.cancelChat(conversationId)` | Pause takes effect at the next stop |
 | Resume, Work on the goal | `composer.createNew` with `autoSubmit:true`, sent at once in a new chat | `workbench.action.chat.open`, filled in for the user to send |
 
-An existing idle chat can only be woken by `vscode.cursor.enqueueBackgroundTaskCompletion`, but that turn fires no `stop`, so the loop couldn't continue. Not used.
+From the code reading above, not from a run: an existing idle chat can only be woken by `vscode.cursor.enqueueBackgroundTaskCompletion`, but that turn fires no `stop`, so the loop couldn't continue. Not used.
 
-## What the checks can't see
+## Seen in real Cursor on 2026-11-04
 
-- Whether a command really tests what the agent says (a script that just prints "passed" gets through).
-- Whether a file tied to a done-when item was truly needed.
-- Changes made by commands, outside a git repository.
-
-The panel shows the receipts so the user can judge these.
-
-## Verified in real Cursor
-
-Cursor 3.17.19, driven in debug mode on 2026-11-04, with the packaged VSIX on native Windows and the built hook on WSL. Every model was over its usage limit, so each turn ended in an error:
+Observations from that day, not current guarantees. Cursor 3.17.19, driven in debug mode, with the packaged VSIX of that date on native Windows and the built hook on WSL. That build predates the current goal loop, engines and review, and nothing below has been repeated on the current build. Every model was over its usage limit, so each turn ended in an error:
 
 | Check | Result |
 |---|---|
@@ -156,7 +171,7 @@ Cursor 3.17.19, driven in debug mode on 2026-11-04, with the packaged VSIX on na
 
 ## Not yet verified
 
-These need a model that answers, so usage after 11/12:
+These need a real Cursor model that answers:
 
 - A `completed` stop giving a real send-back from Guardian's own hook, and the agent answering it.
 - The agent calling `update_goal`, including which MCP server it reaches on native Windows.

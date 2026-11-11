@@ -1,5 +1,7 @@
 # 100% Capability Showcase — plan
 
+> **Historical record.** This file describes earlier versions of Goal Guardian and has not been updated. It names tools that no longer exist (`guardian_get_contract`, `guardian_get_status`, `guardian_report_goal`, `guardian_update_goal` and others); the current ones are `get_goal`, `create_goal`, `update_goal`, `goal_command` and `guardian_change_goal`. For the current design see `docs/goal-design.md`.
+
 One realistic scenario — **"Ship the checkout flow"** in a small web-shop repo —
 driven end-to-end by automation (CDP + input injection) across BOTH surfaces:
 the Agents hub and the classic IDE window. Every capability below is

@@ -24,11 +24,11 @@ goal extension (codex-rs/ext/goal: source, prompt templates and tests), and
 the two files that extension's prompts depend on
 (codex-rs/prompts/src/update_plan_instructions.rs and
 codex-rs/core/src/context/user_goal.rs). The rest of Codex is left out.
-Guardian's goal loop sends Codex's continuation and objective-updated prompts
-word for word, and its get_goal and update_goal tools carry Codex's names,
-descriptions and statuses. Codex's own Rust goal code runs too, through
-packages/codex-goals (see below). scripts/gen-vendored.mjs reads the text out of these files
-into packages/core/src/goal/vendored.generated.ts.
+These files are here for reference and for their text: scripts/gen-vendored.mjs
+reads Codex's prompt templates and tool definitions out of them into
+packages/core/src/goal/vendored.generated.ts, which Guardian uses when Codex's
+binary isn't present. Codex's own Rust goal code runs through
+packages/codex-goals (see the last section).
 
 This product includes software developed by DeepSeek:
 DeepSeek Harness
@@ -38,23 +38,30 @@ Licensed under the MIT License (see third_party/deepseek-harness/LICENSE).
 third_party/deepseek-harness holds DeepSeek Harness's own files, unmodified:
 LICENSE, its goal packages (packages/goal: goal, goal-round-driver, tool-goal
 and command-goal, with their tests and documentation) and
-docs/subsystems/goal.md. The rest of the harness is left out. Guardian runs
-two of its functions as they are, with types stripped: renderGoalRoundPrompt
-(the <goal_round> prompt) and renderWrapupContext (the closing instructions),
-and uses its blocked-round threshold and refusal message.
+docs/subsystems/goal.md. The rest of the harness is left out. These are here
+for reference; what runs is the published build of the same version.
 
-Guardian's goal state is kept by DeepSeek Harness's published packages
-(@deepseek-ai/dsh-goal, dsh-session, dsh-session-projection, dsh-agent and
-dsh-llm 0.2.2-rc.1, the vendored version, and @deepseek-ai/cordis 4.1.0, MIT),
-bundled unmodified except that dsh-llm's run-time read of its own version is
-inlined at build time (scripts/dsh-bundle.mjs). Every change to the goal is
-made by its GoalService and read by its foldGoal; Guardian's adapter is
-packages/core/src/goal/engine.ts. Its tool package (get_goal, create_goal,
-update_goal through its own tool pipeline), its round driver and its /goal
-command run as well, from the same published packages (dsh-tool-goal,
-dsh-goal-round-driver, dsh-command-goal and what they need, 0.2.2-rc.1). The
-one adaptation: its driver's call that starts the agent's next turn is
-delivered by Cursor's stop hook.
+Guardian runs DeepSeek Harness's four goal packages from its published npm
+packages (@deepseek-ai/dsh-goal, dsh-tool-goal, dsh-goal-round-driver and
+dsh-command-goal, with dsh-session, dsh-session-projection, dsh-agent, dsh-llm
+and what they need, 0.2.2-rc.1, and @deepseek-ai/cordis 4.1.0, MIT), bundled
+into Guardian's hook and MCP programs. They run beside Guardian's own goal
+file, which stays the master copy of the goal: they hold a copy of the goal's
+phase, revision and round count, their tools can refuse a change, their round
+driver is asked about each round, and their prompts are part of what the agent
+is sent. Their "complete" is a status change; Guardian's own checks decide
+whether a goal is done. Guardian's adapter is packages/core/src/goal/engine.ts.
+What is adapted:
+- one line of dsh-llm, which reads its own version from a file at run time, is
+  inlined at build time (scripts/dsh-bundle.mjs);
+- Promise.withResolvers is supplied where the runtime lacks it;
+- their runtime gets a stand-in agent, as their own tests use, because the
+  agent at work is Cursor's;
+- the prompt their round driver hands to its agent is delivered by Cursor's
+  stop hook;
+- their "armed" state lasts one process and every hook call is a new one, so
+  Guardian re-arms the goal with their resume once per stop, and records their
+  round-limit block itself when their resume refuses at the cap.
 
 This product includes software developed by Google LLC:
 Agent Development Kit (ADK) for Python
@@ -68,19 +75,25 @@ RubricBasedMultiTurnTrajectoryEvaluator loads. third_party/adk-python/
 VENDORED.md, which is Guardian's, says what is left out. Guardian runs that
 evaluator as it is, with ADK's judge prompt, sampling and aggregation, as the
 second check when the agent reports the goal complete; its adapter is
-packages/evaluator. The rubrics are the user's own "done when" items, plus one
-sentence of Guardian's about unrequested work. ADK's dependencies (pydantic,
+packages/evaluator. What it judges is Guardian's record of the run and the
+evidence Guardian adds from the project; the rubrics are the user's own "done
+when" items, plus one of Guardian's about unrequested work; the judge is the
+user's Cursor model, with one line of Guardian's telling it not to delegate. ADK's dependencies (pydantic,
 google-genai and 15 others, pinned in packages/evaluator/requirements.txt, each
 under its own licence) are installed as wheels when the extension is packaged
 and are not copied here. ADK's evaluators that call Vertex AI's hosted
 evaluation are not used.
 
 Codex's own goal package (its goal extension and goal store at ac54a05,
-Apache-2.0) runs unmodified beside DeepSeek Harness's: it is fetched from
-Codex's repository at build time and linked into packages/codex-goals, and
-none of it is copied here. Guardian runs its tool handlers, its turn
-accounting, its handling of a goal the user changes, and its own decision and
-prompt for continuing. The one adaptation: Codex submits its continuation turn
-to a local endpoint and Guardian reads that request back, because only
-Cursor's stop hook can start the agent's next turn. A change to the goal
-happens only when both Codex's code and DeepSeek Harness's code accept it.
+Apache-2.0) runs unmodified beside Guardian's goal file and DeepSeek
+Harness's packages: it is fetched from Codex's repository at build time and
+linked into packages/codex-goals, and none of it is copied here. Guardian runs
+its tool handlers and tool definitions, its turn accounting and token budget,
+its handling of a goal the user changes, and its own decision and prompt for
+continuing. Its store holds a copy of the goal, its handlers can refuse a
+change, and its "complete" is a status change that judges nothing. What is
+adapted: Codex produces its continuation turn in a thread started with Codex's
+own test support, whose model endpoint is a local capture server, and Guardian
+reads that request back, because only Cursor's stop hook can start the agent's
+next turn. A goal is recorded as complete only when Guardian's own checks pass
+and Codex's handler and DeepSeek Harness's tool both accept it.

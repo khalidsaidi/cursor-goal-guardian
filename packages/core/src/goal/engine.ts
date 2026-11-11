@@ -1,8 +1,11 @@
 /**
- * Guardian's goal runs on DeepSeek Harness's own goal feature, all four of its packages, unmodified, from the
- * published packages at the version vendored in third_party/deepseek-harness:
+ * DeepSeek Harness's own goal feature runs beside Guardian's goal file: all four of its packages, unmodified, from
+ * the published packages at the version vendored in third_party/deepseek-harness. Guardian's contract.json and audit
+ * log stay the master copy of the goal, and Guardian's own checks decide whether "done" is accepted; their code
+ * mirrors that state, can refuse a change, and its driver is asked about each round. When the contract and their
+ * goal differ, Guardian edits theirs to match; if their log can't be replayed, Guardian resets it.
  *
- * - @deepseek-ai/dsh-goal: GoalService and its strict fold keep the goal's state.
+ * - @deepseek-ai/dsh-goal: GoalService and its strict fold hold their copy of the goal's phase, revision and rounds.
  * - @deepseek-ai/dsh-tool-goal: get_goal, create_goal and update_goal, run through their real tool pipeline, with
  *   their authority checks (a direct human turn, or the current goal round), their blocked threshold, their
  *   system-prompt goal policy and their wrap-up context.

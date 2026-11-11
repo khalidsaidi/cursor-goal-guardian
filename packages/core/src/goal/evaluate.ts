@@ -192,7 +192,16 @@ export function userAsked(words: string | undefined, prompts: string[], goalText
   return !bare(goalText).includes(bare(words ?? ""));
 }
 
-/** Changing an existing goal takes the user's own words, found in what the user actually sent. */
+/**
+ * The user said this in their latest message. Setting or changing the goal, its budget, pausing and setting aside
+ * all go by the latest message: an older one was about an earlier turn, and nothing in the code needs it.
+ */
+export function userSaidLatest(words: string | undefined, prompts: string[]): boolean {
+  const latest = prompts[prompts.length - 1];
+  return latest !== undefined && userSaid(words, [latest]);
+}
+
+/** The words are the user's own, found in what the user actually sent. */
 export function userSaid(words: string | undefined, prompts: string[]): boolean {
   // Windows PowerShell can garble accents in the recorded message, so only plain ASCII is compared.
   const plain = (text: string): string => normalize(text.replace(/[^\x00-\x7f]+/g, " ")).toLowerCase();

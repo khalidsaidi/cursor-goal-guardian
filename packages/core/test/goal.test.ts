@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendAudit, captureGoal, criteriaFromTexts, defaultContract, evaluateReport, writeContract, parseRequest, runGoalStop, GOAL_MAX_ROUNDS, getGuardianPaths, nowIso, readShellOutputs, readShrunkFiles, readUserPrompts,
-  controlGoal, goalMidTurnNotice, goalPhaseOf, goalTurnContext, lastActiveConversation, recordShellFailure, projectPath, readAuditTail, readContractSafe, readTree, recordShellOutput, recordUserPrompt, runGoalStop, submitGoalReport, userSaid, type GoalReportInput,
+  controlGoal, goalMidTurnNotice, goalPhaseOf, goalTurnContext, lastActiveConversation, recordShellFailure, projectPath, readAuditTail, readContractSafe, readTree, recordShellOutput, recordUserPrompt, runGoalStop, submitGoalReport, userSaid, userSaidLatest, type GoalReportInput,
 } from "../src/index.js";
 
 const made: string[] = [];
@@ -739,6 +739,10 @@ describe("the user's words", () => {
     expect(userSaid("corrige ça dans le pied", ["corrige Ã§a dans le pied de page"])).toBe(true);
     expect(userSaid("", ["x"])).toBe(false);
     expect(userSaid(undefined, ["x"])).toBe(false);
+    // Setting or changing the goal goes by the latest message only.
+    expect(userSaidLatest("drop the csv part", ["please drop the csv part today", "what does this do?"])).toBe(false);
+    expect(userSaidLatest("drop the csv part", ["what does this do?", "please drop the csv part today"])).toBe(true);
+    expect(userSaidLatest("drop the csv part", [])).toBe(false);
   });
 });
 

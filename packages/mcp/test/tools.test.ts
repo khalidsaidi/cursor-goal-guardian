@@ -75,7 +75,6 @@ describe("guardian_change_goal", () => {
   it("the user's words become the goal, a list in them the done-when items, and items can be added", async () => {
     // The words have to be the user's own: Cursor's prompt hook reported them.
     await recordUserPrompt(ws.root, "Ship the CSV export feature, plus filters", "c1", "agent");
-    await recordUserPrompt(ws.root, "Ship it.\n- one thing\n- another thing", "c1", "agent");
     const result = await callJson("guardian_change_goal", {
       user_words: "Ship the CSV export feature, plus filters",
       add_criteria: ["Filter state is preserved in the export"],
@@ -83,6 +82,7 @@ describe("guardian_change_goal", () => {
     expect(result.goal).toBe("Ship the CSV export feature, plus filters");
     expect((result.criteria as Array<{ id: string; text: string }>).map((c) => c.id)).toEqual(["sc_1"]);
     expect(((await callJson("get_goal")).goal as { objective: string }).objective).toBe("Ship the CSV export feature, plus filters");
+    await recordUserPrompt(ws.root, "Ship it.\n- one thing\n- another thing", "c1", "agent");
     const listed = await callJson("guardian_change_goal", { user_words: "Ship it.\n- one thing\n- another thing" });
     expect(listed.goal).toBe("Ship it.");
     expect((listed.criteria as Array<{ text: string }>).map((c) => c.text)).toEqual(["one thing", "another thing"]);
@@ -107,9 +107,29 @@ describe("only the user changes the goal", () => {
     expect(invented.isError).toBe(true);
     expect(invented.content[0]!.text).toContain("only the user changes");
     expect(String(((await callJson("get_goal")).goal as { objective: string }).objective)).toBe(before);
-    expect((await call({ add_criteria: ["a new item"] })).isError).toBeFalsy();
+    // The goal already has a "done when" item: the agent can't add to the user's list.
+    const added = await call({ add_criteria: ["a new item"] });
+    expect(added.isError).toBe(true);
+    expect(added.content[0]!.text).toContain("already has 'done when' items");
+    expect(((await callJson("get_goal")).goal as { done_when: unknown[] }).done_when).toHaveLength(1);
     expect((await call({ user_words: "make it JSON export instead" })).isError).toBeFalsy();
     expect(String(((await callJson("get_goal")).goal as { objective: string }).objective)).toBe("make it JSON export instead");
+    // The new goal has no items at all: this is the one case where the agent may write them.
+    const filled = await call({ add_criteria: ["exports valid JSON"] });
+    expect(filled.isError).toBeFalsy();
+    expect(JSON.parse(filled.content[0]!.text).criteria).toEqual([{ id: "sc_1", text: "exports valid JSON" }]);
+    expect((await call({ add_criteria: ["one more"] })).isError).toBe(true);
+    await fs.rm(prompts());
+  });
+
+  it("goes by the user's latest message, not an earlier one", async () => {
+    await fs.mkdir(path.dirname(prompts()), { recursive: true });
+    await fs.writeFile(prompts(), JSON.stringify(["please make it JSON export instead", "what does this function do?"]));
+    const stale = await call({ user_words: "make it JSON export instead" });
+    expect(stale.isError).toBe(true);
+    expect(stale.content[0]!.text).toContain("latest message");
+    await fs.writeFile(prompts(), JSON.stringify(["what does this function do?", "please make it JSON export instead"]));
+    expect((await call({ user_words: "make it JSON export instead" })).isError).toBeFalsy();
     await fs.rm(prompts());
   });
 });

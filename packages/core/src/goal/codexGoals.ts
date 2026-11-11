@@ -2,11 +2,11 @@
  * OpenAI Codex's own goal code, run beside DeepSeek's goal service: its goal store (usage accounting, a token budget,
  * the `budget_limited` status) and, further down, its whole goal extension (tool handlers, accounting, the user-facing
  * goal service, continuation scheduling). All of it is Codex's crates, unmodified, behind Guardian's command-line
- * binary (packages/codex-goals). DeepSeek's service stays the authority for the goal's
- * phase, revision and rounds; Codex's store is told the same changes and keeps the usage.
+ * binary (packages/codex-goals). Guardian's own goal file is the master copy; DeepSeek's service holds the phase,
+ * revision and rounds Guardian reads back, and Codex's store is told the same changes and keeps the usage.
  *
- * Nothing here blocks or throws. Where the binary isn't installed every call answers `ran: false` and Guardian works
- * as it did without budgets.
+ * Nothing here blocks or throws. Where the binary isn't installed every call answers `ran: false`; the goal loop
+ * then can't end a run as proved and records it as unverified.
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";

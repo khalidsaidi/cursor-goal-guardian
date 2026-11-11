@@ -1,5 +1,7 @@
 # 1.0.0 verification record
 
+> **Historical record.** This file describes earlier versions of Goal Guardian and has not been updated. It names tools that no longer exist (`guardian_get_contract`, `guardian_get_status`, `guardian_report_goal`, `guardian_update_goal` and others); the current ones are `get_goal`, `create_goal`, `update_goal`, `goal_command` and `guardian_change_goal`. For the current design see `docs/goal-design.md`.
+
 > **2026-11-06:** the task board was removed: tasks, the active task, decisions, intents,
 > the event log and state machine, and their tools and commands. `contract.json` now holds the
 > goal alone. Also removed: risky-command advisories, loop detection, quiet mode, and the native

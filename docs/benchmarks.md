@@ -1,5 +1,7 @@
 # Goal Guardian benchmarks
 
+> **Historical record.** This file describes earlier versions of Goal Guardian and has not been updated. It names tools that no longer exist (`guardian_get_contract`, `guardian_get_status`, `guardian_report_goal`, `guardian_update_goal` and others); the current ones are `get_goal`, `create_goal`, `update_goal`, `goal_command` and `guardian_change_goal`. For the current design see `docs/goal-design.md`.
+
 Date: 2026-08-26T02:54:24.656Z · Node v20.20.0 · AMD Ryzen 7 3800X 8-Core Processor (16 cores)
 
 ## 1. Hook latency (packaged bin, spawn-to-response)

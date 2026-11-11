@@ -105,6 +105,30 @@ async function prunePython(py) {
     for (const n of names.filter((x) => re.test(x))) await fs.rm(path.join(py, dir, n), { recursive: true, force: true });
   }
   await fs.mkdir(path.join(py, lib, "site-packages"), { recursive: true });
+  await onePythonBinary(py);
+}
+
+/**
+ * The archive has bin/python and bin/python3 as symbolic links to bin/python3.12. A VSIX is a zip, which stores each
+ * link as a full copy: three 31 MB interpreters. Guardian only ever starts bin/python3, so that name keeps the real
+ * file and the other two go. (Windows has a single python.exe.)
+ */
+async function onePythonBinary(py) {
+  if (target.startsWith("win32")) return;
+  const bin = path.join(py, "bin");
+  const keep = path.join(bin, "python3");
+  const real = await fs.realpath(keep);
+  if (real !== keep) {
+    await fs.rm(keep, { force: true });
+    await fs.rename(real, keep);
+  }
+  for (const n of await fs.readdir(bin)) {
+    if (/^python/.test(n) && n !== "python3") await fs.rm(path.join(bin, n), { force: true });
+  }
+  // The build fails rather than ship a second copy or a link the zip would turn into one.
+  const left = (await fs.readdir(bin)).filter((n) => /^python/.test(n));
+  const st = await fs.lstat(keep);
+  if (left.length !== 1 || !st.isFile() || st.isSymbolicLink()) throw new Error(`bundled Python: expected one real bin/python3, found ${left.join(", ")}`);
 }
 
 /** RRSI unmodified, Guardian's domain for it, and the NOTICE crediting it. */
