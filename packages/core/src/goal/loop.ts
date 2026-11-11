@@ -12,7 +12,9 @@ import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalEndRecord, GoalReportRecord, GoalControlRecord, GoalReviewRecord, GoalRoundRecord, UserMessageRecord } from "../schema/audit.js";
 import { evaluateReport, projectPath, userSaid, type GoalEvaluation } from "./evaluate.js";
 import { CLOSING, goalBlock, goalBudgetLimitMessage, goalChangedMessage, goalClosingMessage, goalRoundMessage } from "./prompts.js";
-import { budgetOf, codexGoals, resolveCodexGoals, type CodexGoal, type CodexGoalAnswer } from "./codexGoals.js";
+import { budgetOf, codexGoals, codexTurn, resolveCodexGoals, type CodexGoal, type CodexGoalAnswer, type CodexUsage } from "./codexGoals.js";
+import { codexAgentTool, codexContinuationTurn, codexNotice, codexSaid, codexUserFragment, codexUserSet, codexUserStatus, recordRefusal } from "./partners.js";
+import { RALPH_PROMISE, ralphActive, ralphCancel, ralphPromiseInstruction, ralphSaidAtStart, ralphStart, ralphStop, type RalphDecision } from "./ralph.js";
 import { BLOCKED_AFTER_CONSECUTIVE_ROUNDS, CODEX_TOOLS, ROUND_LIMIT_CODE, deepseekBlockThreshold } from "./originals.js";
 import { captureGoal, parseRequest } from "./capture.js";
 import { writeContract } from "../contractStore.js";
@@ -20,10 +22,10 @@ import { criteriaFromTexts } from "../schema/contract.js";
 import { EngineRefused, engineRun, type EngineOp, type EngineResult, type EngineToolResult } from "./engine.js";
 import { engineView, type EngineGoal } from "./engineFold.js";
 import { MAX_REVIEWS, objectionLines, runReview } from "./review.js";
-import { MONITOR_BUDGET_MS, runMonitor } from "./monitor.js";
+import { EVALUATOR_BUDGET_MS, runEvaluator } from "./evaluator.js";
 import { readTrajectory } from "./trajectory.js";
 import { saveCase } from "./cases.js";
-import { readShellOutputs, readShrunkFiles, readTree, readUserPrompts, type TreeState } from "./record.js";
+import { readAgentResponse, readShellOutputs, readShrunkFiles, readTree, readUserPrompts, type TreeState } from "./record.js";
 
 /** Per user message. Only real progress keeps a run going this long: see NO_PROGRESS_ROUNDS. */
 export const GOAL_MAX_ROUNDS = 20;
@@ -181,7 +183,8 @@ async function engine(root: string, contract: Pick<Contract, "goal" | "successCr
 async function engineTry(root: string, contract: Pick<Contract, "goal" | "successCriteria">, op: EngineOp, objective = contract.goal, mirror = true): Promise<{ ok: true; result: EngineResult } | { ok: false; message: string }> {
   try {
     const result = await engineRun(root, objective, legacyGoalPhase(await readGoalRecords(root), contract), op);
-    if (mirror) await tellCodexStore(root, objective, op);
+    // A change the agent asked for reaches Codex through Codex's own update_goal handler (bothTools), not this mirror.
+    if (mirror && !("by" in op && op.by === "agent")) await tellCodexStore(root, objective, op);
     return { ok: true, result };
   } catch (err) {
     if (err instanceof EngineRefused) return { ok: false, message: err.message };
@@ -234,6 +237,19 @@ async function contractFollowsEngine(root: string, items: string[] = []): Promis
   await tellCodexStore(root, objective, { type: "sync" });
 }
 
+const parseJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+};
+
+/** Codex's own get_goal answer, through its real handler, or undefined where its extension isn't installed. */
+export async function codexGetGoal(root: string): Promise<unknown> {
+  return codexSaid(await codexAgentTool(root, "get_goal"));
+}
+
 const NOT_THE_USERS = "only the user sets or changes the goal. Pass the objective in their own words, quoted exactly from their message.";
 
 /**
@@ -244,9 +260,22 @@ export async function createGoalByTool(root: string, objective: string, maxGoalR
   const prompts = await readUserPrompts(root);
   if (prompts && !userSaid(objective, prompts)) return { isError: true, text: `Not created: ${NOT_THE_USERS}`, contexts: [] };
   const { goal, items } = parseRequest(objective);
+  const hash = goalHash(await readContractSafe(root));
+  // Codex's own create_goal handler is asked first: like DeepSeek's, it refuses while an unfinished goal exists. The
+  // goal is created only if both accept; if DeepSeek's then refuses, Codex's new goal is taken back.
+  const codex = await codexAgentTool(root, "create_goal", { objective: goal });
+  if (codex && !codex.accepted) {
+    await recordRefusal(root, hash, "create", "codex", codex.refusal ?? "Codex's create_goal refused");
+    return { isError: true, text: JSON.stringify({ refused_by: "codex", codex: codexSaid(codex) }), contexts: [] };
+  }
   const out = await runGoalTool(root, "create_goal", { objective: goal, ...(maxGoalRounds ? { max_goal_rounds: maxGoalRounds } : {}) });
-  if (!out.isError) await contractFollowsEngine(root, items);
-  return out;
+  if (out.isError) {
+    if (codex) await codexGoals(root, { op: "clear" });
+    await recordRefusal(root, hash, "create", "deepseek", out.text);
+    return out;
+  }
+  await contractFollowsEngine(root, items);
+  return codex ? { ...out, text: JSON.stringify({ their: parseJson(out.text), codex: codexSaid(codex) }) } : out;
 }
 
 /** Their update_goal actions that Guardian's report path doesn't cover: edit (the user's new words) and resume. */
@@ -310,8 +339,11 @@ async function tellCodexStore(root: string, objective: string, op: EngineOp): Pr
     await codexGoals(root, { op: "clear" });
     return;
   }
-  if (op.type === "sync" || op.type === "create") await codexGoals(root, { op: "set", objective, ...(op.type === "create" ? { fresh: true } : {}) });
-  else await codexGoals(root, { op: "status", status: op.type === "pause" ? "paused" : op.type === "resume" ? "active" : op.type === "complete" ? "complete" : "blocked" });
+  // The user's own changes go through Codex's GoalService, as its app-server does for them; a block is Guardian's
+  // own stop (stalled, a limit), which Codex has no user path for, so its store is told directly.
+  if (op.type === "sync" || op.type === "create") await codexUserSet(root, objective, op.type === "create");
+  else if (op.type === "block") await codexGoals(root, { op: "status", status: "blocked" });
+  else await codexUserStatus(root, op.type === "pause" ? "paused" : op.type === "resume" ? "active" : "complete");
 }
 
 /** The goal's usage and budget as Codex's store has them, or null where the store isn't installed or has no goal. */
@@ -334,10 +366,14 @@ export async function setGoalBudget(root: string, tokenBudget: number | null): P
 }
 
 /** This turn's tokens and seconds go to Codex's store; its answer says where the budget stands. */
-async function accountTurn(root: string, seq: Sequence, conversationId: string, tokens: number | undefined): Promise<CodexGoal | null> {
+async function accountTurn(root: string, seq: Sequence, conversationId: string, tokens: number | undefined, split?: CodexUsage): Promise<CodexGoal | null> {
   if (!resolveCodexGoals()) return null;
   const starts = seq.records.filter((r) => (r.kind === "user.message" || r.kind === "goal.round") && r.conversationId === conversationId).map((r) => Date.parse(r.ts));
   const seconds = starts.length ? Math.max(0, Math.round((Date.now() - Math.max(...starts)) / 1000)) : 0;
+  // Codex's own turn accounting (turn start, token usage, turn stop) where its extension is installed: it works out
+  // the usage and the budget switch itself. An older binary without it gets the bare store call below.
+  const turn = await codexTurn(root, { turnId: `${conversationId}:${Date.now()}`, usage: split ?? { input_tokens: Math.max(0, tokens ?? 0), output_tokens: 0 }, seconds });
+  if (turn.ran && turn.goal) return turn.goal;
   const request = { op: "account" as const, tokens: Math.max(0, tokens ?? 0), seconds };
   const first = await codexGoals(root, request);
   if (!first.ran || first.goal) return first.goal;
@@ -345,6 +381,58 @@ async function accountTurn(root: string, seq: Sequence, conversationId: string, 
   const contract = await readContractSafe(root);
   if (!contract.goal.trim() || !(await codexGoals(root, { op: "set", objective: contract.goal })).goal) return null;
   return (await codexGoals(root, request)).goal;
+}
+
+/**
+ * A change the agent asked for through update_goal goes to both projects' own tools: DeepSeek's (through its tool
+ * pipeline, with its authority checks) and Codex's (its real handler). It happens only if both accept. The one
+ * likelier to refuse is asked first, and if the second refuses, the first is put back: DeepSeek's `complete` can't
+ * be undone, so Codex goes first there; its `blocked` and `paused` can (their resume), so DeepSeek goes first.
+ */
+async function bothTools(
+  root: string,
+  contract: Pick<Contract, "goal" | "successCriteria">,
+  op: Extract<EngineOp, { type: "pause" | "complete" | "block" }>,
+  conversationId?: string,
+): Promise<{ ok: true; result: EngineResult; codex: unknown } | { ok: false; by: "deepseek" | "codex"; message: string }> {
+  const hash = goalHash(contract);
+  const status = op.type === "pause" ? "paused" : op.type === "complete" ? "complete" : "blocked";
+  const refuse = async (by: "deepseek" | "codex", message: string): Promise<{ ok: false; by: "deepseek" | "codex"; message: string }> => {
+    await recordRefusal(root, hash, status, by, message, conversationId);
+    return { ok: false, by, message };
+  };
+  const theirs = (): Promise<{ ok: true; result: EngineResult } | { ok: false; message: string }> => engineTry(root, contract, { ...op, by: "agent" }, contract.goal, false);
+  if (op.type === "complete") {
+    const codex = await codexAgentTool(root, "update_goal", { status });
+    if (codex && !codex.accepted) return refuse("codex", codex.refusal ?? "Codex's update_goal refused");
+    const ds = await theirs();
+    if (!ds.ok) {
+      if (codex) await codexGoals(root, { op: "status", status: "active" });
+      return refuse("deepseek", ds.message);
+    }
+    if (!codex) await tellCodexStore(root, contract.goal, op);
+    return { ok: true, result: ds.result, codex: codexSaid(codex) };
+  }
+  const ds = await theirs();
+  if (!ds.ok) return refuse("deepseek", ds.message);
+  const codex = await codexAgentTool(root, "update_goal", { status });
+  if (codex && !codex.accepted) {
+    await engine(root, contract, { type: "resume" }, contract.goal, false);
+    return refuse("codex", codex.refusal ?? "Codex's update_goal refused");
+  }
+  if (!codex) await tellCodexStore(root, contract.goal, op);
+  return { ok: true, result: ds.result, codex: codexSaid(codex) };
+}
+
+/** The task Ralph Loop is started on: the user's goal and its "done when" list. */
+function ralphTask(contract: Pick<Contract, "goal" | "successCriteria">): string {
+  return [contract.goal, ...(contract.successCriteria.length ? ["Done when:", ...contract.successCriteria.map((c) => `- ${c.id}: ${c.text}`)] : [])].join("\n");
+}
+
+/** Ralph's own instruction about its completion promise, from the loop it has running here. "" where it has none. */
+function ralphInstruction(root: string): string[] {
+  const said = ralphPromiseInstruction(ralphSaidAtStart(root));
+  return said ? ["", "Ralph Loop (Anthropic) is also running on this goal. Its own instruction:", said] : [];
 }
 
 /** Record a goal in DeepSeek's service: a new one, or the open one with the user's new words. False when refused. */
@@ -362,6 +450,8 @@ export async function controlGoal(root: string, operation: GoalControlRecord["op
   const contract = await readContractSafe(root);
   if (!contract.goal.trim()) return;
   if (!(await engine(root, contract, { type: operation === "done" ? "complete" : operation }))) return;
+  // The user paused or closed the goal: Ralph's loop on it is cancelled, by its own cancel steps.
+  if (operation !== "resume") await ralphCancel(root);
   await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: goalHash(contract), operation, actor: "user" });
 }
 
@@ -392,10 +482,14 @@ export interface GoalReportAnswer {
   unclaimed: string[];
   /** The result of DeepSeek's own tool, where the call reached it. */
   their?: string;
+  /** What Codex's own update_goal handler answered, where the call reached it. */
+  codex?: unknown;
+  /** Which of the goal keepers refused the change, when one did. */
+  refusedBy?: string;
 }
 
 /** The agent's report, answered at once so it can fix what doesn't hold without waiting for a round. */
-export async function submitGoalReport(root: string, input: GoalReportInput, opts: { monitorBudgetMs?: number } = {}): Promise<GoalReportAnswer> {
+export async function submitGoalReport(root: string, input: GoalReportInput, opts: { evaluatorBudgetMs?: number } = {}): Promise<GoalReportAnswer> {
   const contract = await readContractSafe(root);
   const hash = goalHash(contract);
   const all = await readAuditTail(root, TAPE_WINDOW);
@@ -421,30 +515,37 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
       return { accepted: false, ...none, message: "Not paused: pass the user's request to pause in user_words, quoted exactly from their latest message. If they didn't ask for this, keep working on the goal." };
     }
     // Their update_goal decides: it pauses only in a turn the user's own message opened.
-    const paused = await engineTry(root, contract, { type: "pause", by: "agent" });
-    if (!paused.ok) return { accepted: false, ...none, message: `Not paused: ${paused.message}` };
+    // Codex's update_goal then decides too; the pause happens only if both accept.
+    const paused = await bothTools(root, contract, { type: "pause" }, reportingChat(all));
+    if (!paused.ok) return { accepted: false, ...none, message: `Not paused: ${paused.message}`, refusedBy: paused.by };
+    await ralphCancel(root);
     await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: hash, operation: "pause", actor: "agent" });
-    return { accepted: true, ...none, message: CLOSING.paused };
+    return { accepted: true, ...none, message: CLOSING.paused, ...(paused.codex !== undefined ? { codex: paused.codex } : {}) };
   }
   if (input.status === "blocked") {
     if (!input.reason?.trim()) return { accepted: false, ...none, message: "Say what is blocking you in reason." };
     // Their update_goal decides, with its own threshold: in a goal round it refuses before enough rounds have
     // passed; in a turn the user's message opened it accepts at once. Its wrap-up instruction is the answer.
-    const blocked = await engineTry(root, contract, { type: "block", by: "agent", code: MODEL_REPORTED_CODE, message: input.reason.trim() });
-    if (!blocked.ok) return { accepted: false, ...none, message: blocked.message };
-    return { accepted: true, ...none, message: blocked.result.tool?.contexts[0] ?? CLOSING.blocked(contract.goal, input.reason), ...(blocked.result.tool ? { their: blocked.result.tool.text } : {}) };
+    // Codex's update_goal then decides too; the goal is blocked only if both accept.
+    const blocked = await bothTools(root, contract, { type: "block", code: MODEL_REPORTED_CODE, message: input.reason.trim() }, reportingChat(all));
+    if (!blocked.ok) return { accepted: false, ...none, message: blocked.message, refusedBy: blocked.by };
+    return { accepted: true, ...none, message: blocked.result.tool?.contexts[0] ?? CLOSING.blocked(contract.goal, input.reason), ...(blocked.result.tool ? { their: blocked.result.tool.text } : {}), ...(blocked.codex !== undefined ? { codex: blocked.codex } : {}) };
   }
   const result = await evaluate(root, contract, input, seq);
   if (result.unproved.length || result.unclaimed.length) {
     return { accepted: false, message: "Not accepted yet: fix what's listed and report again.", unproved: result.unproved, unclaimed: result.unclaimed };
   }
   // Guardian's record agrees. One independent review tries to prove it wrong, a limited number of times per run:
-  // the reviewer checks each item in a copy of the project, and the paper's monitor reads the run piece by piece.
+  // the reviewer checks each item in a copy of the project, and Google ADK's evaluator judges the recorded run against
+  // the user's own items.
   if (reviewsOf(seq, hash).length < MAX_REVIEWS) {
     const asked = [contract.goal, ...(contract.successCriteria.length ? ["Done when:", ...contract.successCriteria.map((c) => `- ${c.text}`)] : [])].join("\n");
-    const [outcome, monitor] = await Promise.all([
+    const claimed = `I report the goal complete. Proofs: ${JSON.stringify(input.proofs)}. Changed files: ${JSON.stringify(input.changes)}.`;
+    const [outcome, evaluator] = await Promise.all([
       runReview(root, contract),
-      readTrajectory(root, seq.records[0]?.ts ?? null).then((trajectory) => runMonitor(asked, trajectory, opts.monitorBudgetMs ?? MONITOR_BUDGET_MS)),
+      readTrajectory(root, seq.records[0]?.ts ?? null).then((conversation) =>
+        runEvaluator({ userQuery: asked, items: contract.successCriteria.map((c) => ({ id: c.id, text: c.text })), conversation, report: claimed }, opts.evaluatorBudgetMs ?? EVALUATOR_BUDGET_MS),
+      ),
     ]);
     const chat = reportingChat(all);
     const id = newId("rev");
@@ -454,9 +555,9 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
     await appendAudit(root, {
       ts, kind: "goal.review", ...(chat ? { conversationId: chat } : {}), goalHash: hash, reportTs, id,
       ...(outcome.ran ? (skippedCase ? { caseSaved: false, caseSkipped: skippedCase } : { caseSaved: true }) : {}),
-      ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra, ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), monitor,
+      ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra, ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), evaluator,
     });
-    const lines = objectionLines({ ...outcome, monitor });
+    const lines = objectionLines({ ...outcome, evaluator });
     if (lines.length) {
       return { accepted: false, message: REVIEW_OBJECTS, unproved: lines, unclaimed: [] };
     }
@@ -481,6 +582,8 @@ function noProgress(seq: Sequence, conversationId: string, last: GoalRoundRecord
 
 async function end(root: string, seq: Sequence, conversationId: string, hash: string, outcome: GoalEndRecord["outcome"], rest: Partial<GoalEndRecord> = {}, tokens?: number): Promise<void> {
   const ts = nowIso();
+  // The run is over, whatever the reason: Ralph's loop on it is cancelled by its own cancel steps, if it still runs.
+  await ralphCancel(root);
   const spent = seq.rounds.reduce((sum, r) => sum + (r.tokens ?? 0), tokens ?? 0);
   const began = seq.records.find((r) => r.kind === "user.message" || r.kind === "goal.round" || isEdit(r))?.ts;
   await appendAudit(root, {
@@ -498,7 +601,7 @@ async function end(root: string, seq: Sequence, conversationId: string, hash: st
 }
 
 /** End of a turn. Returns what to send the agent, or null to let it stop. */
-export async function runGoalStop(root: string, input: { conversationId?: string; status: string; loopCount: number; tokens?: number }): Promise<string | null> {
+export async function runGoalStop(root: string, input: { conversationId?: string; status: string; loopCount: number; tokens?: number; usage?: CodexUsage }): Promise<string | null> {
   const { conversationId, loopCount } = input;
   if (!conversationId) return null;
   let contract = await readContractSafe(root);
@@ -529,7 +632,17 @@ export async function runGoalStop(root: string, input: { conversationId?: string
   if (loopCount > 0 && seq.rounds.length === 0) return null;
 
   // Goal work happened this turn: its tokens and time go to Codex's store, whatever the turn's outcome.
-  const usage = await accountTurn(root, seq, conversationId, input.tokens);
+  const usage = await accountTurn(root, seq, conversationId, input.tokens, input.usage);
+
+  // Ralph Loop's own stop hook, on the agent's last message as Cursor reported it. A loop is started for each
+  // message of the user's (its first stop), with Ralph's own setup script and Guardian's round cap.
+  if (loopCount === 0 || !ralphActive(root)) await ralphStart(root, ralphTask(contract), { maxIterations: GOAL_MAX_ROUNDS + 1, sessionId: conversationId });
+  const lastMessage = (await readAgentResponse(root, conversationId))?.text ?? "";
+  let ralph: RalphDecision = await ralphStop(root, { sessionId: conversationId, lastMessage });
+  const partners = { codex: { ran: false } as { ran: boolean; reason?: string; continues?: boolean; status?: string }, ralph: ralph.ran ? { ran: true, outcome: ralph.outcome, ...("iteration" in ralph && ralph.iteration !== null ? { iteration: ralph.iteration } : {}) } : { ran: false, reason: ralph.reason } };
+  const notePartners = (): Promise<void> => appendAudit(root, { ts: nowIso(), kind: "goal.partners", conversationId, goalHash: hash, ...partners }).catch(() => undefined);
+  // Ralph counts as agreeing that the goal is done when it saw its promise, or when it isn't taking part here.
+  const ralphAgrees = !ralph.ran || ralph.outcome === "promise" || ralph.outcome === "inactive";
 
   let unproved: string[] = [];
   let unclaimed = stillChanged(seq);
@@ -566,14 +679,30 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     const latest = reviews[reviews.length - 1];
     // The reviewer objected to this very report: that goes back as a round, like anything else that doesn't hold.
     if (seq.report.status === "complete" && latest && latest.reportTs === seq.report.ts && objected === latest) reviewer = objectionLines(latest);
-    if (seq.report.status === "complete" && !unproved.length && !unclaimed.length && !extras.length && !reviewer.length) {
+    const holds = seq.report.status === "complete" && !unproved.length && !unclaimed.length && !extras.length && !reviewer.length;
+    if (holds && !ralphAgrees) {
+      // Guardian's record backs the report, but Ralph hasn't seen its completion promise: the goal isn't done yet.
+      await recordRefusal(root, hash, "complete", "ralph", `Ralph Loop didn't find <promise>${RALPH_PROMISE}</promise> in the agent's last message`, conversationId);
+      notes.push(`- Your report holds on Guardian's record, but Ralph Loop hasn't seen its completion promise in your last message. If the goal is truly complete, end your message with <promise>${RALPH_PROMISE}</promise>.`);
+    }
+    if (!holds && ralph.ran && ralph.outcome === "promise") {
+      // Ralph saw its promise and ended its loop, but the goal isn't proved: the change doesn't happen, and its loop starts again.
+      await recordRefusal(root, hash, "complete", "guardian", "Ralph Loop saw its completion promise, but Guardian's record doesn't back the goal as complete", conversationId);
+      notes.push("- You output Ralph Loop's completion promise, but the goal isn't proved. Its promise must be true before you output it.");
+      await ralphStart(root, ralphTask(contract), { maxIterations: GOAL_MAX_ROUNDS + 1, sessionId: conversationId });
+      ralph = { ran: true, outcome: "inactive" };
+    }
+    if (holds && ralphAgrees) {
       // Reviews ran out with an objection: the record decides. If nothing changed since, the objection stands and goes
       // to the user; if the agent changed the project after it, that final state simply wasn't reviewed again.
       const last = objected && reviews.length >= MAX_REVIEWS && reviews.indexOf(objected) === reviews.length - 1 ? objected : null;
       const changedSince = Boolean(last?.tree && seq.tree && last.tree !== seq.tree.fingerprint);
       const standing = last && !changedSince ? objectionLines(last) : [];
-      // DeepSeek's service completes the goal; if it refuses, nothing is recorded as proved.
-      if (!(await engine(root, contract, { type: "complete", by: "agent" }))) return null;
+      // Codex's update_goal handler and DeepSeek's update_goal tool each complete the goal; if either refuses,
+      // nothing is recorded as proved and the refusal is on the record.
+      const completed = await bothTools(root, contract, { type: "complete" }, conversationId);
+      await notePartners();
+      if (!completed.ok) return null;
       await end(root, seq, conversationId, hash, "proved", { ...(standing.length ? { reviewer: standing } : {}), ...(changedSince ? { changedSinceReview: true } : {}), proved: result.proved, extras: result.extras, changes: seq.report.changes.map((c) => ({ file: projectPath(root, c.file), serves: c.serves })), ...(seq.report.removed?.length ? { removed: seq.report.removed } : {}) }, input.tokens);
       return null;
     }
@@ -589,7 +718,16 @@ export async function runGoalStop(root: string, input: { conversationId?: string
   if (usage?.status === "budget_limited") {
     await engine(root, contract, { type: "block", code: BUDGET_LIMIT_CODE, message: `${usage.tokens_used} of ${usage.token_budget} tokens used` }, contract.goal, false);
     await end(root, seq, conversationId, hash, "budget_limited", { unproved, reason: `${usage.tokens_used} of ${usage.token_budget} tokens used` }, input.tokens);
-    return goalBudgetLimitMessage(contract.goal, budgetOf(usage));
+    await notePartners();
+    return goalBudgetLimitMessage(contract.goal, budgetOf(usage), await codexNotice(root, "budget_limit"));
+  }
+
+  // Ralph's iterations ran out and it ended its loop: by the joining rule the run is over, as at Guardian's own cap.
+  if (ralph.ran && ralph.outcome === "max") {
+    await engine(root, contract, { type: "block", code: ROUND_LIMIT_CODE, message: "Ralph Loop's iterations ran out" });
+    await end(root, seq, conversationId, hash, "limit", { unproved, reason: "Ralph Loop's iterations ran out" }, input.tokens);
+    await notePartners();
+    return goalClosingMessage(contract.goal, contract.successCriteria, "Ralph Loop's iterations ran out.", unproved);
   }
 
   const idle = noProgress(seq, conversationId, lastRound, unproved);
@@ -624,13 +762,24 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     await end(root, seq, conversationId, hash, "limit", { unproved }, input.tokens);
     return goalClosingMessage(contract.goal, contract.successCriteria, `the goal used all ${view.maxGoalRounds} of its rounds.`, unproved);
   }
+  // Codex's own scheduling is asked for its continuation turn. If its goal is in a state it doesn't continue from,
+  // the run stops; where its extension isn't installed, its prompt is rendered from its template as before.
+  const codexTurnNow = await codexContinuationTurn(root);
+  partners.codex = codexTurnNow.ran ? { ran: true, continues: codexTurnNow.continues, ...(codexTurnNow.status ? { status: codexTurnNow.status } : {}) } : { ran: false, ...(codexTurnNow.reason ? { reason: codexTurnNow.reason } : {}) };
+  await notePartners();
+  if (codexTurnNow.stops) {
+    const why = `Codex's scheduling started no continuation: its goal is ${codexTurnNow.status}`;
+    await recordRefusal(root, hash, "continue", "codex", why, conversationId);
+    await end(root, seq, conversationId, hash, "stopped", { unproved, reason: why }, input.tokens);
+    return null;
+  }
   const round = loopCount + 1;
   notes.push(...reviewer.map((l) => `- ${l}`));
   await appendAudit(root, { ts: nowIso(), kind: "goal.round", conversationId, goalHash: hash, round, idle, ...(reviewer.length ? { reviewer } : {}), ...(input.tokens ? { tokens: input.tokens } : {}), ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited });
   const latestMessage = (await readUserPrompts(root))?.at(-1);
   // Usage and budget from Codex's store; where it isn't installed, the tokens Guardian saw and no budget.
   const tokensUsed = usage ? usage.tokens_used : seq.rounds.reduce((sum, r) => sum + (r.tokens ?? 0), input.tokens ?? 0);
-  return goalRoundMessage(contract.goal, contract.successCriteria, { latestMessage, round, maxRounds: GOAL_MAX_ROUNDS, goalRound: admitted.goal.roundsStarted, goalMaxRounds: admitted.goal.maxGoalRounds, goalRoundPrompt: admitted.prompt, tokensUsed, tokenBudget: usage?.token_budget ?? null, unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited, notes });
+  return goalRoundMessage(contract.goal, contract.successCriteria, { latestMessage, round, maxRounds: GOAL_MAX_ROUNDS, goalRound: admitted.goal.roundsStarted, goalMaxRounds: admitted.goal.maxGoalRounds, goalRoundPrompt: admitted.prompt, tokensUsed, tokenBudget: usage?.token_budget ?? null, ...(codexTurnNow.continues ? { codexPrompt: codexTurnNow.prompt, codexObjectiveContext: codexTurnNow.goalObjectiveContext } : {}), ...(ralph.ran && ralph.outcome === "continue" ? { ralphSystemMessage: ralph.systemMessage, ralphPrompt: ralph.prompt } : {}), unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited, notes });
 }
 
 /** Goes with every message the user sends, so the goal survives compaction and old chats reopened. Not shown as a message. */
@@ -653,7 +802,14 @@ export async function goalTurnContext(root: string): Promise<string | null> {
   return [
     `This workspace has an open goal the user set. Work on it only if this message asks for it, or asks to continue or finish: that means the whole goal, and report with ${CODEX_TOOLS.update.name} when it's done. If this message limits the work or asks for something separate, do only that, leave the rest of the goal alone, and call ${CODEX_TOOLS.update.name} with status set_aside and the message's own words in user_words before you stop. A limit in an earlier message ended with that message.`,
     ...goalBlock(contract.goal, contract.successCriteria),
+    ...(await ralphForMessage(root, contract)),
   ].join("\n");
+}
+
+/** A Ralph loop for the message that just arrived, started with Ralph's own setup script; returns its promise instruction. */
+async function ralphForMessage(root: string, contract: Pick<Contract, "goal" | "successCriteria">, sessionId?: string): Promise<string[]> {
+  await ralphStart(root, ralphTask(contract), { maxIterations: GOAL_MAX_ROUNDS + 1, ...(sessionId ? { sessionId } : {}) });
+  return ralphInstruction(root);
 }
 
 /** Said to a running agent after its next tool call, once per change: the user paused, or changed the goal. */
@@ -668,7 +824,7 @@ export async function goalMidTurnNotice(root: string, conversationId: string | u
   await appendAudit(root, { ts: nowIso(), kind: "goal.notice", conversationId, goalHash: hash, phase });
   const justSet = phase === "active" && seen?.goalHash !== hash && records.some((r) => r.kind === "goal.set" && r.goalHash === hash && r.conversationId === conversationId);
   if (justSet) {
-    return [`Guardian recorded the user's request as the goal, word for word. Don't reword it. Use these ids when you report with ${CODEX_TOOLS.update.name}. If the user limited this message to part of it, do that part, then call ${CODEX_TOOLS.update.name} with status set_aside and their words in user_words before you stop.`, ...goalBlock(contract.goal, contract.successCriteria)].join("\n");
+    return [`Guardian recorded the user's request as the goal, word for word. Don't reword it. Use these ids when you report with ${CODEX_TOOLS.update.name}. If the user limited this message to part of it, do that part, then call ${CODEX_TOOLS.update.name} with status set_aside and their words in user_words before you stop.`, ...goalBlock(contract.goal, contract.successCriteria), ...(await ralphForMessage(root, contract, conversationId))].join("\n");
   }
   // The first look in a chat only sets the baseline: the goal came with the user's message.
   if (!seen) return null;
@@ -676,7 +832,8 @@ export async function goalMidTurnNotice(root: string, conversationId: string | u
   if (seen.goalHash !== hash && contract.goal.trim() && seen.phase !== "none") {
     const stored = await goalBudget(root);
     const tokensUsed = stored ? stored.tokens_used : records.reduce((sum, r) => sum + (r.kind === "goal.round" && r.conversationId === conversationId ? (r.tokens ?? 0) : 0), 0);
-    return goalChangedMessage(contract.goal, contract.successCriteria, tokensUsed, stored?.token_budget ?? null);
+    // Codex's own words for the change, where its extension runs: its "User set the goal" fragment and its notice.
+    return goalChangedMessage(contract.goal, contract.successCriteria, tokensUsed, stored?.token_budget ?? null, { fragment: await codexUserFragment(root), notice: await codexNotice(root, "objective_updated", contract.goal) });
   }
   return phase === "paused" ? CLOSING.paused : null;
 }

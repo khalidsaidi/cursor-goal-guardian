@@ -1,7 +1,7 @@
 /**
- * The agent's run as Guardian itself saw it, in the shape the monitor reads: one assistant message per action with
- * its tool call, one tool message per result. Guardian's hooks see actions, not the agent's prose, so this is what
- * the monitoring paper calls an action-only trajectory.
+ * The agent's run as Guardian itself saw it, in the shape the evaluator's adapter reads: one assistant message per action with
+ * its tool call, one tool message per result. Guardian's hooks see actions, not the agent's prose, so the run is
+ * its actions and their results.
  */
 import { readFileEdits, readShellOutputs } from "./record.js";
 

@@ -17,7 +17,7 @@ nobody can cheaply reconstruct what the session was for.
 | | What it does | Where it comes from | How it's used |
 |---|---|---|---|
 | **Goal loop** | Your message is saved word for word as the goal and goes back with every message. When the agent stops, it is sent back until its report holds against Guardian's own record of commands and files. | The goal features of [OpenAI Codex](https://github.com/openai/codex) (Apache-2.0) and [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (MIT) | Their prompts and tool definitions go to the agent word for word. DeepSeek Harness's real goal service, from its published packages, keeps the goal's state: every change goes through it. Codex's Rust code isn't run yet; only its turn scheduling has to be played by Cursor's stop hook. |
-| **Review at "done"** | Before "complete" is accepted, a reviewer tries to prove each item isn't done in a throwaway copy of the project, and a monitor reads the run step by step and scores how far it strayed. | The monitor is the code of "Reliable Weak-to-Strong Monitoring of LLM Agents", [MRT](https://github.com/scaleapi/mrt) by Scale AI (MIT). The item reviewer is Guardian's own. | MRT's Python files run unmodified, with MRT's prompts, on a bundled Python. |
+| **Review at "done"** | Before "complete" is accepted, a reviewer tries to prove each item isn't done in a throwaway copy of the project, and an evaluator judges the recorded run against each of your "done when" items and for unrequested work. | The evaluator is [Google's Agent Development Kit](https://github.com/google/adk-python) (Apache-2.0). The item reviewer is Guardian's own. | ADK's evaluator code runs unmodified, with its own judge prompt, on a bundled Python. |
 | **Self-improvement** | The reviewer's prompt is improved from this workspace's own labelled reviews, tested on cases it didn't learn from, and applied only when you say so. | [RRSI](https://github.com/google-research/rrsi) by Google Research (Apache-2.0) | RRSI's Python files run unmodified on the same bundled Python. |
 
 What Guardian itself adds: recording your words as the goal, the record of what really
@@ -48,18 +48,19 @@ The compaction difference is the only one that is statistically clear on its own
 0 worse, 1 tied; p = 0.001). The interrupted one is 4 better, 0 worse, 8 tied (p = 0.125).
 In normal use Guardian finished nothing more and cost about a quarter more turns.
 
-**The review at "done"**, on 36 constructed runs where an agent was told to leave a known
-gap, with Claude Haiku as reviewer and monitor:
+**The review at "done"**, on 33 constructed runs where an agent was told to leave a known
+gap or none, with Claude Haiku as reviewer and judge. The reviewer was scored live; ADK's
+evaluator was scored afterwards by replaying the same runs as first reviewed:
 
-| Constructed run | Item reviewer objected | Monitor objected | Either |
-|---|---|---|---|
-| A placeholder test where real tests were asked for (12) | 12 | 4 | 12 |
-| The goal plus unrequested renames, validation and doc rewrites (9) | 9 | 8 | 9 |
-| The goal and nothing else (12) | 0 | 0 | 0 |
+| Constructed run | Item reviewer objected | ADK's evaluator objected |
+|---|---|---|
+| A placeholder test where real tests were asked for (12) | 12 | 12 |
+| The goal plus unrequested renames, validation and doc rewrites (9) | 9 | 9 |
+| The goal and nothing else (12) | 0 | 2 |
 
-On the 33 natural runs above that the judges found fully done, the reviewer objected to 2
-and the monitor to none. A review took a median of 18 s for the reviewer and 40 s and 9
-model calls for the monitor.
+On natural runs the judges found fully done, the reviewer objected to 2 of 33 and ADK's
+evaluator to 2 of 12. A review took a median of 18 s for the reviewer, and 24 s and 5 model
+calls for the evaluator.
 
 **What this doesn't show.** No natural run reached the review with a real gap, so the
 catches are on constructed cases only. The agents were Claude models, which rarely wander
@@ -78,7 +79,7 @@ result. Plans and raw data are outside this repository.
 | Each message | The goal goes back to the agent with it, so a new or compacted chat still has it |
 | During work | Hooks (~60 ms) record every command with its output and every edit, and say nothing |
 | When the agent stops | The goal loop sends it back, up to 20 rounds, until each item is proved against the record |
-| When the record agrees | The reviewer and the monitor check independently; objections go back as a round, at most twice |
+| When the record agrees | The reviewer and the evaluator check independently; objections go back as a round, at most twice |
 | Any time | The panel shows where the goal stands, its items, the receipts and any objection |
 
 The goal lives in one file, `.cursor/goal-guardian/contract.json`. Only the user changes it.
@@ -88,18 +89,18 @@ The goal lives in one file, `.cursor/goal-guardian/contract.json`. Only the user
 ```
 packages/
   core/         @goal-guardian/core: goal record, goal loop, proof check, reviewer,
-                monitor runner, self-improvement launcher
+                evaluator runner, self-improvement launcher
   mcp/          MCP server: get_goal, update_goal, guardian_change_goal
   hook/         Cursor hook, one bundle, p95 < 150 ms
   extension/    the published Cursor extension (panel, setup)
-  monitor/      Guardian's adapter for MRT's monitor (Python)
+  evaluator/    Guardian's adapter for Google ADK's evaluator (Python)
   rsi/          Guardian's domain for RRSI (Python)
   testkit/      shared test scaffolding
   e2e/          end-to-end suite, offline and with real headless Cursor agents
 third_party/
   codex/             OpenAI Codex's goal extension, unmodified
   deepseek-harness/  DeepSeek Harness's goal packages, unmodified
-  mrt/               the monitoring paper's code, unmodified
+  adk-python/        Google's Agent Development Kit, the evaluator's files, unmodified
   rrsi/              Google Research's RRSI, unmodified
 scripts/
   gen-vendored.mjs   copies the originals' text and functions into core

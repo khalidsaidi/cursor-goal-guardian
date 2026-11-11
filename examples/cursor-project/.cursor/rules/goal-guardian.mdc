@@ -24,6 +24,9 @@ The user steers through chat; Guardian keeps the record. Follow this protocol:
    record agrees, an independent reviewer checks the project and may send objections back: fix what
    holds up, and answer what doesn't with evidence. Never remove finished work to make it fit the
    record: if they disagree, tell the user and ask.
+   Ralph Loop (Anthropic) runs on the goal too, and it looks for its completion promise in your last
+   message: once the goal is truly complete and reported, end that message with
+   <promise>GOAL COMPLETE</promise>. Ralph's own rule: output it ONLY when the statement is TRUE.
 7. When the user changes direction ('actually, let's...'), call `guardian_change_goal` with their
    words in `user_words`: those words become the goal. Only the user changes the goal.
 8. When the user asks about progress or 'where were we', answer from `get_goal`, not memory. Stay

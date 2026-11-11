@@ -5,13 +5,13 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordFileEdit, recordShellFailure, recordShellOutput, recordUserPrompt, replayCase, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
+import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordAgentResponse, recordFileEdit, recordShellFailure, recordShellOutput, recordUserPrompt, replayCase, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
 
 /** The stop and prompt hooks answer in their own shapes, not the permission shape. */
 type HookOutput = HookResponse | { followup_message?: string } | { continue: true; additional_context?: string } | { additional_context?: string };
 
 /** Hooks with nothing to say answer empty, never with the permission shape. */
-const SILENT_EVENTS = new Set(["stop", "afterShellExecution", "postToolUse", "postToolUseFailure"]);
+const SILENT_EVENTS = new Set(["stop", "afterShellExecution", "postToolUse", "postToolUseFailure", "afterAgentResponse"]);
 
 async function readAllStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -127,6 +127,10 @@ async function handle(payload: Record<string, unknown>): Promise<HookOutput> {
       const context = !prompt.startsWith(GUARDIAN_MESSAGE_PREFIX) && mode && agentMode(mode) ? await goalTurnContext(root).catch(() => null) : null;
       return context ? { continue: true, additional_context: context } : { continue: true };
     }
+    case "afterAgentResponse":
+      // The agent's message, kept so Ralph Loop's stop hook can look for its completion promise in it.
+      await recordAgentResponse(root, ids(payload).conversationId, String(payload.text ?? "")).catch(() => undefined);
+      return {};
     case "afterShellExecution":
       await recordShellOutput(root, {
         command: String(payload.command ?? ""),
@@ -156,10 +160,12 @@ function commandFailed(event: string, payload: Record<string, unknown>): boolean
 }
 
 /** Cursor reports what the turn spent. Cached reads are left out: they aren't new work. */
-function turnTokens(payload: Record<string, unknown>): { tokens?: number } {
+function turnTokens(payload: Record<string, unknown>): { tokens?: number; usage?: { input_tokens: number; cached_input_tokens: number; output_tokens: number } } {
   const count = (key: string): number => (typeof payload[key] === "number" ? (payload[key] as number) : 0);
   const tokens = count("input_tokens") + count("output_tokens");
-  return tokens > 0 ? { tokens } : {};
+  // The split goes to Codex's own accounting, which counts input less cached, plus output.
+  const usage = { input_tokens: count("input_tokens") + count("cache_read_tokens"), cached_input_tokens: count("cache_read_tokens"), output_tokens: count("output_tokens") };
+  return tokens > 0 ? { tokens, usage } : {};
 }
 
 function ids(payload: Record<string, unknown>): { conversationId?: string; generationId?: string } {

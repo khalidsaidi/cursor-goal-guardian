@@ -57,18 +57,19 @@ No model and no assumption about language or tools. The agent names the proof; G
 
 When the record backs every item, one review runs before "complete" is accepted (`packages/core/src/goal/review.ts`). `cursor-agent`, on the user's own login and default model, runs headless in a throwaway copy (a shared clone with the working tree laid over it, no `.cursor`, credentials stripped except Cursor's own). It is asked to prove each item isn't done and to list changes no item needs, and answers in JSON. Its objections go back through the same loop. There are at most 2 reviews per run; after that the record decides and a standing objection goes on `goal.end` for the user. No reviewer, an error, unreadable output or more than 90 s means skipped, recorded as `goal.review` with `ran: false`. For tests, `GOAL_GUARDIAN_REVIEWER` replaces the binary and `GOAL_GUARDIAN_REVIEW_PROMPT` the prompt.
 
-## The monitor
+## The evaluator
 
-Alongside that review, the monitor from "Reliable Weak-to-Strong Monitoring of LLM Agents" reads the run piece by piece (`packages/core/src/goal/monitor.ts`). Its code is MRT's own, vendored unmodified in `third_party/mrt` (github.com/scaleapi/mrt, MIT), with MRT's prompts; Guardian's adapter is `packages/monitor`, and it runs on the bundled Python.
+Alongside that review, Google's Agent Development Kit judges the run (`packages/core/src/goal/evaluator.ts`). The code is ADK's own `RubricBasedMultiTurnTrajectoryEvaluator`, vendored unmodified in `third_party/adk-python` (github.com/google/adk-python, Apache-2.0); Guardian's adapter is `packages/evaluator`, and it runs on the bundled Python.
 
-- **What it reads.** The run as Guardian saw it (`trajectory.ts`): each command with its output and each edit with its text, from `telemetry/shell-output.jsonl` and `telemetry/edits.jsonl`. Hooks see actions, not the agent's prose, so this is what the paper calls an action-only trajectory. The user's query is the goal and its "done when" list.
-- **How.** MRT's hierarchical monitor scores each chunk and aggregates the summaries; its sequential monitor reads the chunks in order, carrying its conversation forward. Both use MRT's 1 to 5 scale and chunk size 5, as in the paper's own runs (`hierarchical_5_likert_reminder_v2`, `sequential_5_likert_reminder_v2`). A run over 20 messages gets larger chunks so each style makes at most 4 chunk calls. The two run side by side, one process each.
-- **The score.** The paper's hybrid, 0.5 x hierarchical + 0.5 x sequential (section 3.5; MRT's repository has no code for it, so that line is Guardian's). From 3 of 5 the monitor's own summary goes back to the agent as an objection, through the same loop as the reviewer's.
-- **Cost.** About 5 to 10 calls to the user's Cursor model per review, where the item review is one. Cursor ends a tool call that is silent for 120 s, and progress notices reset that clock, so `update_goal` sends them when the client asks for progress; the monitor then gets 300 s, otherwise 100 s. Over budget, no model, or no score means skipped and recorded, never blocking.
+- **What it reads.** The run as Guardian saw it (`trajectory.ts`): each command with its output and each edit with its text, from `telemetry/shell-output.jsonl` and `telemetry/edits.jsonl`, given to ADK as one invocation whose events are those tool calls and results, with the user's request as the user turn and the agent's own completion report as the final response.
+- **What it judges.** ADK's rubrics are properties answered yes or no. Each of the user's "done when" items is one rubric, word for word; Guardian adds one of its own: "The agent changed nothing that the user's request does not need."
+- **How.** ADK's judge prompt, five samples per judgement (its default) and its aggregation of them. The samples run side by side, which is ADK's own `parallelism_limit` option. The judge model is a `BaseLlm` registered with ADK's registry that asks the user's Cursor model through `cursor-agent`.
+- **What comes back.** Each rubric judged not met goes to the agent as an objection in the judge's own words, through the same loop as the reviewer's.
+- **Cost.** Five calls to the user's Cursor model per review, where the item review is one. Cursor ends a tool call that is silent for 120 s, and progress notices reset that clock, so `update_goal` sends them when the client asks for progress; the evaluator then gets 300 s, otherwise 100 s. Over budget, no model, or no verdict means skipped and recorded, never blocking.
 
-MRT's modules import pydantic, the provider SDKs and its benchmark at the top, none of which the monitor path runs. The adapter satisfies those imports with empty stand-ins, so no MRT file is edited and nothing is installed.
+ADK is built on pydantic and google-genai, so it needs real packages, not only the standard library: the 17 it loads are pinned in `packages/evaluator/requirements.txt` and installed as wheels beside the bundled Python when the extension is packaged (about 37 MB on linux-x64, the only platform wired so far). ADK's `MultiTurnTrajectoryQuality` and `MultiTurnTaskSuccess` evaluators hand the judging to Vertex AI and need a Google Cloud project, so they aren't used.
 
-RRSI improves the item reviewer's prompt only. The monitor's prompts are MRT's and are not tuned.
+RRSI improves the item reviewer's prompt only. The evaluator's prompt is ADK's and is not tuned.
 
 ## Learning from this workspace
 
@@ -159,6 +160,6 @@ These need a model that answers, so usage after 11/12:
 
 - A `completed` stop giving a real send-back from Guardian's own hook, and the agent answering it.
 - The agent calling `update_goal`, including which MCP server it reaches on native Windows.
-- Whether Cursor passes a progress token on tool calls, which decides the monitor's budget.
+- Whether Cursor passes a progress token on tool calls, which decides the evaluator's budget.
 - Edits and failed commands from a real agent turn firing their hooks.
 - How the model sees `additional_context`.

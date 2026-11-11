@@ -208,7 +208,20 @@ export const goalReviewRecordSchema = z
     extra: z.array(z.object({ file: z.string(), what: z.string() }).strict()),
     /** The project's state when it was reviewed, so a later change can be told from an objection ignored. */
     tree: z.string().optional(),
-    /** The paper's monitor on the same run: its scores on MRT's 1 to 5 scale and its own summary. */
+    /** Google ADK's evaluator on the same run: the rubrics it judged and those it judged not met. */
+    evaluator: z
+      .object({
+        ran: z.boolean(),
+        reason: z.string().optional(),
+        overall: z.number().nullable(),
+        rubrics: z.number().int().nonnegative(),
+        failed: z.array(z.object({ id: z.string(), property: z.string(), rationale: z.string() }).strict()),
+        calls: z.number().int().nonnegative(),
+        seconds: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    /** Written by an earlier second check that the evaluator replaced. Still read so old records parse; never used. */
     monitor: z
       .object({
         ran: z.boolean(),
@@ -309,7 +322,37 @@ export const goalEngineRecordSchema = z
   })
   .strict();
 
+/**
+ * A change to the goal that didn't happen because one of the three goal keepers running side by side (DeepSeek
+ * Harness's service, Codex's extension, Ralph Loop) or Guardian's own check refused it. `by` names who.
+ */
+export const goalRefusedRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.refused"),
+    conversationId: z.string().optional(),
+    goalHash: z.string(),
+    change: z.string(),
+    by: z.enum(["deepseek", "codex", "ralph", "guardian"]),
+    message: z.string(),
+  })
+  .strict();
+
+/** What Codex's extension and Ralph Loop each said at one stop: ran or skipped (and why), and their decision. */
+export const goalPartnersRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.partners"),
+    conversationId: z.string(),
+    goalHash: z.string(),
+    codex: z.object({ ran: z.boolean(), reason: z.string().optional(), continues: z.boolean().optional(), status: z.string().optional() }).strict(),
+    ralph: z.object({ ran: z.boolean(), reason: z.string().optional(), outcome: z.string().optional(), iteration: z.number().int().optional() }).strict(),
+  })
+  .strict();
+
 export const auditRecordSchema = z.discriminatedUnion("kind", [
+  goalRefusedRecordSchema,
+  goalPartnersRecordSchema,
   goalEngineRecordSchema,
   hookEventRecordSchema,
   lexicalDriftRecordSchema,
@@ -333,6 +376,8 @@ export const auditRecordSchema = z.discriminatedUnion("kind", [
   improveUndoRecordSchema,
 ]);
 
+export type GoalRefusedRecord = z.infer<typeof goalRefusedRecordSchema>;
+export type GoalPartnersRecord = z.infer<typeof goalPartnersRecordSchema>;
 export type HookEventName = z.infer<typeof hookEventNameSchema>;
 export type HookEventRecord = z.infer<typeof hookEventRecordSchema>;
 export type LexicalDriftRecord = z.infer<typeof lexicalDriftRecordSchema>;

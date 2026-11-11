@@ -1,6 +1,6 @@
 /**
- * One adversarial review when the agent says the goal is done and Guardian's own record agrees (the paper's monitor,
- * in monitor.ts, reads the same run alongside it). A separate agent,
+ * One adversarial review when the agent says the goal is done and Guardian's own record agrees (Google ADK's
+ * evaluator, in evaluator.ts, judges the same run alongside it). A separate agent,
  * on the user's own Cursor login and default model, works in a throwaway copy of the project and tries to prove
  * each "done when" item isn't really done, and lists work no item needs. It can't block anything: when it can't
  * run, it is skipped and recorded as skipped.
@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Contract } from "../schema/contract.js";
 import { readHarness } from "./harness.js";
-import { monitorLines, type MonitorOutcome } from "./monitor.js";
+import { evaluatorLines, type EvaluatorOutcome } from "./evaluator.js";
 
 export interface ReviewFailure {
   id: string;
@@ -299,9 +299,9 @@ export async function runReview(root: string, contract: Pick<Contract, "goal" | 
   }
 }
 
-/** Everything one review objects to: the reviewer's item verdicts and extras, then the monitor's, if it flagged the run. */
-export function objectionLines(review: Pick<ReviewOutcome, "fails" | "extra"> & { monitor?: Pick<MonitorOutcome, "ran" | "hybrid" | "summary"> | undefined }): string[] {
-  return [...reviewLines(review), ...(review.monitor ? monitorLines(review.monitor) : [])];
+/** Everything one review objects to: the reviewer's item verdicts and extras, then each rubric the evaluator judged not met. */
+export function objectionLines(review: Pick<ReviewOutcome, "fails" | "extra"> & { evaluator?: Pick<EvaluatorOutcome, "ran" | "failed"> | undefined }): string[] {
+  return [...reviewLines(review), ...(review.evaluator ? evaluatorLines(review.evaluator) : [])];
 }
 
 /** One line per objection, as the agent and the panel see them. */

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CODEX_TOOLS, MONITOR_BUDGET_WITH_PROGRESS_MS, submitGoalReport, updateGoalByTool, type EngineToolDefinition } from "@goal-guardian/core";
+import { CODEX_TOOLS, EVALUATOR_BUDGET_WITH_PROGRESS_MS, submitGoalReport, updateGoalByTool, type EngineToolDefinition } from "@goal-guardian/core";
 import { theirField } from "./theirs.js";
 import { workspaceRoot } from "../workspace.js";
 
@@ -84,7 +84,7 @@ export function registerUpdateGoal(server: McpServer, theirs: EngineToolDefiniti
         ...(removed !== undefined ? { removed } : {}),
         ...(reason !== undefined ? { reason } : typeof blocked_reason === "string" ? { reason: blocked_reason } : {}),
         ...(user_words !== undefined ? { userWords: user_words } : {}),
-      }, token === undefined ? {} : { monitorBudgetMs: MONITOR_BUDGET_WITH_PROGRESS_MS }).finally(() => {
+      }, token === undefined ? {} : { evaluatorBudgetMs: EVALUATOR_BUDGET_WITH_PROGRESS_MS }).finally(() => {
         if (beat) clearInterval(beat);
       });
       return { content: [{ type: "text" as const, text: JSON.stringify(answer) }] };

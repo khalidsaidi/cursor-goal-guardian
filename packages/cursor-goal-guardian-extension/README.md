@@ -137,8 +137,8 @@ record shows, until one of these happens:
 When the record backs every item, two independent checks run before "complete" is
 accepted, both on your own Cursor model. A reviewer works in a throwaway copy of the
 project and tries to prove each "done when" line isn't really done, and lists changes no
-line needs. A monitor reads the run step by step, from Guardian's own record of the
-commands, their output and the edits, and scores how far it strayed from what you asked.
+line needs. An evaluator reads Guardian's own record of the commands, their output and the
+edits, and judges it against each of your "done when" lines and for work you didn't ask for.
 Their objections go back to the agent like anything else that doesn't hold, at most twice
 per run; after that the record decides and a standing objection is shown to you.
 
@@ -155,7 +155,7 @@ panel says so.
 Works with any language or tool, because Guardian's own check only compares text and never
 runs your project's commands. Each round is an agent turn on your Cursor plan, including one
 short turn when you ask for something unrelated after the goal is set. The review at "done"
-is one more agent call, and the monitor about 5 to 10 short ones; both are skipped, never
+is one more agent call, and the evaluator five short ones; both are skipped, never
 blocking, when `cursor-agent` isn't installed, the project isn't a git repository, or they
 take too long.
 In a git repository it also reads `git status` and `git diff`, so files changed by commands
@@ -256,8 +256,7 @@ Guardian stands on other people's work and uses it as it is, unmodified; see `NO
 - The goal loop's instructions to the agent are those of [OpenAI Codex](https://github.com/openai/codex)'s
   goal extension (Apache-2.0) and [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)'s goal
   packages (MIT), word for word.
-- The monitor is the code of "Reliable Weak-to-Strong Monitoring of LLM Agents",
-  [MRT](https://github.com/scaleapi/mrt) by Scale AI (MIT).
+- The evaluator is [Google's Agent Development Kit](https://github.com/google/adk-python) (Apache-2.0).
 - The reviewer improves itself with [RRSI](https://github.com/google-research/rrsi) by Google Research
   (Apache-2.0).
 

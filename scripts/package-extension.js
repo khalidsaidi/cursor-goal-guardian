@@ -47,7 +47,7 @@ for (const entry of await fs.readdir(compiled)) {
   if (!target.startsWith("win32")) await fs.chmod(path.join(binDir, entry), 0o755);
 }
 
-// Google's RRSI and the paper's monitor run as they are, in Python, so the VSIX carries a Python of its own: python-build-standalone,
+// Google's RRSI and Google ADK's evaluator run as they are, in Python, so the VSIX carries a Python of its own: python-build-standalone,
 // pinned and checksum-verified, like the binaries above. Nothing is downloaded on the user's machine.
 const PYTHON_RELEASE = "20261026";
 const PYTHON_VERSION = "3.12.16";
@@ -119,20 +119,51 @@ async function bundleRsi() {
   await fs.copyFile(path.join(root, "NOTICE"), path.join(extDir, "NOTICE"));
 }
 
-/** The paper's monitor (MRT) unmodified, and Guardian's adapter for it. It runs on the same bundled Python. */
-async function bundleMonitor() {
-  const monitorDir = path.join(extDir, "monitor");
-  await fs.rm(monitorDir, { recursive: true, force: true });
-  const skip = (src) => !/(^|[\\/])(__pycache__|tests)([\\/]|$)/.test(src);
-  const vendored = path.join(root, "third_party", "mrt");
-  await fs.cp(vendored, path.join(monitorDir, "mrt"), { recursive: true, filter: (src) => skip(path.relative(vendored, src)) });
-  const adapter = path.join(root, "packages", "monitor", "cgg_monitor");
-  await fs.cp(adapter, path.join(monitorDir, "cgg_monitor"), { recursive: true, filter: (src) => skip(path.relative(adapter, src)) });
+/**
+ * Google ADK's evaluator: its own files unmodified (third_party/adk-python), Guardian's adapter, and the packages
+ * ADK depends on, pinned in packages/evaluator/requirements.txt and installed as wheels for the target platform.
+ * It runs on the same bundled Python. Only linux-x64 is wired for now; other targets ship without the evaluator,
+ * which the code tolerates (the second check is recorded as skipped).
+ */
+const PIP_PLATFORMS = { "linux-x64": ["manylinux2014_x86_64", "manylinux_2_17_x86_64", "manylinux_2_28_x86_64"] };
+
+async function bundleEvaluator() {
+  const home = path.join(extDir, "evaluator");
+  await fs.rm(home, { recursive: true, force: true });
+  // What an earlier second check left in a development tree.
+  await fs.rm(path.join(extDir, "monitor"), { recursive: true, force: true });
+  const platforms = PIP_PLATFORMS[target];
+  if (!platforms) {
+    console.log(`evaluator: not bundled for ${target} yet`);
+    return;
+  }
+  const skip = (src) => !/(^|[\\/])(__pycache__|tests|tools|\.site)([\\/]|$)/.test(src);
+  const adapter = path.join(root, "packages", "evaluator", "cgg_evaluator");
+  await fs.cp(adapter, path.join(home, "cgg_evaluator"), { recursive: true, filter: (src) => skip(path.relative(adapter, src)) });
+  const vendored = path.join(root, "third_party", "adk-python");
+  await fs.cp(path.join(vendored, "src"), path.join(home, "adk"), { recursive: true, filter: (src) => !/(^|[\\/])__pycache__([\\/]|$)/.test(src) });
+  await fs.copyFile(path.join(vendored, "LICENSE"), path.join(home, "adk", "LICENSE"));
+  run("python3", [
+    "-m", "pip", "install", "--quiet", "--no-input", "--no-deps", "--only-binary=:all:", "--implementation", "cp", "--python-version", "3.12",
+    ...platforms.flatMap((p) => ["--platform", p]),
+    "--target", path.join(home, "site-packages"), "-r", path.join(root, "packages", "evaluator", "requirements.txt"),
+  ], root);
+  // Wheels ship their own test suites, which nothing here runs. google-genai's holds sample tokens that the VSIX
+  // packager's secret scan rejects.
+  const dropTests = async (dir) => {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.name === "tests" || entry.name === "__pycache__") await fs.rm(full, { recursive: true, force: true });
+      else await dropTests(full);
+    }
+  };
+  await dropTests(path.join(home, "site-packages"));
 }
 
 await bundlePython();
 await bundleRsi();
-await bundleMonitor();
+await bundleEvaluator();
 
 const out = `cursor-goal-guardian-${target}.vsix`;
 run("pnpm", ["dlx", "@vscode/vsce", "package", "--no-dependencies", "--target", target, "--out", out], extDir);

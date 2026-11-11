@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CODEX_TOOLS, goalBudget, goalPhaseOf, readGoalRecords, runGoalTool, type EngineToolDefinition } from "@goal-guardian/core";
+import { CODEX_TOOLS, codexGetGoal, goalBudget, goalPhaseOf, readGoalRecords, runGoalTool, type EngineToolDefinition } from "@goal-guardian/core";
 import { readContractSafe, workspaceRoot } from "../workspace.js";
 
 /** Codex's get_goal, by its own name and description. Guardian's goal also carries the user's "done when" list. */
@@ -7,7 +7,7 @@ export function registerGetGoal(server: McpServer, theirs: EngineToolDefinition)
   server.registerTool(
     CODEX_TOOLS.get.name,
     {
-      description: `${CODEX_TOOLS.get.description}\n\nDeepSeek Harness: ${theirs.description}\n\nGuardian: the "their" field is DeepSeek's own get_goal answer. the goal is the user's own request, recorded word for word, with its 'done when' items and their ids. Usage and any token budget come from Codex's own goal store.`,
+      description: `${CODEX_TOOLS.get.description}\n\nDeepSeek Harness: ${theirs.description}\n\nGuardian: the "their" field is DeepSeek's own get_goal answer, and "codex" is Codex's own, from its real handler. the goal is the user's own request, recorded word for word, with its 'done when' items and their ids. Usage and any token budget come from Codex's own goal store.`,
       inputSchema: {},
     },
     async () => {
@@ -30,7 +30,9 @@ export function registerGetGoal(server: McpServer, theirs: EngineToolDefinition)
       } catch {
         // their error text, as it is
       }
-      return { content: [{ type: "text", text: JSON.stringify({ goal, their }) }] };
+      // Codex's own get_goal, through its real handler, where its extension is installed.
+      const codex = await codexGetGoal(root);
+      return { content: [{ type: "text", text: JSON.stringify({ goal, their, ...(codex !== undefined ? { codex } : {}) }) }] };
     },
   );
 }

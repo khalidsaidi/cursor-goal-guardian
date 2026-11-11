@@ -72,6 +72,7 @@ export async function scaffoldWorkspace(opts: ScaffoldOptions = {}): Promise<E2E
       afterShellExecution: hookEntry,
       postToolUse: hookEntry,
       postToolUseFailure: hookEntry,
+      afterAgentResponse: hookEntry,
       stop: [{ ...hookEntry[0]!, loop_limit: 21 }],
     },
   });

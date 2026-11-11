@@ -58,16 +58,54 @@ export function codexObjectiveBlock(objective: string): string[] {
   return [vendored.CODEX_OBJECTIVE_IS_DATA as string, "", "<objective>", escapeXmlText(objective), "</objective>"];
 }
 
-/** Codex's tool definitions (ext/goal/src/spec.rs). */
-export const CODEX_TOOLS = {
+/**
+ * Codex's tool definitions. Where Codex's goal extension is installed they are the ones its own executors give
+ * (`useCodexToolSpecs`, fed from the binary's `tool_specs`); otherwise the same text as read out of its source
+ * (ext/goal/src/spec.rs) by scripts/gen-vendored.mjs.
+ */
+export const CODEX_TOOLS: {
+  get: { name: string; description: string };
+  create: { name: string; description: string; objectiveDescription: string };
+  update: { name: string; description: string; statusDescription: string; statuses: string[] };
+  /** Where the definitions came from. */
+  source: "codex's executors" | "codex's source";
+} = {
   get: { name: vendored.CODEX_GET_GOAL_TOOL_NAME as string, description: vendored.CODEX_GET_GOAL_DESCRIPTION as string },
+  create: { name: vendored.CODEX_CREATE_GOAL_TOOL_NAME as string, description: vendored.CODEX_CREATE_GOAL_DESCRIPTION as string, objectiveDescription: vendored.CODEX_CREATE_GOAL_OBJECTIVE_DESCRIPTION as string },
   update: {
     name: vendored.CODEX_UPDATE_GOAL_TOOL_NAME as string,
     description: vendored.CODEX_UPDATE_GOAL_DESCRIPTION as string,
     statusDescription: vendored.CODEX_UPDATE_GOAL_STATUS_DESCRIPTION as string,
     statuses: vendored.CODEX_UPDATE_GOAL_STATUSES as string[],
   },
-} as const;
+  source: "codex's source",
+};
+
+interface CodexSpec {
+  name: string;
+  spec: { description?: string; parameters?: unknown };
+}
+
+/** Take the tool definitions from Codex's own executors. Anything they don't give keeps its value from the source. */
+export function useCodexToolSpecs(tools: CodexSpec[]): boolean {
+  const of = (name: string): CodexSpec["spec"] | undefined => tools.find((t) => t.name === name)?.spec;
+  const prop = (spec: CodexSpec["spec"] | undefined, name: string): { description?: unknown; enum?: unknown } | undefined =>
+    ((spec?.parameters as { properties?: Record<string, { description?: unknown; enum?: unknown }> } | undefined)?.properties ?? {})[name];
+  const get = of(CODEX_TOOLS.get.name);
+  const create = of(CODEX_TOOLS.create.name);
+  const update = of(CODEX_TOOLS.update.name);
+  if (!get?.description || !create?.description || !update?.description) return false;
+  CODEX_TOOLS.get.description = get.description;
+  CODEX_TOOLS.create.description = create.description;
+  const objective = prop(create, "objective")?.description;
+  if (typeof objective === "string") CODEX_TOOLS.create.objectiveDescription = objective;
+  CODEX_TOOLS.update.description = update.description;
+  const status = prop(update, "status");
+  if (typeof status?.description === "string") CODEX_TOOLS.update.statusDescription = status.description;
+  if (Array.isArray(status?.enum) && status.enum.every((v) => typeof v === "string")) CODEX_TOOLS.update.statuses = status.enum as string[];
+  CODEX_TOOLS.source = "codex's executors";
+  return true;
+}
 
 /** DeepSeek Harness's `<goal_round>` prompt (goal-round-driver/src/prompt.ts), from its own function. */
 export function deepseekGoalRound(objective: string, round: number, maxGoalRounds: number): string {

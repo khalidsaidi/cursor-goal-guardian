@@ -45,6 +45,8 @@ fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(req) + "\\n");
 let g = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, "utf8")) : null;
 const limit = (x) => { if (x.status === "active" && x.token_budget !== null && x.tokens_used >= x.token_budget) x.status = "budget_limited"; return x; };
 const fresh = () => limit({ goal_id: "g" + Date.now() + Math.random(), objective: req.objective, status: "active", token_budget: req.token_budget ?? null, tokens_used: 0, time_used_seconds: 0, created_at_ms: Date.now(), updated_at_ms: Date.now() });
+// A store-only build knows nothing of the whole extension's requests: it answers an error, and Guardian falls back.
+if (!["get", "set", "status", "account", "clear"].includes(req.op)) { process.stdout.write(JSON.stringify({ ok: false, error: "unknown op " + req.op }) + "\\n"); process.exit(0); }
 if (req.op === "set") {
   if (req.fresh || !g || g.status === "complete") g = fresh();
   else { g.objective = req.objective; if ("token_budget" in req) g.token_budget = req.token_budget; limit(g); }
@@ -55,7 +57,8 @@ if (g) fs.writeFileSync(state, JSON.stringify(g)); else if (fs.existsSync(state)
 process.stdout.write(JSON.stringify({ ok: true, goal: g }) + "\\n");
 `);
   await fsp.chmod(file, 0o755);
-  return { file, log: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as CodexGoalRequest) : []) };
+  // Only the store's own requests: the whole extension's (turn, user_goal, steering, tool) are refused above.
+  return { file, log: () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as CodexGoalRequest).filter((r) => ["get", "set", "status", "account", "clear"].includes(r.op)) : []) };
 }
 
 async function workspace(goal = "Add CSV export"): Promise<string> {

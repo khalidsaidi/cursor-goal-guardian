@@ -55,23 +55,24 @@ made by its GoalService and read by its foldGoal; Guardian's adapter is
 packages/core/src/goal/engine.ts. Its round driver and tool plumbing are not
 run yet.
 
-This product includes software developed by Scale AI:
-Monitor Red Teaming (MRT), the code of "Reliable Weak-to-Strong Monitoring of
-LLM Agents"
-https://github.com/scaleapi/mrt, commit 3535620
-Licensed under the MIT License (see third_party/mrt/LICENSE).
+This product includes software developed by Google LLC:
+Agent Development Kit (ADK) for Python
+https://github.com/google/adk-python, commit c0bcdaa
+Licensed under the Apache License, Version 2.0 (see
+third_party/adk-python/LICENSE).
 
-third_party/mrt holds MRT's own files, unmodified, at their upstream paths:
-LICENSE, README.md, the monitor (utils/pipeline_utils.py), its prompts
-(task_pairs/base_task_definition.py), its transcript format and verdict parser
-(utils/logging_utils.py, utils/analysis_utils.py), llms/base.py, and the
-modules those import. third_party/mrt/VENDORED.md, which is Guardian's, lists
-them and what is left out (the benchmark, the API providers, the experiment
-scripts and notebooks). Guardian runs MRT's hierarchical and sequential
-monitors as they are, with MRT's prompts, on the bundled Python; its adapter is
-packages/monitor. The hybrid score, 0.5 x hierarchical + 0.5 x sequential, is
-one line of Guardian's, from the paper's section 3.5: MRT's repository has no
-code for it.
+third_party/adk-python holds ADK's own files, unmodified, at their upstream
+paths: LICENSE, README.md and the 115 files under src/google/adk that its
+RubricBasedMultiTurnTrajectoryEvaluator loads. third_party/adk-python/
+VENDORED.md, which is Guardian's, says what is left out. Guardian runs that
+evaluator as it is, with ADK's judge prompt, sampling and aggregation, as the
+second check when the agent reports the goal complete; its adapter is
+packages/evaluator. The rubrics are the user's own "done when" items, plus one
+sentence of Guardian's about unrequested work. ADK's dependencies (pydantic,
+google-genai and 15 others, pinned in packages/evaluator/requirements.txt, each
+under its own licence) are installed as wheels when the extension is packaged
+and are not copied here. ADK's evaluators that call Vertex AI's hosted
+evaluation are not used.
 
 Codex's own goal store (the codex-state crate at ac54a05, Apache-2.0) runs
 unmodified beside DeepSeek Harness's service: it is fetched from Codex's
@@ -80,3 +81,11 @@ is copied here. It is told every change to the goal and keeps Codex's usage
 accounting and token budget. Not run yet from Codex: its tool handlers and its
 continuation scheduling. Not run yet from DeepSeek Harness: its tools, its
 round driver and its /goal command.
+
+This product includes Anthropic's Ralph Loop plugin
+(https://github.com/anthropics/claude-plugins-official, commit 43fd1f9,
+Apache-2.0), vendored unmodified in
+third_party/claude-plugins-official/plugins/ralph-loop. Guardian runs its setup
+and stop-hook scripts as they are, beside DeepSeek Harness's and Codex's goal
+code; the one adaptation is a one-line transcript built from the text Cursor's
+afterAgentResponse hook gives, because Ralph reads Claude Code's transcript.

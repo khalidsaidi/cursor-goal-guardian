@@ -15,9 +15,9 @@ Guardian's own part is what neither has: your latest message first, the facts fr
 
 The agent's tools are now `get_goal` and `update_goal`, with Codex's names, descriptions and statuses, plus Guardian's proof fields and `set_aside`. `guardian_change_goal` replaces `guardian_update_goal`. `guardian_get_contract`, `guardian_get_status` and `guardian_report_goal` are gone. The workspace rule is rewritten on upgrade. The agent can now pause a goal, but only by quoting your request to pause.
 
-### The paper's monitor at "done"
+### Google's evaluator at "done"
 
-Alongside the item review, the monitor from "Reliable Weak-to-Strong Monitoring of LLM Agents" (Scale AI's MRT, MIT, bundled unmodified) reads the run piece by piece from Guardian's own record of commands, outputs and edits, with MRT's prompts, on your own Cursor model. Its hierarchical and sequential scores are combined as the paper defines; from 3 of 5 its summary goes back to the agent like a reviewer objection, and it shows on the panel. It costs about 5 to 10 short model calls per review, and is skipped, never blocking, when it can't run or takes too long. Guardian now also records what each edit changed (`telemetry/edits.jsonl`, kept out of git).
+Alongside the item review, the evaluator from Google's Agent Development Kit (Apache-2.0, bundled unmodified) judges the run from Guardian's own record of commands, outputs and edits, on your own Cursor model: one yes-or-no rubric for each of your "done when" lines, word for word, and one for work you didn't ask for. Each rubric it judges not met goes back to the agent like a reviewer objection, in the judge's words, and shows on the panel. It costs five short model calls per review, and is skipped, never blocking, when it can't run or takes too long. Guardian now also records what each edit changed (`telemetry/edits.jsonl`, kept out of git). Only the Linux x64 build carries the evaluator so far.
 
 ### Independent review at "done"
 

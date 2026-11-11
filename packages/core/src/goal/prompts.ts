@@ -1,7 +1,7 @@
 /**
  * Every word Guardian says to the agent about the goal. The goal-loop instructions are the original projects' own,
  * unmodified (see originals.ts): Codex's continuation prompt and objective notices, DeepSeek Harness's
- * `<goal_round>` prompt and closing instructions. Only what neither of them has is written here: the user's latest
+ * `<goal_round>` prompt and closing instructions, and Ralph Loop's own stop-hook answer. Only what none of them has is written here: the user's latest
  * message first, the facts from Guardian's own record, and how to report proof.
  */
 import { GUARDIAN_MESSAGE_PREFIX } from "./record.js";
@@ -28,8 +28,10 @@ export function goalBlock(goal: string, criteria: Criteria): string[] {
 }
 
 /** Said when the user changed the goal: Codex's own notice, then the new "done when" list. */
-export function goalChangedMessage(goal: string, criteria: Criteria, tokensUsed: number, tokenBudget: number | null = null): string {
-  return [codexObjectiveUpdated(shown(goal), tokensUsed, tokenBudget), ...(criteria.length ? ["", ...doneWhen(criteria)] : []), "", "Ask the user before removing any finished work."].join("\n");
+export function goalChangedMessage(goal: string, criteria: Criteria, tokensUsed: number, tokenBudget: number | null = null, codex: { fragment?: string; notice?: string | null } = {}): string {
+  // Where Codex's extension runs, the words are the ones its own code produced: its "User set the goal" fragment
+  // and its objective-updated notice. Otherwise its template, rendered here the way its steering code renders it.
+  return [...(codex.fragment ? [codex.fragment, ""] : []), codex.notice ?? codexObjectiveUpdated(shown(goal), tokensUsed, tokenBudget), ...(criteria.length ? ["", ...doneWhen(criteria)] : []), "", "Ask the user before removing any finished work."].join("\n");
 }
 
 /**
@@ -71,6 +73,12 @@ export interface RoundFacts {
   tokensUsed: number;
   /** The goal's token budget in Codex's store, or none. */
   tokenBudget?: number | null;
+  /** The continuation prompt Codex's own scheduling produced for this stop, and the objective as it hands it over. */
+  codexPrompt?: string | null;
+  codexObjectiveContext?: string | null;
+  /** What Ralph Loop's own stop hook answered: its one-line system message and the task it feeds back. */
+  ralphSystemMessage?: string;
+  ralphPrompt?: string;
   unproved: string[];
   unclaimed: string[];
   extras: string[];
@@ -96,8 +104,9 @@ export function goalRoundMessage(goal: string, criteria: Criteria, f: RoundFacts
     ...(criteria.length ? ["", ...doneWhen(criteria)] : []),
     "",
     ...(facts.length ? ["What Guardian's record shows:", ...facts, ""] : []),
-    codexContinuation(f.tokensUsed, f.tokenBudget ?? null),
+    ...(f.codexPrompt ? [...(f.codexObjectiveContext ? ["<goal_objective>", esc(f.codexObjectiveContext), "</goal_objective>", ""] : []), f.codexPrompt.trimEnd()] : [codexContinuation(f.tokensUsed, f.tokenBudget ?? null)]),
     "",
+    ...(f.ralphPrompt !== undefined ? [...(f.ralphSystemMessage ? [f.ralphSystemMessage] : []), f.ralphPrompt, ""] : []),
     ...GUARDIAN_PART,
   ].join("\n");
 }
@@ -114,6 +123,6 @@ export function goalClosingMessage(goal: string, criteria: Criteria, why: string
 }
 
 /** The goal reached its token budget in Codex's store: Codex's own budget-limit prompt closes the run. */
-export function goalBudgetLimitMessage(goal: string, usage: { tokensUsed: number; tokenBudget: number | null; timeUsedSeconds: number }): string {
-  return [`${GUARDIAN_MESSAGE_PREFIX} the goal has used its token budget. Don't start new work.`, "", codexBudgetLimit(shown(goal), usage)].join("\n");
+export function goalBudgetLimitMessage(goal: string, usage: { tokensUsed: number; tokenBudget: number | null; timeUsedSeconds: number }, codexNotice?: string | null): string {
+  return [`${GUARDIAN_MESSAGE_PREFIX} the goal has used its token budget. Don't start new work.`, "", codexNotice ?? codexBudgetLimit(shown(goal), usage)].join("\n");
 }

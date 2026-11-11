@@ -160,7 +160,10 @@ describe("DeepSeek Harness's own tools and command behind the MCP tools", () => 
     expect(props.blocked_reason!.description).toContain("Required only with action blocked");
     const got = await callJson("get_goal");
     expect(got.their).toMatchObject({ goal: { objective: "Ship the CSV export feature", phase: "active", maxGoalRounds: 256 } });
-    expect(tools.find((t) => t.name === "create_goal")!.description!.startsWith("Create a persisted goal that keeps this session working across automatic continuation rounds.")).toBe(true);
+    // create_goal carries Codex's description, then DeepSeek's, side by side.
+    const create = tools.find((t) => t.name === "create_goal")!.description!;
+    expect(create.startsWith("Create a goal only when explicitly requested by the user or system/developer instructions; do not infer goals from ordinary tasks.")).toBe(true);
+    expect(create).toContain("DeepSeek Harness: Create a persisted goal that keeps this session working across automatic continuation rounds.");
   });
 
   it("a call in their shape reaches their tool, which answers by its own rules", async () => {
