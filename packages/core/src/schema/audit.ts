@@ -295,7 +295,22 @@ export const goalEndRecordSchema = z
   })
   .strict();
 
+/**
+ * One event of DeepSeek Harness's own session log for this workspace's goal, exactly as its services produced it
+ * (goal/change, the turn and user-message events of an admitted goal round, its seed markers). Guardian stores
+ * them; DeepSeek's fold reads them. `reset` starts the log over after one their replay rejected.
+ */
+export const goalEngineRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.engine"),
+    event: z.record(z.unknown()).optional(),
+    reset: z.boolean().optional(),
+  })
+  .strict();
+
 export const auditRecordSchema = z.discriminatedUnion("kind", [
+  goalEngineRecordSchema,
   hookEventRecordSchema,
   lexicalDriftRecordSchema,
   policyAdvisoryRecordSchema,

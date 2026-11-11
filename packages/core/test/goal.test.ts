@@ -424,7 +424,8 @@ describe("the goal loop: how a run ends", () => {
       says.push((await stop(root, i))!);
     }
     says.forEach((msg, i) => {
-      expect(msg).toContain(`<goal_round>\nObjective: "Add CSV export"\nRound: ${i + 1}/${GOAL_MAX_ROUNDS}\n`);
+      // The round count and cap in DeepSeek's prompt are the ones its own goal service holds.
+      expect(msg).toContain(`<goal_round>\nObjective: "Add CSV export"\nRound: ${i + 1}/256\n`);
       expect(msg).toContain("Before deciding that the goal is achieved, treat completion as unproven and verify it against the actual current state:");
       expect(msg).toContain("- Token budget: none\n- Tokens remaining: unbounded");
       expect(msg).not.toContain("update_plan");

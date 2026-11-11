@@ -19,6 +19,8 @@ export * from "./goal/improve.js";
 export * from "./goal/evaluate.js";
 export * from "./goal/originals.js";
 export * from "./goal/prompts.js";
+export * from "./goal/engineFold.js";
+export * from "./goal/engine.js";
 export * from "./goal/loop.js";
 export * from "./pipeline/outcome.js";
 export * from "./pipeline/run.js";

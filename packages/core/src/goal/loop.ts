@@ -12,8 +12,10 @@ import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalEndRecord, GoalReportRecord, GoalControlRecord, GoalReviewRecord, GoalRoundRecord, UserMessageRecord } from "../schema/audit.js";
 import { evaluateReport, projectPath, userSaid, type GoalEvaluation } from "./evaluate.js";
 import { CLOSING, goalBlock, goalChangedMessage, goalClosingMessage, goalRoundMessage } from "./prompts.js";
-import { BLOCKED_AFTER_CONSECUTIVE_ROUNDS, CODEX_TOOLS, deepseekBlockThreshold } from "./originals.js";
+import { BLOCKED_AFTER_CONSECUTIVE_ROUNDS, CODEX_TOOLS, ROUND_LIMIT_CODE, deepseekBlockThreshold } from "./originals.js";
 import { captureGoal } from "./capture.js";
+import { EngineRefused, engineApply, type EngineOp } from "./engine.js";
+import { engineView, type EngineGoal } from "./engineFold.js";
 import { MAX_REVIEWS, objectionLines, runReview } from "./review.js";
 import { MONITOR_BUDGET_MS, runMonitor } from "./monitor.js";
 import { readTrajectory } from "./trajectory.js";
@@ -30,6 +32,10 @@ export const GOAL_BLOCKED_AFTER_TURNS = BLOCKED_AFTER_CONSECUTIVE_ROUNDS;
 const REPORT_CALL = `/${CODEX_TOOLS.update.name}`;
 /** Rounds in a row with nothing changed before Guardian stops sending the agent back. */
 const NO_PROGRESS_ROUNDS = 3;
+/** The blocker code DeepSeek's goal tool records for a block the model itself reported (tool-goal/src/index.ts). */
+const MODEL_REPORTED_CODE = "model-reported";
+/** Guardian's own blocker code, in the form their service requires. */
+const NO_PROGRESS_CODE = "no-progress";
 
 /** Long enough that a proved goal stays proved through a long session. */
 const TAPE_WINDOW = 20_000;
@@ -130,8 +136,23 @@ export function agentMode(mode: string | null | undefined): boolean {
 
 export type GoalPhase = "none" | "active" | "paused" | "complete";
 
-/** Where the goal stands. The hash is the goal's identity and revision: when the user changes it, this all starts over. */
+/**
+ * Where the goal stands. DeepSeek Harness's goal service is the authority: its own fold over the engine events in
+ * these records gives the phase. Their `blocked` is a goal Guardian still shows as open (the run that blocked says
+ * so); a completed goal whose words differ from the contract's has been replaced by a new request. Records with no
+ * engine events (a workspace from before the engine) are read the old way.
+ */
 export function goalPhaseOf(all: AuditRecord[], contract: Pick<Contract, "goal" | "successCriteria">): GoalPhase {
+  if (!contract.goal.trim()) return "none";
+  const view = engineView(all);
+  if (view === undefined) return legacyGoalPhase(all, contract);
+  if (view === null) return "active";
+  if (view.phase === "complete") return view.objective === contract.goal.trim() ? "complete" : "active";
+  return view.phase === "paused" ? "paused" : "active";
+}
+
+/** The phase as Guardian's own records gave it before the engine: only read to seed the engine in an older workspace. */
+export function legacyGoalPhase(all: AuditRecord[], contract: Pick<Contract, "goal" | "successCriteria">): GoalPhase {
   if (!contract.goal.trim()) return "none";
   const hash = goalHash(contract);
   let phase: GoalPhase = "active";
@@ -144,10 +165,34 @@ export function goalPhaseOf(all: AuditRecord[], contract: Pick<Contract, "goal" 
   return phase;
 }
 
-/** The user's controls. Resuming and closing are refused from anywhere else: the panel is the only caller. */
+/**
+ * One change through DeepSeek's goal service, with the contract's words and, for a workspace older than the engine,
+ * the phase Guardian's own records showed. Returns null when their service refuses; anything else is thrown.
+ */
+async function engine(root: string, contract: Pick<Contract, "goal" | "successCriteria">, op: EngineOp, objective = contract.goal): Promise<{ goal: EngineGoal | null } | null> {
+  try {
+    return { goal: await engineApply(root, objective, legacyGoalPhase(await readGoalRecords(root), contract), op) };
+  } catch (err) {
+    if (err instanceof EngineRefused) return null;
+    throw err;
+  }
+}
+
+/** Record a goal in DeepSeek's service: a new one, or the open one with the user's new words. False when refused. */
+export async function setEngineGoal(root: string, objective: string, startOver: boolean): Promise<boolean> {
+  const contract = await readContractSafe(root);
+  return (await engine(root, contract, { type: startOver ? "create" : "sync" }, objective)) !== null;
+}
+
+/**
+ * The user's controls. Resuming and closing are refused from anywhere else: the panel is the only caller. DeepSeek's
+ * service makes the change (pause, resume, complete); what it refuses, such as pausing a goal that isn't active,
+ * doesn't happen.
+ */
 export async function controlGoal(root: string, operation: GoalControlRecord["operation"]): Promise<void> {
   const contract = await readContractSafe(root);
   if (!contract.goal.trim()) return;
+  if (!(await engine(root, contract, { type: operation === "done" ? "complete" : operation }))) return;
   await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: goalHash(contract), operation, actor: "user" });
 }
 
@@ -204,6 +249,7 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
     if (!prompts || !userSaid(input.userWords, prompts)) {
       return { accepted: false, ...none, message: "Not paused: pass the user's request to pause in user_words, quoted exactly from their latest message. If they didn't ask for this, keep working on the goal." };
     }
+    if (!(await engine(root, contract, { type: "pause" }))) return { accepted: false, ...none, message: "Not paused: the goal can't be paused from where it stands." };
     await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: hash, operation: "pause", actor: "agent" });
     return { accepted: true, ...none, message: CLOSING.paused };
   }
@@ -325,7 +371,10 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     const freshClaim = !lastRound || Date.parse(seq.report.ts) >= Date.parse(lastRound.ts);
     if (seq.report.status === "blocked" && freshClaim) {
       if (seq.rounds.length + 1 >= GOAL_BLOCKED_AFTER_TURNS && seq.report.reason?.trim()) {
-        await end(root, seq, conversationId, hash, "blocked", { reason: seq.report.reason }, input.tokens);
+        // DeepSeek's service blocks the goal, with the code its goal tool gives a model's own report.
+        if (await engine(root, contract, { type: "block", code: MODEL_REPORTED_CODE, message: seq.report.reason.trim() })) {
+          await end(root, seq, conversationId, hash, "blocked", { reason: seq.report.reason }, input.tokens);
+        }
         return null;
       }
       notes.push("- Blocked isn't accepted yet: try the ways around it first.");
@@ -347,6 +396,8 @@ export async function runGoalStop(root: string, input: { conversationId?: string
       const last = objected && reviews.length >= MAX_REVIEWS && reviews.indexOf(objected) === reviews.length - 1 ? objected : null;
       const changedSince = Boolean(last?.tree && seq.tree && last.tree !== seq.tree.fingerprint);
       const standing = last && !changedSince ? objectionLines(last) : [];
+      // DeepSeek's service completes the goal; if it refuses, nothing is recorded as proved.
+      if (!(await engine(root, contract, { type: "complete" }))) return null;
       await end(root, seq, conversationId, hash, "proved", { ...(standing.length ? { reviewer: standing } : {}), ...(changedSince ? { changedSinceReview: true } : {}), proved: result.proved, extras: result.extras, changes: seq.report.changes.map((c) => ({ file: projectPath(root, c.file), serves: c.serves })), ...(seq.report.removed?.length ? { removed: seq.report.removed } : {}) }, input.tokens);
       return null;
     }
@@ -362,6 +413,8 @@ export async function runGoalStop(root: string, input: { conversationId?: string
   const idleRounds = idle ? [...seq.rounds].reverse().findIndex((r) => !r.idle) : -1;
   const idleInARow = idle ? (idleRounds === -1 ? seq.rounds.length : idleRounds) + 1 : 0;
   if (idleInARow >= NO_PROGRESS_ROUNDS) {
+    const why = `nothing has changed for ${NO_PROGRESS_ROUNDS} rounds`;
+    await engine(root, contract, { type: "block", code: NO_PROGRESS_CODE, message: why });
     await end(root, seq, conversationId, hash, "stalled", {
       unproved,
       ...(seq.report ? {} : { noReport: true, reason: "The agent never reported. Check that Guardian's MCP server is switched on in Cursor's settings." }),
@@ -369,21 +422,40 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     return seq.report ? goalClosingMessage(contract.goal, contract.successCriteria, `nothing has changed for ${NO_PROGRESS_ROUNDS} rounds, so Guardian is stopping here.`, unproved, "no-progress") : null;
   }
   if (loopCount >= GOAL_MAX_ROUNDS) {
+    // As DeepSeek's round driver does when rounds run out: the goal is blocked with its round-limit code.
+    await engine(root, contract, { type: "block", code: ROUND_LIMIT_CODE, message: `that was the last of ${GOAL_MAX_ROUNDS} rounds for one message` });
     await end(root, seq, conversationId, hash, "limit", { unproved }, input.tokens);
     return goalClosingMessage(contract.goal, contract.successCriteria, `that was the last of ${GOAL_MAX_ROUNDS} rounds.`, unproved);
+  }
+  // The round is admitted by DeepSeek's service, which counts it against the goal's own cap.
+  let admitted = await engine(root, contract, { type: "round" });
+  if (!admitted && loopCount === 0 && engineView(await readGoalRecords(root))?.phase === "blocked") {
+    // Guardian's policy for their blocked phase: the user's new message is the human-authorized edge that resumes it.
+    if (await engine(root, contract, { type: "resume" })) admitted = await engine(root, contract, { type: "round" });
+  }
+  if (!admitted?.goal) {
+    const view = engineView(await readGoalRecords(root));
+    if (!view || view.phase !== "active" || view.roundsStarted < view.maxGoalRounds) return null;
+    await engine(root, contract, { type: "block", code: ROUND_LIMIT_CODE, message: `the goal used all ${view.maxGoalRounds} of its rounds` });
+    await end(root, seq, conversationId, hash, "limit", { unproved }, input.tokens);
+    return goalClosingMessage(contract.goal, contract.successCriteria, `the goal used all ${view.maxGoalRounds} of its rounds.`, unproved);
   }
   const round = loopCount + 1;
   notes.push(...reviewer.map((l) => `- ${l}`));
   await appendAudit(root, { ts: nowIso(), kind: "goal.round", conversationId, goalHash: hash, round, idle, ...(reviewer.length ? { reviewer } : {}), ...(input.tokens ? { tokens: input.tokens } : {}), ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited });
   const latestMessage = (await readUserPrompts(root))?.at(-1);
   const tokensUsed = seq.rounds.reduce((sum, r) => sum + (r.tokens ?? 0), input.tokens ?? 0);
-  return goalRoundMessage(contract.goal, contract.successCriteria, { latestMessage, round, maxRounds: GOAL_MAX_ROUNDS, tokensUsed, unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited, notes });
+  return goalRoundMessage(contract.goal, contract.successCriteria, { latestMessage, round, maxRounds: GOAL_MAX_ROUNDS, goalRound: admitted.goal.roundsStarted, goalMaxRounds: admitted.goal.maxGoalRounds, tokensUsed, unproved, unclaimed, extras, goalFileEdited: seq.goalFileEdited, notes });
 }
 
 /** Goes with every message the user sends, so the goal survives compaction and old chats reopened. Not shown as a message. */
 export async function goalTurnContext(root: string): Promise<string | null> {
   const contract = await readContractSafe(root);
-  const phase = goalPhaseOf(await readGoalRecords(root), contract);
+  const records = await readGoalRecords(root);
+  // Guardian's policy for DeepSeek's blocked phase: this message from the user is the human-authorized edge that
+  // resumes the goal. A paused goal is different: only the panel resumes it, as their own tool also refuses to.
+  if (contract.goal.trim() && engineView(records)?.phase === "blocked") await engine(root, contract, { type: "resume" });
+  const phase = goalPhaseOf(records, contract);
   if (phase === "none") return "No goal is on record. Guardian records the user's request as the goal, word for word, when you first change something. If this message asks to continue earlier work, look in past chats and recent commits to find out what it was.";
   if (phase !== "active") return null;
   return [

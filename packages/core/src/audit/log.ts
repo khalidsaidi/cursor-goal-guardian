@@ -2,6 +2,9 @@ import fs from "node:fs/promises";
 import { getGuardianPaths } from "../paths.js";
 import { auditRecordSchema, type AuditRecord } from "../schema/audit.js";
 import { appendLine } from "../fsutil.js";
+import { loadEngineFold } from "../goal/engineFold.js";
+
+const ENGINE = '"goal.engine"';
 
 export async function appendAudit(workspaceRoot: string, record: AuditRecord): Promise<void> {
   const p = getGuardianPaths(workspaceRoot);
@@ -22,7 +25,11 @@ export async function readAuditTail(workspaceRoot: string, maxRecords = 500): Pr
   }
   const lines = raw.split("\n").filter((line) => line.trim().length > 0);
   const out: AuditRecord[] = [];
-  for (const line of lines.slice(-maxRecords)) {
+  // The goal engine's log is read whole, however long the tape: a fold over part of it would be wrong.
+  const cut = Math.max(0, lines.length - maxRecords);
+  const kept = [...lines.slice(0, cut).filter((line) => line.includes(ENGINE)), ...lines.slice(cut)];
+  if (kept.some((line) => line.includes(ENGINE))) await loadEngineFold().catch(() => undefined);
+  for (const line of kept) {
     try {
       out.push(auditRecordSchema.parse(JSON.parse(line)));
     } catch {
@@ -36,8 +43,9 @@ export async function readAuditTail(workspaceRoot: string, maxRecords = 500): Pr
 export async function readGoalRecords(workspaceRoot: string): Promise<AuditRecord[]> {
   const raw = await fs.readFile(getGuardianPaths(workspaceRoot).audit, "utf8").catch(() => "");
   const out: AuditRecord[] = [];
+  if (raw.includes(ENGINE)) await loadEngineFold().catch(() => undefined);
   for (const line of raw.split("\n")) {
-    if (!line.includes('"goal.round"') && !line.includes('"goal.end"') && !line.includes('"goal.control"') && !line.includes('"goal.notice"') && !line.includes('"goal.set"') && !line.includes('"goal.review"') && !line.includes('"review.feedback"') && !line.includes('"improve.')) continue;
+    if (!line.includes(ENGINE) && !line.includes('"goal.round"') && !line.includes('"goal.end"') && !line.includes('"goal.control"') && !line.includes('"goal.notice"') && !line.includes('"goal.set"') && !line.includes('"goal.review"') && !line.includes('"review.feedback"') && !line.includes('"improve.')) continue;
     try {
       out.push(auditRecordSchema.parse(JSON.parse(line)));
     } catch {

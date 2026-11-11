@@ -64,11 +64,29 @@ function bunExe() {
   process.exit(1);
 }
 
+/**
+ * One CJS file per entry, made by esbuild. bun then compiles that file: esbuild runs the plugin DeepSeek Harness's
+ * packages need (scripts/dsh-bundle.mjs), which `bun build --compile` on the sources can't.
+ */
+async function bundleEntries() {
+  const esbuild = (await import("esbuild")).default;
+  const { dshBundlePlugin } = await import("./dsh-bundle.mjs");
+  const stage = path.join(cacheDir, "bundle-stage");
+  await fs.mkdir(stage, { recursive: true });
+  const out = [];
+  for (const job of ENTRIES) {
+    const bundle = path.join(stage, `${job.name}.cjs`);
+    await esbuild.build({ entryPoints: [job.entry], bundle: true, platform: "node", format: "cjs", target: "node20", outfile: bundle, logLevel: "silent", plugins: [dshBundlePlugin] });
+    out.push({ ...job, bundle });
+  }
+  return out;
+}
+
 async function buildBun(target, bunTarget, dir) {
   const bun = bunExe();
   const exe = target.startsWith("win32") ? ".exe" : "";
-  for (const job of ENTRIES) {
-    run(bun, ["build", "--compile", `--target=${bunTarget}`, job.entry, "--outfile", path.join(dir, `${job.name}${exe}`)]);
+  for (const job of await bundleEntries()) {
+    run(bun, ["build", "--compile", `--target=${bunTarget}`, job.bundle, "--outfile", path.join(dir, `${job.name}${exe}`)]);
   }
 }
 
@@ -112,6 +130,7 @@ async function buildSea(dir) {
   await fs.mkdir(stage, { recursive: true });
   const baseNode = await winArm64NodeExe();
 
+  const { dshBundlePlugin } = await import("./dsh-bundle.mjs");
   for (const job of ENTRIES) {
     const bundle = path.join(stage, `${job.name}.cjs`);
     await esbuild.build({
@@ -122,6 +141,7 @@ async function buildSea(dir) {
       target: "node20",
       outfile: bundle,
       logLevel: "silent",
+      plugins: [dshBundlePlugin],
     });
     const seaConfig = path.join(stage, `${job.name}.sea.json`);
     const blob = path.join(stage, `${job.name}.blob`);

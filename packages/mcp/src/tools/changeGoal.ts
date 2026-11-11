@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { criteriaFromTexts, ensureGuardianFiles, parseRequest, readUserPrompts, userSaid, writeContract } from "@goal-guardian/core";
+import { criteriaFromTexts, ensureGuardianFiles, parseRequest, readUserPrompts, setEngineGoal, userSaid, writeContract } from "@goal-guardian/core";
 import { readContractSafe, workspaceRoot } from "../workspace.js";
 
 /** Guardian's own tool: neither original lets the user redirect an open goal from chat. */
@@ -35,6 +35,10 @@ export function registerChangeGoal(server: McpServer): void {
         const kept = next ? criteriaFromTexts(next.items) : current.successCriteria;
         const added = (add_criteria ?? []).map((text, i) => ({ id: `sc_${kept.length + i + 1}`, text }));
         await ensureGuardianFiles(root);
+        // DeepSeek's goal service takes the new words first (an edit, or a new goal after a completed one).
+        if (next && !(await setEngineGoal(root, next.goal, false))) {
+          return { isError: true, content: [{ type: "text" as const, text: "Not changed: the goal can't be changed from where it stands." }] };
+        }
         const contract = await writeContract(root, { ...current, ...(next ? { goal: next.goal } : {}), successCriteria: [...kept, ...added] });
         return {
           content: [{ type: "text" as const, text: JSON.stringify({ goal: contract.goal, criteria: contract.successCriteria, constraints: contract.constraints }) }],

@@ -1,5 +1,6 @@
 import { build } from "esbuild";
 import fs from "node:fs/promises";
+import { dshBundlePlugin } from "../../scripts/dsh-bundle.mjs";
 
 // Wipe dist/ first: stale files from older builds must never ship in the VSIX
 // (v0.x tsc output once rode along that way).
@@ -12,8 +13,9 @@ await build({
   bundle: true,
   platform: "node",
   format: "cjs",
-  target: "node18",
+  target: "node20",
   external: ["vscode"],
+  plugins: [dshBundlePlugin],
   logLevel: "silent",
 });
 

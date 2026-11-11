@@ -7,7 +7,7 @@ import { nowIso } from "../clock.js";
 import { writeContract } from "../contractStore.js";
 import { readContractSafe } from "../safeReaders.js";
 import { criteriaFromTexts } from "../schema/contract.js";
-import { goalHash, goalPhaseOf } from "./loop.js";
+import { goalHash, goalPhaseOf, setEngineGoal } from "./loop.js";
 import { readUserPrompts } from "./record.js";
 
 const LIST_ITEM = /^\s*(?:\d+[.)]|[-*•])\s+(\S.*)$/;
@@ -85,6 +85,8 @@ export async function captureGoal(root: string, conversationId: string | undefin
     if (!asked || !closed || Date.parse(asked.ts) <= Date.parse(closed.ts)) return false;
   }
   const { goal, items } = parseRequest(latest);
+  // DeepSeek's goal service creates the goal first; what it refuses isn't recorded.
+  if (!(await setEngineGoal(root, goal, true))) return false;
   const saved = await writeContract(root, { ...contract, goal, successCriteria: criteriaFromTexts(items) });
   await appendAudit(root, { ts: nowIso(), kind: "goal.set", goalHash: goalHash(saved), ...(conversationId ? { conversationId } : {}) });
   return true;
