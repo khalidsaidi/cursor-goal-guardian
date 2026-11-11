@@ -63,11 +63,17 @@ if (g) fs.writeFileSync(state, JSON.stringify(g)); else if (fs.existsSync(state)
 process.stdout.write(JSON.stringify(out) + "\\n");
 `);
 
-/** A reviewer that checked and objects to nothing. */
-export const STANDIN_REVIEWER = exe("reviewer", `process.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify({ items: [], extra: [] }) }) + "\\n");`);
+/** A reviewer that checked and says every item it was asked about holds. */
+export const STANDIN_REVIEWER = exe("reviewer", `
+const a = process.argv.slice(2); const prompt = a[a.indexOf("-p") + 1] || "";
+const ids = [...prompt.matchAll(/^- ([A-Za-z0-9_]+): /gm)].map((m) => m[1]);
+process.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify({ items: ids.map((id) => ({ id, verdict: "holds", evidence: "checked" })), extra: [] }) }) + "\\n");`);
 
-/** An evaluator "Python" that judges every rubric met, whatever it is asked. */
-const evaluatorPython = exe("evaluator-python", `require("fs").readFileSync(0, "utf8"); process.stdout.write(JSON.stringify({ ran: true, overall: 1, rubrics: [{ id: "all", property: "every item", score: 1, rationale: "met" }], calls: 0, seconds: 0 }) + "\\n");`);
+/** An evaluator "Python" that judges every rubric it is given met: one per item (or "goal"), and the one about extra work. */
+const evaluatorPython = exe("evaluator-python", `
+const job = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const ids = [...((job.items || []).length ? job.items.map((i) => i.id) : ["goal"]), "extra"];
+process.stdout.write(JSON.stringify({ ran: true, overall: 1, rubrics: ids.map((id) => ({ id, property: id, score: 1, rationale: "met" })), calls: 0, seconds: 0 }) + "\\n");`);
 export const STANDIN_EVALUATOR = JSON.stringify({ python: evaluatorPython, cli: evaluatorPython, adkDir: dir, site: dir });
 
 process.env.GOAL_GUARDIAN_CODEX_GOALS = STANDIN_CODEX;

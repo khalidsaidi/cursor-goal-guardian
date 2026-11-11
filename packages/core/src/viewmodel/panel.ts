@@ -38,6 +38,8 @@ export interface PanelViewModel {
     saidMissed: boolean;
     /** The last review objected and the project changed afterwards, unreviewed. */
     changedSinceReview: boolean;
+    /** Blocked on the first turn, accepted at the agent's word alone. */
+    atAgentsWord: boolean;
     round: number | null;
     detail: string[];
     extras: string[];
@@ -145,7 +147,7 @@ function buildGoalRun(records: AuditRecord[]): PanelViewModel["goalRun"] {
   for (let i = records.length - 1; i >= 0; i -= 1) {
     const r = records[i]!;
     if (r.kind === "goal.round") {
-      return { ts: r.ts, outcome: "working", skipped: [], passedReview: null, saidMissed: false, changedSinceReview: false, round: r.round, detail: [...r.unproved], extras: r.extras, changes: [], reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: null, seconds: null, tokens: r.tokens ?? null };
+      return { ts: r.ts, outcome: "working", skipped: [], passedReview: null, saidMissed: false, changedSinceReview: false, atAgentsWord: false, round: r.round, detail: [...r.unproved], extras: r.extras, changes: [], reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: null, seconds: null, tokens: r.tokens ?? null };
     }
     if (r.kind === "goal.end") {
       const backed = r.outcome === "proved" || r.outcome === "unchecked";
@@ -154,7 +156,7 @@ function buildGoalRun(records: AuditRecord[]): PanelViewModel["goalRun"] {
       const before = records.slice(0, i).reverse().find((x) => x.kind === "goal.review" && x.goalHash === r.goalHash);
       const passedReview = backed && before?.kind === "goal.review" && before.ran && before.id && before.fails.length + before.extra.length === 0 ? before.id : null;
       const saidMissed = passedReview !== null && records.some((x) => x.kind === "review.feedback" && x.reviewId === passedReview && x.label === "missed");
-      return { ts: r.ts, outcome: r.outcome, skipped: r.skipped ?? [], passedReview, saidMissed, changedSinceReview: r.changedSinceReview === true, round: null, detail, extras: r.extras ?? [], changes: groupChanges(r.changes ?? []), reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: r.rounds ?? null, seconds: r.seconds ?? null, tokens: r.tokens ?? null };
+      return { ts: r.ts, outcome: r.outcome, skipped: r.skipped ?? [], passedReview, saidMissed, changedSinceReview: r.changedSinceReview === true, atAgentsWord: r.atAgentsWord === true, round: null, detail, extras: r.extras ?? [], changes: groupChanges(r.changes ?? []), reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: r.rounds ?? null, seconds: r.seconds ?? null, tokens: r.tokens ?? null };
     }
   }
   return null;
@@ -171,7 +173,8 @@ function goalStatus(phase: PanelViewModel["goalPhase"], run: PanelViewModel["goa
   if (run?.outcome === "disputed") return { lamp: "warn", word: "disputed" };
   if (run?.outcome === "unverified") return { lamp: "warn", word: "unverified" };
   if (run?.outcome === "budget_limited") return { lamp: "warn", word: "over budget" };
-  if (run?.outcome === "blocked") return { lamp: "warn", word: "blocked" };
+  // Their rule accepts a block at once in a turn the user's message opened: nothing checked the agent's word.
+  if (run?.outcome === "blocked") return { lamp: "warn", word: run.atAgentsWord ? "blocked (unverified)" : "blocked" };
   if (run?.outcome === "stalled" || run?.outcome === "limit") return { lamp: "warn", word: "stalled" };
   return { lamp: "on", word: "active" };
 }

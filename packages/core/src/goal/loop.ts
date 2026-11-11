@@ -10,7 +10,7 @@ import { newId, nowIso } from "../clock.js";
 import { readContractSafe } from "../safeReaders.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalEndRecord, GoalReportRecord, GoalControlRecord, GoalReviewRecord, GoalRoundRecord, UserMessageRecord } from "../schema/audit.js";
-import { evaluateReport, projectPath, userSaid, type GoalEvaluation } from "./evaluate.js";
+import { evaluateReport, projectPath, userAsked, userSaid, type GoalEvaluation } from "./evaluate.js";
 import { CLOSING, goalBlock, goalBudgetLimitMessage, goalChangedMessage, goalClosingMessage, goalRoundMessage } from "./prompts.js";
 import { budgetOf, codexGoals, codexTool, codexTurn, resolveCodexGoals, type CodexGoal, type CodexGoalAnswer, type CodexToolAnswer, type CodexUsage } from "./codexGoals.js";
 import { reviewEvidence } from "./evidence.js";
@@ -26,7 +26,7 @@ import { GOAL_RESTORED, guardContract } from "./guard.js";
 import { EVALUATOR_BUDGET_MS, runEvaluator } from "./evaluator.js";
 import { readTrajectory } from "./trajectory.js";
 import { saveCase } from "./cases.js";
-import { readShellOutputs, readShrunkFiles, readTree, readUserPrompts, type TreeState } from "./record.js";
+import { folderChanges, readCommitted, readFolder, readFolderAtMessage, readShellOutputs, readShrunkFiles, readTree, readUserPrompts, type TreeState } from "./record.js";
 
 /** Per user message. Only real progress keeps a run going this long: see NO_PROGRESS_ROUNDS. */
 export const GOAL_MAX_ROUNDS = 20;
@@ -126,12 +126,20 @@ function readSequence(root: string, all: AuditRecord[], conversationId: string |
   const sinceLatest = latestMessage ? mine.filter((r) => Date.parse(r.ts) >= Date.parse(latestMessage.ts)) : mine;
   // A file can change because the person saved it. It's the agent's change only if the agent ran a command this turn.
   const ranCommand = records.some((r) => r.kind === "action.observed" && r.actionType === "shell" && mineOnly(r) && (!latestMessage || Date.parse(r.ts) >= Date.parse(latestMessage.ts)));
+  // Work a command committed before the turn ended leaves the tree clean: the commit the project moved to shows it.
+  const firstHead = messages.find((m) => m.head)?.head;
+  const committed = tree?.head && firstHead ? readCommitted(root, firstHead, tree.head) : [];
+  const committedThisTurn = Boolean(tree?.head && latestMessage?.head && tree.head !== latestMessage.head);
+  // Outside git there is no tree to read: the folder itself, against how it was when the user's message arrived.
+  const folderBefore = tree ? null : readFolderAtMessage(root);
+  const folderNow = folderBefore ? readFolder(root) : null;
+  const outside = folderBefore && folderNow ? folderChanges(folderBefore, folderNow) : [];
   return {
     records,
     rounds: records.filter((r): r is GoalRoundRecord => r.kind === "goal.round" && mineOnly(r)),
     report: reports[reports.length - 1] ?? null,
-    editedFiles: [...new Set([...mine.map((r) => r.actionValue), ...byCommand].filter(inProject))],
-    changedThisTurn: (newThisTurn && ranCommand) || sinceLatest.some((r) => inProject(r.actionValue)),
+    editedFiles: [...new Set([...mine.map((r) => r.actionValue), ...byCommand, ...committed, ...outside].filter(inProject))],
+    changedThisTurn: ((newThisTurn || committedThisTurn || outside.length > 0) && ranCommand) || sinceLatest.some((r) => inProject(r.actionValue)),
     goalFileEdited: mine.some((r) => GUARDIAN_FILES.test(r.actionValue)),
     lastEditTs: lastEdit?.ts ?? null,
     dirtyAtStart: before,
@@ -309,18 +317,30 @@ export async function updateGoalByTool(root: string, args: { goal_id?: string; r
   return out;
 }
 
+/** The text after the command word, when a message is itself the /goal command (or Guardian's /guardian-goal skill for it). */
+export function goalCommandIn(message: string): string | null {
+  const m = /^\s*\/(?:guardian-goal|goal)(?![\w-])[ \t]*([\s\S]*)$/i.exec(message);
+  return m ? m[1]!.trim() : null;
+}
+
 /**
  * Their /goal command, for the user. Anything but the bare status view changes the goal, so where Cursor reports
- * the user's messages the command must be in the user's latest one: the agent can't issue it on its own.
+ * the user's messages, the user's latest message must itself be the command: a message that merely contains the
+ * word "pause" or "clear" is not one. What runs is what the user typed after the command, read by DeepSeek's own
+ * command handler; the agent only passes it on.
  */
 export async function runUserGoalCommand(root: string, input: string): Promise<{ kind: string; text: string }> {
   await guardContract(root).catch(() => false);
-  const typed = input.trim();
+  let typed = input.trim();
   if (typed) {
     const plain = (text: string): string => text.replace(/\s+/g, " ").trim().toLowerCase();
     const latest = (await readUserPrompts(root))?.at(-1);
-    if (latest !== undefined && !plain(latest).includes(plain(typed))) {
-      return { kind: "error", text: "Not run: /goal commands that change the goal are the user's. Pass exactly what they typed after the command in their latest message." };
+    if (latest !== undefined) {
+      const fromUser = goalCommandIn(latest);
+      if (fromUser === null || plain(fromUser) !== plain(typed)) {
+        return { kind: "error", text: "Not run: /goal commands that change the goal are the user's. The user's latest message has to be the command itself (/goal or /guardian-goal followed by what to do); pass exactly what they typed after it." };
+      }
+      typed = fromUser;
     }
   }
   const out = await runGoalCommand(root, typed);
@@ -517,6 +537,19 @@ async function evaluate(root: string, contract: Contract, report: Pick<GoalRepor
   return evaluateReport(root, contract, report, { outputs: await readShellOutputs(root), lastEditTs: seq.lastEditTs, editedFiles: stillChanged(seq), tree: seq.tree?.fingerprint ?? null, shrunk });
 }
 
+/**
+ * The turn under way was opened by the user's own message: no goal round has been sent since it. DeepSeek's tool
+ * applies its rounds threshold only inside goal rounds, so a block reported here is accepted at once.
+ */
+function userOpenedTurn(seq: Sequence): boolean {
+  const messages = seq.records.filter((r) => r.kind === "user.message");
+  const latest = messages[messages.length - 1];
+  return !seq.rounds.some((r) => !latest || Date.parse(r.ts) >= Date.parse(latest.ts));
+}
+
+/** The goal and its items as one text, for telling the user's new words from a piece of the goal. */
+const goalWords = (contract: Pick<Contract, "goal" | "successCriteria">): string => [contract.goal, ...contract.successCriteria.map((c) => c.text)].join("\n");
+
 export type GoalReportInput = Omit<GoalReportRecord, "ts" | "kind">;
 
 export interface GoalReportAnswer {
@@ -554,16 +587,16 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
   await appendAudit(root, { ts: reportTs, kind: "goal.report", goalHash: hash, ...input });
   if (input.status === "set_aside") {
     const prompts = await readUserPrompts(root);
-    if (prompts && !userSaid(input.userWords, prompts)) {
-      return { accepted: false, ...none, message: "Not set aside: pass the user's request in user_words, quoted exactly from their latest message. If they didn't ask for this, keep working on the goal." };
+    if (prompts && !userAsked(input.userWords, prompts, goalWords(contract))) {
+      return { accepted: false, ...none, message: "Not set aside: pass the user's request in user_words, quoted exactly from their latest message. Words from an earlier message, or a piece of the goal itself, don't count. If they didn't ask for this, keep working on the goal." };
     }
     return { accepted: true, ...none, message: CLOSING.setAside };
   }
   if (input.status === "paused") {
     // Codex's update_goal lets the agent pause only at the user's explicit request; Guardian asks to see the request.
     const prompts = await readUserPrompts(root);
-    if (!prompts || !userSaid(input.userWords, prompts)) {
-      return { accepted: false, ...none, message: "Not paused: pass the user's request to pause in user_words, quoted exactly from their latest message. If they didn't ask for this, keep working on the goal." };
+    if (!prompts || !userAsked(input.userWords, prompts, goalWords(contract))) {
+      return { accepted: false, ...none, message: "Not paused: pass the user's request to pause in user_words, quoted exactly from their latest message. Words from an earlier message, or a piece of the goal itself, don't count. If they didn't ask for this, keep working on the goal." };
     }
     // Their update_goal decides: it pauses only in a turn the user's own message opened.
     // Codex's update_goal then decides too; the pause happens only if both accept.
@@ -579,7 +612,11 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
     // Codex's update_goal then decides too; the goal is blocked only if both accept.
     const blocked = await bothTools(root, contract, { type: "block", code: MODEL_REPORTED_CODE, message: input.reason.trim() }, reportingChat(all));
     if (!blocked.ok) return { accepted: false, ...none, message: blocked.message, refusedBy: blocked.by };
-    return { accepted: true, ...none, message: blocked.result.tool?.contexts[0] ?? CLOSING.blocked(contract.goal, input.reason), ...(blocked.result.tool ? { their: blocked.result.tool.text } : {}), ...(blocked.codex !== undefined ? { codex: blocked.codex } : {}) };
+    const closing = blocked.result.tool?.contexts[0] ?? CLOSING.blocked(contract.goal, input.reason);
+    // Their rule accepts a block at once in a turn the user's own message opened. Nothing checked it, and the agent
+    // and the user are told so.
+    const firstTurn = userOpenedTurn(seq);
+    return { accepted: true, ...none, message: firstTurn ? `${closing}\n\n${BLOCKED_AT_WORD}` : closing, ...(blocked.result.tool ? { their: blocked.result.tool.text } : {}), ...(blocked.codex !== undefined ? { codex: blocked.codex } : {}) };
   }
   // Guardian's own precondition: the report has to hold against its record of what ran and changed.
   const result = await evaluate(root, contract, input, seq);
@@ -605,10 +642,36 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
   const last = reviews[reviews.length - 1];
   const sameState = !last || !last.tree || !seq.tree || last.tree === seq.tree.fingerprint;
   const standing = last ? objectionLines(last) : [];
+  // A review's verdict on a state stands: the same project and the same report are never reviewed twice, in this
+  // run or a later one, so reporting again can't draw a different verdict.
+  const stateKey = createHash("sha256").update(JSON.stringify([seq.tree?.fingerprint ?? seq.lastEditTs ?? "", input.proofs, input.changes, input.removed ?? []])).digest("hex").slice(0, 16);
+  const prior = [...all].reverse().find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.goalHash === hash && r.stateKey === stateKey);
+  /** What a review left unchecked: a check that didn't run, or an item it gave no verdict on. */
+  const unchecked = (r: Pick<GoalReviewRecord, "ran" | "reason" | "unanswered" | "evaluator">): string[] => [
+    ...(r.ran ? [] : [`the reviewer didn't run: ${r.reason ?? "no reason given"}`]),
+    ...(r.ran && r.unanswered?.length ? [`the reviewer gave no clear verdict on ${r.unanswered.join(", ")}`] : []),
+    ...(r.evaluator && !r.evaluator.ran ? [`the evaluator didn't run: ${r.evaluator.reason ?? "no reason given"}`] : []),
+    ...(r.evaluator?.ran && r.evaluator.unanswered?.length ? [`the evaluator gave no score for ${r.evaluator.unanswered.join(", ")}`] : []),
+  ];
   // The usual number of reviews per run, and one more for each state the agent changed after an objection, up to a
   // hard bound: an objection can't be escaped by an unrelated edit, and a run's cost stays bounded.
   const fresh = reviews.length < MAX_REVIEWS || (standing.length > 0 && !sameState && reviews.length < REVIEW_HARD_LIMIT);
-  if (fresh) {
+  // A run that ended disputed over this very state (reviewed, or left unreviewed when the reviews ran out) stays
+  // disputed however often it is reported: only a changed project is looked at again.
+  const lastEnd = [...all].reverse().find((r): r is GoalEndRecord => r.kind === "goal.end" && r.goalHash === hash);
+  if (lastEnd?.outcome === "disputed" && lastEnd.stateKey === stateKey) {
+    return { accepted: false, outcome: "disputed", message: DISPUTED_SAME, unproved: lastEnd.reviewer ?? [], unclaimed: [] };
+  }
+  if (prior) {
+    const lines = objectionLines(prior);
+    if (lines.length) {
+      // It objected to this very state and nothing has changed: disputed, and it stays so until the project changes.
+      const already = lastEnd?.outcome === "disputed" && Date.parse(lastEnd.ts) >= Date.parse(prior.ts);
+      if (!already) await end(root, seq, who, hash, "disputed", { stateKey, reviewer: lines, reason: "the review objected to this very state and report, and nothing has changed since: its verdict stands until the project changes", ...receipt });
+      return { accepted: false, outcome: "disputed", message: DISPUTED_SAME, unproved: lines, unclaimed: [] };
+    }
+    skipped.push(...unchecked(prior));
+  } else if (fresh) {
     const asked = [contract.goal, ...(contract.successCriteria.length ? ["Done when:", ...contract.successCriteria.map((c) => `- ${c.text}`)] : [])].join("\n");
     const claimed = `I report the goal complete. Proofs: ${JSON.stringify(input.proofs)}. Changed files: ${JSON.stringify(input.changes)}.`;
     const [outcome, evaluator] = await Promise.all([
@@ -622,30 +685,32 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
     const ts = nowIso();
     // What it looked at is kept, so the review can be replayed later when Guardian tries to improve it.
     const skippedCase = outcome.ran && outcome.prompt ? await saveCase(root, id, contract, { prompt: outcome.prompt, fails: outcome.fails, extra: outcome.extra }, ts).catch(() => "the case couldn't be saved") : null;
+    const record = {
+      ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra,
+      ...(outcome.unanswered.length ? { unanswered: outcome.unanswered } : {}), stateKey, ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), evaluator,
+    };
     await appendAudit(root, {
       ts, kind: "goal.review", ...(chat ? { conversationId: chat } : {}), goalHash: hash, reportTs, id,
       ...(outcome.ran ? (skippedCase ? { caseSaved: false, caseSkipped: skippedCase } : { caseSaved: true }) : {}),
-      ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra, ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), evaluator,
+      ...record,
     });
     const lines = objectionLines({ ...outcome, evaluator });
     if (lines.length) {
       return { accepted: false, message: REVIEW_OBJECTS, unproved: lines, unclaimed: [] };
     }
-    if (!outcome.ran) skipped.push(`the reviewer didn't run: ${outcome.reason ?? "no reason given"}`);
-    if (!evaluator.ran) skipped.push(`the evaluator didn't run: ${evaluator.reason ?? "no reason given"}`);
+    skipped.push(...unchecked(record));
   } else if (standing.length) {
     // The reviews are used up and the last one objected. Whether or not the agent changed something since, that
     // objection was never answered by a review that passed: the run ends disputed, never accepted.
     const why = sameState ? `the review still objects to this state after ${reviews.length} reviews` : `the last of this run's ${reviews.length} reviews objected, the project changed after it, and no reviews are left to check the change`;
-    await end(root, seq, who, hash, "disputed", { reviewer: standing, reason: why, ...(sameState ? {} : { changedSinceReview: true }), ...receipt });
+    await end(root, seq, who, hash, "disputed", { stateKey, reviewer: standing, reason: why, ...(sameState ? {} : { changedSinceReview: true }), ...receipt });
     return { accepted: false, outcome: "disputed", message: DISPUTED, unproved: standing, unclaimed: [] };
   } else {
     if (!sameState) {
       changedSinceReview = true;
       skipped.push(`the project changed after the last of this run's ${reviews.length} reviews and wasn't reviewed again`);
     }
-    if (last && !last.ran) skipped.push(`the reviewer didn't run: ${last.reason ?? "no reason given"}`);
-    if (last?.evaluator && !last.evaluator.ran) skipped.push(`the evaluator didn't run: ${last.evaluator.reason ?? "no reason given"}`);
+    if (last) skipped.push(...unchecked(last));
   }
   // The goal becomes complete only here, by Codex's own handler and DeepSeek's own tool each accepting this report.
   // What either refuses is the answer; if either one's code didn't run, nothing is accepted and the run ends unverified.
@@ -666,11 +731,13 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
   };
 }
 
+const BLOCKED_AT_WORD = "Guardian: recorded as blocked on the first turn, at your word alone: no round was tried and nothing checked the obstacle. Say exactly that to the user in your closing message.";
+const DISPUTED_SAME = "Recorded as disputed, not proved: the independent review already objected to this very state, and nothing has changed since. Reporting again doesn't get another review. Either fix what it objects to and report again, or tell the user plainly what the review says is wrong and why you disagree, and stop.";
 const DISPUTED = "Recorded as disputed, not proved: the independent review objected and its reviews for this run are used up. Don't report again. Tell the user plainly what the review says is wrong and what you did about it, and stop.";
 const unverifiedMessage = (why: string): string => `Recorded as unverified, not proved: ${why}. The goal can only be completed by both goal keepers' own code accepting it. Don't report again. Tell the user this, and what you finished, and stop.`;
 const uncheckedMessage = (skipped: string[]): string => `Guardian: recorded as complete but unchecked, not proved, because ${skipped.join("; ")}. Say in your closing message that this work was not independently checked.`;
 
-const REVIEW_OBJECTS = "Not accepted yet: an independent reviewer checked the project and objects. Fix what holds up; where it's wrong, say why with evidence. Then report again.";
+const REVIEW_OBJECTS = "Not accepted yet: an independent reviewer checked the project and objects. Fix what holds up, then report again. A report on the same unchanged project won't be reviewed a second time: where the reviewer is wrong, say why with evidence to the user.";
 
 /** Reviews of this goal in this run, oldest first. */
 function reviewsOf(seq: Sequence, hash: string): GoalReviewRecord[] {
@@ -752,7 +819,7 @@ export async function runGoalStop(root: string, input: { conversationId?: string
 
   if (seq.report) {
     const prompts = seq.report.status === "set_aside" ? await readUserPrompts(root) : null;
-    if (seq.report.status === "set_aside" && (!prompts || userSaid(seq.report.userWords, prompts))) {
+    if (seq.report.status === "set_aside" && (!prompts || userAsked(seq.report.userWords, prompts, goalWords(contract)))) {
       await end(root, seq, conversationId, hash, "set_aside", { by: "guardian", reason: seq.report.reason ?? seq.report.userWords ?? "" }, input.tokens);
       return null;
     }
@@ -762,7 +829,8 @@ export async function runGoalStop(root: string, input: { conversationId?: string
       // Their update_goal already answered this claim when it was made: if it accepted, their log says blocked.
       const view = engineView(await readGoalRecords(root));
       if (view?.phase === "blocked" && view.blockedReason?.code === MODEL_REPORTED_CODE) {
-        await end(root, seq, conversationId, hash, "blocked", { reason: seq.report.reason ?? view.blockedReason.message }, input.tokens);
+        // No goal round came since the user's message: by their rule it was accepted at once, at the agent's word.
+        await end(root, seq, conversationId, hash, "blocked", { reason: seq.report.reason ?? view.blockedReason.message, ...(userOpenedTurn(seq) ? { by: "deepseek" as const, atAgentsWord: true } : {}) }, input.tokens);
         return null;
       }
       notes.push("- Blocked isn't accepted yet: try the ways around it first.");

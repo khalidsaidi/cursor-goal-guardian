@@ -187,6 +187,8 @@ export const userMessageRecordSchema = z
     /** Cursor's chat mode. Cmd+K sends none. */
     mode: z.string().optional(),
     dirty: z.array(z.string()).optional(),
+    /** The commit the project was on when the message arrived, so work committed during the turn is still seen. */
+    head: z.string().optional(),
   })
   .strict();
 
@@ -239,6 +241,10 @@ export const goalReviewRecordSchema = z
     seconds: z.number().int().nonnegative(),
     fails: z.array(z.object({ id: z.string(), evidence: z.string() }).strict()),
     extra: z.array(z.object({ file: z.string(), what: z.string() }).strict()),
+    /** Done-when ids the reviewer gave no clear verdict on. */
+    unanswered: z.array(z.string()).optional(),
+    /** The project state and report this review judged: the same state is never reviewed twice. */
+    stateKey: z.string().optional(),
     /** The project's state when it was reviewed, so a later change can be told from an objection ignored. */
     tree: z.string().optional(),
     /** Google ADK's evaluator on the same run: the rubrics it judged and those it judged not met. */
@@ -249,6 +255,7 @@ export const goalReviewRecordSchema = z
         overall: z.number().nullable(),
         rubrics: z.number().int().nonnegative(),
         failed: z.array(z.object({ id: z.string(), property: z.string(), rationale: z.string() }).strict()),
+        unanswered: z.array(z.string()).optional(),
         calls: z.number().int().nonnegative(),
         seconds: z.number().int().nonnegative(),
       })
@@ -346,6 +353,10 @@ export const goalEndRecordSchema = z
     by: z.enum(["guardian", "cursor", "deepseek", "codex"]).optional(),
     /** Checks that didn't run on this state, each with why. */
     skipped: z.array(z.string()).optional(),
+    /** For a disputed end: the project state and report it was about. The same state reported again stays disputed. */
+    stateKey: z.string().optional(),
+    /** A block accepted on the first turn, in a turn the user's message opened: by DeepSeek's rule, at the agent's word alone. */
+    atAgentsWord: z.boolean().optional(),
     rounds: z.number().int().nonnegative().optional(),
     seconds: z.number().int().nonnegative().optional(),
     tokens: z.number().int().nonnegative().optional(),

@@ -31,6 +31,8 @@ export interface EvaluatorOutcome {
   /** Rubrics judged, and those ADK judged not met, with the judge's own rationale. */
   rubrics: number;
   failed: Array<{ id: string; property: string; rationale: string }>;
+  /** Rubric ids the evaluator was given and came back with no score for. */
+  unanswered: string[];
   calls: number;
   seconds: number;
 }
@@ -88,7 +90,7 @@ const text = (v: unknown, max: number): string => {
 };
 
 /** The adapter's result line. Null when there is nothing usable. */
-export function parseEvaluator(stdout: string): EvaluatorOutcome | null {
+export function parseEvaluator(stdout: string, expect: string[] = []): EvaluatorOutcome | null {
   for (const line of stdout.trim().split("\n").reverse()) {
     try {
       const v = JSON.parse(line) as { ran?: unknown; reason?: unknown; overall?: unknown; rubrics?: unknown; calls?: unknown; seconds?: unknown };
@@ -102,6 +104,8 @@ export function parseEvaluator(stdout: string): EvaluatorOutcome | null {
         overall: num(v.overall),
         rubrics: judged.length,
         failed: judged.filter((r) => num(r.score)! < 1).map((r) => ({ id: text(r.id, 80), property: text(r.property, 300), rationale: text(r.rationale, RATIONALE_MAX) })),
+        // A rubric that came back without a score was not judged: that is never the same as met.
+        unanswered: expect.filter((id) => !judged.some((r) => text(r.id, 80) === id)),
         calls: num(v.calls) ?? 0,
         seconds: Math.round(num(v.seconds) ?? 0),
       };
@@ -126,7 +130,9 @@ export interface EvaluatorJob {
 export function runEvaluator(job: EvaluatorJob, budgetMs: number, paths: EvaluatorPaths | null = resolveEvaluator()): Promise<EvaluatorOutcome> {
   const started = Date.now();
   const seconds = (): number => Math.round((Date.now() - started) / 1000);
-  const skipped = (reason: string): EvaluatorOutcome => ({ ran: false, reason, overall: null, rubrics: 0, failed: [], calls: 0, seconds: seconds() });
+  const skipped = (reason: string): EvaluatorOutcome => ({ ran: false, reason, overall: null, rubrics: 0, failed: [], unanswered: [], calls: 0, seconds: seconds() });
+  // The rubrics the adapter builds: one per done-when item (or "goal" when there are none), and Guardian's own.
+  const expect = [...(job.items.length ? job.items.map((i) => i.id) : ["goal"]), EXTRA_WORK_RUBRIC_ID];
   if (process.env.GOAL_GUARDIAN_REVIEWING) return Promise.resolve(skipped("already inside a review"));
   if (!paths) return Promise.resolve(skipped("the evaluator isn't installed"));
   if (!job.conversation.length) return Promise.resolve(skipped("Guardian recorded no actions for this run"));
@@ -149,7 +155,7 @@ export function runEvaluator(job: EvaluatorJob, budgetMs: number, paths: Evaluat
     });
     child.on("error", (err) => done(skipped(`the evaluator couldn't start: ${err.message}`)));
     child.on("close", () => {
-      const parsed = parseEvaluator(stdout);
+      const parsed = parseEvaluator(stdout, expect);
       done(parsed ? { ...parsed, seconds: seconds() } : skipped("the evaluator's answer couldn't be read"));
     });
     child.stdin.on("error", () => undefined);

@@ -51,6 +51,8 @@ export interface TreeState {
   paths: string[];
   /** Differs whenever any of those files' contents differ. */
   fingerprint: string;
+  /** The commit the project is on, where it has one: work committed during a turn moves it. */
+  head?: string;
 }
 
 /**
@@ -74,7 +76,69 @@ export function readTree(root: string): TreeState | null {
   }
   // A repository with no commit yet has no HEAD to compare: the file list still counts.
   hash.update(git(root, ["diff", "HEAD", "--no-ext-diff", "--binary", ...scope]) ?? status);
-  return { paths, fingerprint: hash.digest("hex").slice(0, 16) };
+  const head = git(root, ["rev-parse", "--verify", "--quiet", "HEAD"])?.trim();
+  // The commit is part of the state: the same files on a different commit are a different project.
+  if (head) hash.update(head);
+  return { paths, fingerprint: hash.digest("hex").slice(0, 16), ...(head ? { head } : {}) };
+}
+
+/** Project files a commit changed between two commits: what a turn committed before it stopped. */
+export function readCommitted(root: string, from: string, to: string): string[] {
+  if (from === to) return [];
+  const out = git(root, ["diff", "--name-only", "--no-renames", "-z", from, to, "--", ".", ":(exclude).cursor"]);
+  return out === null ? [] : out.split("\0").filter(Boolean);
+}
+
+/** A folder's files outside git, by size and time: enough to tell that a command changed something. */
+export type FolderState = Record<string, string>;
+const FOLDER_MAX_FILES = 5000;
+const FOLDER_MAX_DEPTH = 8;
+const FOLDER_SKIP = new Set(["node_modules", ".git", ".cursor", ".venv", "venv", "vendor", "__pycache__", "dist", "build", "target"]);
+
+/**
+ * Outside a git repository there is no `git status` to show what a command changed. This reads the folder itself,
+ * bounded, so a turn that worked only through commands is still seen. Null when the folder is too big to read in time.
+ */
+export function readFolder(root: string): FolderState | null {
+  const state: FolderState = {};
+  let count = 0;
+  const walk = (dir: string, depth: number): boolean => {
+    let names: fs.Dirent[];
+    try {
+      names = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return true;
+    }
+    for (const d of names) {
+      if (d.isDirectory()) {
+        if (FOLDER_SKIP.has(d.name) || depth >= FOLDER_MAX_DEPTH) continue;
+        if (!walk(path.join(dir, d.name), depth + 1)) return false;
+      } else if (d.isFile()) {
+        count += 1;
+        if (count > FOLDER_MAX_FILES) return false;
+        const full = path.join(dir, d.name);
+        const st = fs.statSync(full, { throwIfNoEntry: false });
+        if (st) state[path.relative(root, full).split(path.sep).join("/")] = `${st.size}:${Math.round(st.mtimeMs)}`;
+      }
+    }
+    return true;
+  };
+  return walk(root, 0) ? state : null;
+}
+
+/** Files that are new, gone or different between two readings of a folder. */
+export function folderChanges(before: FolderState, now: FolderState): string[] {
+  return [...new Set([...Object.keys(before), ...Object.keys(now)])].filter((f) => before[f] !== now[f]);
+}
+
+/** The folder as it was when the user's latest message arrived (kept only outside git). */
+export function readFolderAtMessage(root: string): FolderState | null {
+  try {
+    const v: unknown = JSON.parse(fs.readFileSync(getGuardianPaths(root).folder, "utf8"));
+    return v && typeof v === "object" ? (v as FolderState) : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface ShrunkFile {
@@ -103,7 +167,7 @@ export function readShrunkFiles(root: string): ShrunkFile[] {
   return shrunk;
 }
 
-const KEPT_OUT = ["shell-output.jsonl", "prompts.json", "edits.jsonl"];
+const KEPT_OUT = ["shell-output.jsonl", "prompts.json", "folder.json", "edits.jsonl"];
 
 /** These hold what commands printed, what was edited and what the user typed: never let them reach a commit. */
 async function keepOutOfGit(root: string): Promise<void> {
@@ -198,9 +262,16 @@ export const GUARDIAN_MESSAGE_PREFIX = "Goal Guardian:";
 
 export async function recordUserPrompt(root: string, prompt: string, conversationId?: string, mode?: string): Promise<void> {
   if (!prompt.trim() || prompt.startsWith(GUARDIAN_MESSAGE_PREFIX)) return;
-  const dirty = readTree(root)?.paths.slice(0, MAX_DIRTY);
-  await appendAudit(root, { ts: nowIso(), kind: "user.message", ...(conversationId ? { conversationId } : {}), ...(mode ? { mode } : {}), ...(dirty ? { dirty } : {}) });
+  const tree = readTree(root);
+  const dirty = tree?.paths.slice(0, MAX_DIRTY);
+  await appendAudit(root, { ts: nowIso(), kind: "user.message", ...(conversationId ? { conversationId } : {}), ...(mode ? { mode } : {}), ...(dirty ? { dirty } : {}), ...(tree?.head ? { head: tree.head } : {}) });
   await keepOutOfGit(root);
+  // Outside git, the folder as it is now is what a command's changes will be measured against.
+  if (!tree) {
+    const folder = readFolder(root);
+    if (folder) await writeJsonAtomic(getGuardianPaths(root).folder, folder).catch(() => undefined);
+    else await fsp.rm(getGuardianPaths(root).folder, { force: true }).catch(() => undefined);
+  }
   const prompts = await readUserPrompts(root);
   await writeJsonAtomic(getGuardianPaths(root).prompts, [...(prompts ?? []), prompt.slice(0, MAX_PROMPT)].slice(-KEEP_PROMPTS));
   // DeepSeek's goal tools decide for themselves whether a call comes from "a direct human turn": their session gets

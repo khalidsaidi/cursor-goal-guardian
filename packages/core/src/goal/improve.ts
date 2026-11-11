@@ -117,9 +117,9 @@ export function enoughToImprove(cases: Array<Pick<LabelledCase, "label">>): bool
 /** Re-run one saved review with another prompt. Guardian's binary exposes this so RRSI can call it. Never throws. */
 export async function replayCase(root: string, caseId: string, template: string, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome & { flagged: boolean | null }> {
   const c = (await loadCases(root)).find((x) => x.id === caseId);
-  if (!c) return { ran: false, reason: "no such case", fails: [], extra: [], seconds: 0, flagged: null };
+  if (!c) return { ran: false, reason: "no such case", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
   const copy = await materializeCase(root, c);
-  if (!copy) return { ran: false, reason: "the case's work no longer applies to its commit", fails: [], extra: [], seconds: 0, flagged: null };
+  if (!copy) return { ran: false, reason: "the case's work no longer applies to its commit", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
   try {
     const outcome = await reviewIn(copy.dir, copy.scratch, reviewPrompt({ goal: c.goal, successCriteria: c.items }, undefined, template), budgetMs);
     return { ...outcome, flagged: outcome.ran ? outcome.fails.length + outcome.extra.length > 0 : null };

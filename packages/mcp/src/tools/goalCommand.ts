@@ -9,7 +9,7 @@ export function registerGoalCommand(server: McpServer): void {
     "goal_command",
     {
       description:
-        "Run DeepSeek Harness's /goal command for the user and return its answer. Pass what the user typed after the command: empty shows the goal, or `<objective>`, `edit <objective>`, `pause`, `resume`, `clear`. Anything but the empty status view must be in the user's latest message.",
+        "Run DeepSeek Harness's /goal command for the user and return its answer. Pass what the user typed after the command: empty shows the goal, or `<objective>`, `edit <objective>`, `pause`, `resume`, `clear`. Anything but the empty status view runs only when the user's latest message is itself the command (/goal or /guardian-goal followed by what to do): a message that merely mentions pausing or clearing is not one.",
       inputSchema: { input: z.string().default("").describe("The text after /goal (or /guardian-goal), exactly as the user typed it. Empty to show the goal.") },
     },
     async ({ input }) => {

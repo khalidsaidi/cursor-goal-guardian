@@ -10,6 +10,7 @@ export interface GuardianPaths {
   shellOutput: string;
   edits: string;
   prompts: string;
+  folder: string;
   migrationMarker: string;
 }
 
@@ -26,6 +27,7 @@ export function getGuardianPaths(workspaceRoot: string): GuardianPaths {
     shellOutput: path.join(telemetryDir, "shell-output.jsonl"),
     edits: path.join(telemetryDir, "edits.jsonl"),
     prompts: path.join(telemetryDir, "prompts.json"),
+    folder: path.join(telemetryDir, "folder.json"),
     migrationMarker: path.join(dir, "migration.json"),
   };
 }

@@ -51,9 +51,24 @@ async function repo(): Promise<string> {
 describe("the reviewer's answer", () => {
   it("is read from the agent's envelope, through prose and fences, keeping only failures and extras", () => {
     const envelope = JSON.stringify({ result: `Sure.\n\`\`\`json\n${JSON.stringify({ items: [...OBJECTS.items, { id: "sc_2", verdict: "holds", evidence: "ok" }], extra: OBJECTS.extra })}\n\`\`\`` });
-    expect(parseReview(`noise\n${envelope}\n`)).toEqual({ fails: [{ id: "sc_1", evidence: "the export is a comment, not code" }], extra: [{ file: "util.js", what: "renamed helpers nobody asked about" }] });
-    expect(parseReview(JSON.stringify(HOLDS))).toEqual({ fails: [], extra: [] });
-    expect(parseReview('Here: {"items": [], "extra": [{"file": "", "what": ""}]}')).toEqual({ fails: [], extra: [] });
+    expect(parseReview(`noise\n${envelope}\n`)).toEqual({ fails: [{ id: "sc_1", evidence: "the export is a comment, not code" }], extra: [{ file: "util.js", what: "renamed helpers nobody asked about" }], unanswered: [] });
+    expect(parseReview(JSON.stringify(HOLDS), ["sc_1"])).toEqual({ fails: [], extra: [], unanswered: [] });
+    expect(parseReview('Here: {"items": [], "extra": [{"file": "", "what": ""}]}')).toEqual({ fails: [], extra: [], unanswered: [] });
+  });
+
+  it("every done-when item needs a clear verdict: a no in any words objects, and a missing or unclear one is unanswered, never holds", () => {
+    const says = (items: unknown[]) => parseReview(JSON.stringify({ items, extra: [] }), ["sc_1", "sc_2"]);
+    // An empty list answers for nothing.
+    expect(says([])).toMatchObject({ fails: [], unanswered: ["sc_1", "sc_2"] });
+    // One item left out.
+    expect(says([{ id: "sc_1", verdict: "holds", evidence: "ok" }])).toMatchObject({ fails: [], unanswered: ["sc_2"] });
+    // A no that doesn't use the word "fails".
+    for (const verdict of ["NOT DONE", "not met", "partial", "does not hold", "incomplete", "fails"]) {
+      expect(says([{ id: "sc_1", verdict: "holds", evidence: "ok" }, { id: "sc_2", verdict, evidence: "the test is a placeholder" }])).toMatchObject({ fails: [{ id: "sc_2", evidence: "the test is a placeholder" }], unanswered: [] });
+    }
+    // Neither yes nor no.
+    expect(says([{ id: "sc_1", verdict: "holds", evidence: "ok" }, { id: "sc_2", verdict: "inconclusive", evidence: "couldn't run it" }])).toMatchObject({ fails: [], unanswered: ["sc_2"] });
+    expect(says([{ id: "sc_1", verdict: "Holds.", evidence: "ok" }, { id: "sc_2", verdict: "passes", evidence: "ok" }])).toMatchObject({ fails: [], unanswered: [] });
   });
 
   it("nothing usable is nothing: an error envelope, prose, or JSON without items", () => {
@@ -191,19 +206,34 @@ describe("the reviewer in the goal loop", () => {
     expect(await stop(other)).toBeNull();
   });
 
-  it(`reviews ${MAX_REVIEWS} times at most per run; the same report after that is recorded as disputed, never proved`, async () => {
+  it("a verdict on a state stands: the same project and report are never reviewed twice, and stay disputed until the project changes", async () => {
     const root = await doneWork();
     process.env.GOAL_GUARDIAN_REVIEWER = await answering(OBJECTS);
-    for (let n = 0; n < MAX_REVIEWS; n += 1) {
-      expect((await submitGoalReport(root, report)).accepted).toBe(false);
-      expect(await stop(root, n)).toContain("Reviewer:");
-    }
-    // The third identical report: the objection to this very state stands. The run ends disputed and the goal stays open.
+    expect((await submitGoalReport(root, report)).accepted).toBe(false);
+    expect(await stop(root, 0)).toContain("Reviewer:");
+    // The same report on the same project: no second roll of the dice, even with a reviewer that would now pass it.
+    process.env.GOAL_GUARDIAN_REVIEWER = await answering(HOLDS);
     expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, outcome: "disputed", unproved: expect.arrayContaining(["Reviewer: sc_1 isn't done: the export is a comment, not code"]) });
-    expect(await stop(root, MAX_REVIEWS)).toBeNull();
-    expect(await kinds(root, "goal.review")).toHaveLength(MAX_REVIEWS);
+    expect(await stop(root, 1)).toBeNull();
+    // And again after the run ended disputed: still disputed, still one review, one end.
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, outcome: "disputed" });
+    expect(await kinds(root, "goal.review")).toHaveLength(1);
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "disputed", reviewer: expect.arrayContaining(["Reviewer: sc_1 isn't done: the export is a comment, not code"]) }]);
     expect(goalPhaseOf(await readAuditTail(root, 1000), await readContractSafe(root))).toBe("active");
+    // The project changes: that is a new state, and it gets its own review.
+    await change(root, "three\n");
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "proved" });
+    expect(await kinds(root, "goal.review")).toHaveLength(2);
+  });
+
+  it("a review that passed a state isn't run again for the same state", async () => {
+    const root = await doneWork();
+    process.env.GOAL_GUARDIAN_REVIEWER = await answering(HOLDS);
+    process.env.GOAL_GUARDIAN_CODEX_GOALS = "/nonexistent/codex-goals";
+    // Codex's code doesn't run, so nothing is accepted; the review that ran is on the record.
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, outcome: "unverified" });
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false });
+    expect(await kinds(root, "goal.review")).toHaveLength(1);
   });
 
   const change = async (root: string, text: string): Promise<void> => {
@@ -214,10 +244,11 @@ describe("the reviewer in the goal loop", () => {
     await recordShellOutput(root, { command: "make test", output: "12 passed", durationMs: 0 });
   };
 
-  it("an objection can't be escaped by changing something else: the changed project is reviewed again, past the usual limit", async () => {
+  it("an objection can't be escaped by changing something else: each changed state is reviewed again, past the usual limit", async () => {
     const root = await doneWork();
     process.env.GOAL_GUARDIAN_REVIEWER = await answering(OBJECTS);
     for (let n = 0; n < MAX_REVIEWS; n += 1) {
+      if (n > 0) await change(root, `state ${n}\n`);
       expect((await submitGoalReport(root, report)).accepted).toBe(false);
       expect(await stop(root, n)).toContain("Reviewer:");
     }
@@ -239,7 +270,7 @@ describe("the reviewer in the goal loop", () => {
     const root = await doneWork();
     process.env.GOAL_GUARDIAN_REVIEWER = await answering(OBJECTS);
     for (let n = 0; n < REVIEW_HARD_LIMIT; n += 1) {
-      if (n >= MAX_REVIEWS) await change(root, `state ${n}\n`);
+      if (n > 0) await change(root, `state ${n}\n`);
       expect((await submitGoalReport(root, report)).accepted).toBe(false);
       expect(await stop(root, n)).toContain("Reviewer:");
     }
@@ -249,5 +280,10 @@ describe("the reviewer in the goal loop", () => {
     expect(await kinds(root, "goal.review")).toHaveLength(REVIEW_HARD_LIMIT);
     const [end] = await kinds(root, "goal.end");
     expect(end).toMatchObject({ outcome: "disputed", changedSinceReview: true, reason: expect.stringContaining("no reviews are left") });
+    // Reporting that same unreviewed state again, even to a reviewer that would now pass it, doesn't reopen it.
+    process.env.GOAL_GUARDIAN_REVIEWER = await answering(HOLDS);
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, outcome: "disputed" });
+    expect(await kinds(root, "goal.review")).toHaveLength(REVIEW_HARD_LIMIT);
+    expect(await kinds(root, "goal.end")).toHaveLength(1);
   });
 });

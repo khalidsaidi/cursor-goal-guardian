@@ -28,6 +28,8 @@ export interface ReviewOutcome {
   reason?: string;
   fails: ReviewFailure[];
   extra: ReviewExtra[];
+  /** Done-when ids the reviewer gave no clear verdict on: left out, or answered with something that is neither holds nor a no. */
+  unanswered: string[];
   seconds: number;
 }
 
@@ -135,23 +137,38 @@ export function agentText(stdout: string): string | null {
   return stdout;
 }
 
-/** The reviewer's answer, from the agent's JSON envelope or raw text. Null when there is nothing usable. */
-export function parseReview(stdout: string): { fails: ReviewFailure[]; extra: ReviewExtra[] } | null {
+/** A verdict that says no, in whatever words: fails, not done, not met, partial, incomplete, missing. */
+const SAYS_NO = /fail|\bnot\b|\bno\b|n't|\bun(met|done|satisfied|finished)\b|partial|incomplete|missing|broken|\bfalse\b/i;
+/** A verdict that says yes, in the word the reviewer is asked for or a plain equivalent. */
+const SAYS_YES = /^(holds?|held|pass(es|ed)?|met|done|ok(ay)?|yes|true|satisfied|completed?)\b/i;
+
+/**
+ * The reviewer's answer, from the agent's JSON envelope or raw text. Null when there is nothing usable. Every id in
+ * `expect` (the goal's done-when items) must come back with a clear verdict: a no is an objection, and an item left
+ * out or answered unclearly is unanswered, which is never the same as holds.
+ */
+export function parseReview(stdout: string, expect: string[] = []): { fails: ReviewFailure[]; extra: ReviewExtra[]; unanswered: string[] } | null {
   const text = agentText(stdout);
   if (text === null) return null;
   const answer = firstObjectWith(text, "items");
   if (!answer) return null;
-  const fails = (answer.items as unknown[])
-    .map((e) => e as Record<string, unknown>)
-    .filter((e) => /fail/i.test(str(e?.verdict)))
+  const items = (answer.items as unknown[]).map((e) => (e ?? {}) as Record<string, unknown>);
+  const verdictOf = (e: Record<string, unknown>): "no" | "yes" | "unclear" => {
+    const v = str(e.verdict);
+    return SAYS_NO.test(v) ? "no" : SAYS_YES.test(v) ? "yes" : "unclear";
+  };
+  const fails = items
+    .filter((e) => verdictOf(e) === "no")
     .map((e) => ({ id: str(e.id) || "goal", evidence: str(e.evidence) }))
     .slice(0, MAX_ITEMS);
+  const answered = new Set(items.filter((e) => verdictOf(e) !== "unclear").map((e) => str(e.id) || "goal"));
+  const unanswered = [...new Set([...expect.filter((id) => !answered.has(id)), ...items.filter((e) => verdictOf(e) === "unclear").map((e) => str(e.id) || "goal")])].slice(0, MAX_ITEMS * 2);
   const extra = (Array.isArray(answer.extra) ? answer.extra : [])
     .map((e) => e as Record<string, unknown>)
     .map((e) => ({ file: str(e?.file), what: str(e?.what) }))
     .filter((e) => e.file || e.what)
     .slice(0, MAX_ITEMS);
-  return { fails, extra };
+  return { fails, extra, unanswered };
 }
 
 function isExecutable(p: string): boolean {
@@ -280,13 +297,13 @@ export async function askAgent(prompt: string, dir: string, scratch: string, bud
 }
 
 /** One review of a prepared copy, with a given prompt. Never throws. */
-export async function reviewIn(dir: string, scratch: string, prompt: string, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome> {
+export async function reviewIn(dir: string, scratch: string, prompt: string, budgetMs = REVIEW_BUDGET_MS, expect: string[] = []): Promise<ReviewOutcome> {
   const started = Date.now();
   const seconds = (): number => Math.round((Date.now() - started) / 1000);
   const run = await askAgent(prompt, dir, scratch, budgetMs);
-  if (!run.ok) return { ran: false, reason: run.reason, fails: [], extra: [], seconds: seconds() };
-  const parsed = parseReview(run.stdout);
-  if (!parsed) return { ran: false, reason: "the reviewer's answer couldn't be read", fails: [], extra: [], seconds: seconds() };
+  if (!run.ok) return { ran: false, reason: run.reason, fails: [], extra: [], unanswered: [], seconds: seconds() };
+  const parsed = parseReview(run.stdout, expect);
+  if (!parsed) return { ran: false, reason: "the reviewer's answer couldn't be read", fails: [], extra: [], unanswered: [], seconds: seconds() };
   return { ran: true, ...parsed, seconds: seconds() };
 }
 
@@ -294,7 +311,7 @@ export async function reviewIn(dir: string, scratch: string, prompt: string, bud
 export async function runReview(root: string, contract: Pick<Contract, "goal" | "successCriteria">, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome & { prompt?: string }> {
   const started = Date.now();
   const seconds = (): number => Math.round((Date.now() - started) / 1000);
-  const skipped = (reason: string): ReviewOutcome => ({ ran: false, reason, fails: [], extra: [], seconds: seconds() });
+  const skipped = (reason: string): ReviewOutcome => ({ ran: false, reason, fails: [], extra: [], unanswered: [], seconds: seconds() });
   if (process.env.GOAL_GUARDIAN_REVIEWING) return skipped("already inside a review");
   if (!resolveReviewer()) return skipped("cursor-agent isn't installed");
   let prompt: string;
@@ -306,7 +323,9 @@ export async function runReview(root: string, contract: Pick<Contract, "goal" | 
   const copy = await makeReviewCopy(root);
   if (!copy) return skipped("the project isn't a git repository Guardian can copy");
   try {
-    const outcome = await reviewIn(copy.dir, copy.scratch, prompt, budgetMs);
+    // Every done-when item has to come back with a verdict; a goal with none is judged as one item, "goal".
+    const expect = contract.successCriteria.length ? contract.successCriteria.map((c) => c.id) : ["goal"];
+    const outcome = await reviewIn(copy.dir, copy.scratch, prompt, budgetMs, expect);
     return { ...outcome, seconds: seconds(), prompt };
   } finally {
     await fsp.rm(copy.scratch, { recursive: true, force: true }).catch(() => undefined);

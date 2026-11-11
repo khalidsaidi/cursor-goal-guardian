@@ -179,6 +179,19 @@ export async function evaluateReport(
 
 const MIN_USER_WORDS = 10;
 
+/**
+ * The user asked for this, in their latest message: the quote is found in that message, and it isn't just a piece of
+ * the goal itself (quoting the goal back says nothing about what the user wants now).
+ */
+export function userAsked(words: string | undefined, prompts: string[], goalText: string): boolean {
+  const latest = prompts[prompts.length - 1];
+  if (latest === undefined || !userSaid(words, [latest])) return false;
+  const plain = (text: string): string => normalize(text.replace(/[^\x00-\x7f]+/g, " ")).toLowerCase();
+  // List markers don't make a piece of the goal into something else.
+  const bare = (text: string): string => plain(text.replace(/^\s*(?:\d+[.)]|[-*•])\s+/gm, ""));
+  return !bare(goalText).includes(bare(words ?? ""));
+}
+
 /** Changing an existing goal takes the user's own words, found in what the user actually sent. */
 export function userSaid(words: string | undefined, prompts: string[]): boolean {
   // Windows PowerShell can garble accents in the recorded message, so only plain ASCII is compared.
