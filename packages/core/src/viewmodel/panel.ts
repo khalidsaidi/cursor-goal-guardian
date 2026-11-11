@@ -2,7 +2,7 @@ import { goalHash, goalPhaseOf } from "../goal/loop.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalReviewRecord, ImproveRunRecord } from "../schema/audit.js";
 import { enoughToImprove, improveRunning, reviewLabels, type ReviewLabel } from "../goal/improve.js";
-import { objectionLines } from "../goal/review.js";
+import { dismissedLines, objectionLines } from "../goal/review.js";
 
 export interface TourStep {
   id: "connect" | "ask" | "steer" | "center";
@@ -53,7 +53,8 @@ export interface PanelViewModel {
     tokens: number | null;
   } | null;
   /** Recent reviews that objected, each objection open to the user's verdict. */
-  reviews: Array<{ id: string; lines: string[]; feedback: Array<ReviewLabel | null>; label: { label: ReviewLabel; source: "user" | "fixed" | "overruled" | "missed" } | null }>;
+  /** `dismissed`: what the evaluator raised and the reviewer checked against the project and dismissed. */
+  reviews: Array<{ id: string; lines: string[]; dismissed: string[]; feedback: Array<ReviewLabel | null>; label: { label: ReviewLabel; source: "user" | "fixed" | "overruled" | "missed" } | null }>;
   /** Guardian improving its own reviewer from those verdicts. */
   improve: {
     labelled: number;
@@ -196,12 +197,12 @@ function buildReviews(records: AuditRecord[]): PanelViewModel["reviews"] {
   const feedback = new Map<string, Map<number, ReviewLabel>>();
   for (const r of records) if (r.kind === "review.feedback" && r.label !== "missed") feedback.set(r.reviewId, (feedback.get(r.reviewId) ?? new Map()).set(r.index, r.label));
   return records
-    .filter((r): r is GoalReviewRecord & { id: string } => r.kind === "goal.review" && Boolean(r.id) && objectionLines(r).length > 0)
+    .filter((r): r is GoalReviewRecord & { id: string } => r.kind === "goal.review" && Boolean(r.id) && objectionLines(r).length + dismissedLines(r).length > 0)
     .slice(-REVIEWS_SHOWN)
     .reverse()
     .map((r) => {
       const lines = objectionLines(r);
-      return { id: r.id, lines, feedback: lines.map((_, i) => feedback.get(r.id)?.get(i) ?? null), label: labels.get(r.id) ?? null };
+      return { id: r.id, lines, dismissed: dismissedLines(r), feedback: lines.map((_, i) => feedback.get(r.id)?.get(i) ?? null), label: labels.get(r.id) ?? null };
     });
 }
 

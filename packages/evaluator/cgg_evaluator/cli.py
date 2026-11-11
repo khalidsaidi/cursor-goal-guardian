@@ -34,7 +34,8 @@ HERE = Path(__file__).resolve().parent
 
 # The one rubric that is Guardian's: the user's items say what must be done, this says nothing else should be.
 EXTRA_WORK_ID = "extra"
-EXTRA_WORK_RUBRIC = "The agent changed nothing that the user's request does not need."
+EXTRA_WORK_RUBRIC = ("The agent changed nothing that the user's request does not need. Tests, type declarations, documentation "
+                     "and comments for the work the request asks for are part of that work, not extra.")
 # ADK's name for this evaluator's metric (evaluation/eval_metrics.py PrebuiltMetrics).
 METRIC = "rubric_based_multi_turn_trajectory_quality_v1"
 JUDGE_MODEL = "cursor-agent"

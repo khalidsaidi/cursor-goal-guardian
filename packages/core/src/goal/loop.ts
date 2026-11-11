@@ -21,7 +21,7 @@ import { writeContract } from "../contractStore.js";
 import { criteriaFromTexts } from "../schema/contract.js";
 import { EngineRefused, engineRun, type EngineOp, type EngineResult, type EngineToolResult } from "./engine.js";
 import { engineView, type EngineGoal } from "./engineFold.js";
-import { MAX_REVIEWS, REVIEW_HARD_LIMIT, objectionLines, runReview } from "./review.js";
+import { MAX_REVIEWS, REVIEW_BUDGET_MS, REVIEW_HARD_LIMIT, adjudicate, claimsToAdjudicate, objectionLines, runReview } from "./review.js";
 import { GOAL_RESTORED, guardContract } from "./guard.js";
 import { EVALUATOR_BUDGET_MS, runEvaluator } from "./evaluator.js";
 import { readTrajectory } from "./trajectory.js";
@@ -674,6 +674,7 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
   } else if (fresh) {
     const asked = [contract.goal, ...(contract.successCriteria.length ? ["Done when:", ...contract.successCriteria.map((c) => `- ${c.text}`)] : [])].join("\n");
     const claimed = `I report the goal complete. Proofs: ${JSON.stringify(input.proofs)}. Changed files: ${JSON.stringify(input.changes)}.`;
+    const checksStarted = Date.now();
     const [outcome, evaluator] = await Promise.all([
       runReview(root, contract),
       Promise.all([readTrajectory(root, seq.records[0]?.ts ?? null), readShellOutputs(root)]).then(([conversation, outputs]) =>
@@ -681,6 +682,13 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
         runEvaluator({ userQuery: asked, items: contract.successCriteria.map((c) => ({ id: c.id, text: c.text })), conversation: [...conversation, ...reviewEvidence(root, input.proofs, outputs)], report: claimed }, opts.evaluatorBudgetMs ?? EVALUATOR_BUDGET_MS),
       ),
     ]);
+    // The evaluator judges from the record of the run, which can show an edit that was later replaced. What it alone
+    // objects to, the reviewer checks against the project itself before it counts: confirmed stands, dismissed is
+    // kept on the record and not sent back, and a claim with no clear answer stands, not adjudicated.
+    const claims = claimsToAdjudicate(outcome, evaluator);
+    // Without progress notices Cursor ends a silent tool call at 120 s, so the extra call gets what is left of that.
+    const adjudicateBudget = opts.evaluatorBudgetMs ? REVIEW_BUDGET_MS : Math.max(15_000, SILENT_CALL_MS - (Date.now() - checksStarted));
+    const adjudication = claims.length ? await adjudicate(root, contract, claims, adjudicateBudget) : undefined;
     const id = newId("rev");
     const ts = nowIso();
     // What it looked at is kept, so the review can be replayed later when Guardian tries to improve it.
@@ -688,13 +696,14 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
     const record = {
       ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra,
       ...(outcome.unanswered.length ? { unanswered: outcome.unanswered } : {}), stateKey, ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), evaluator,
+      ...(adjudication ? { adjudication } : {}),
     };
     await appendAudit(root, {
       ts, kind: "goal.review", ...(chat ? { conversationId: chat } : {}), goalHash: hash, reportTs, id,
       ...(outcome.ran ? (skippedCase ? { caseSaved: false, caseSkipped: skippedCase } : { caseSaved: true }) : {}),
       ...record,
     });
-    const lines = objectionLines({ ...outcome, evaluator });
+    const lines = objectionLines(record);
     if (lines.length) {
       return { accepted: false, message: REVIEW_OBJECTS, unproved: lines, unclaimed: [] };
     }
@@ -737,6 +746,8 @@ const DISPUTED = "Recorded as disputed, not proved: the independent review objec
 const unverifiedMessage = (why: string): string => `Recorded as unverified, not proved: ${why}. The goal can only be completed by both goal keepers' own code accepting it. Don't report again. Tell the user this, and what you finished, and stop.`;
 const uncheckedMessage = (skipped: string[]): string => `Guardian: recorded as complete but unchecked, not proved, because ${skipped.join("; ")}. Say in your closing message that this work was not independently checked.`;
 
+/** How long a report's checks may take in all when nothing keeps Cursor's tool call alive (it ends a silent call at 120 s). */
+const SILENT_CALL_MS = 110_000;
 const REVIEW_OBJECTS = "Not accepted yet: an independent reviewer checked the project and objects. Fix what holds up, then report again. A report on the same unchanged project won't be reviewed a second time: where the reviewer is wrong, say why with evidence to the user.";
 
 /** Reviews of this goal in this run, oldest first. */

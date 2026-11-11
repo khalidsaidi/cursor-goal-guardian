@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import type { Contract } from "../schema/contract.js";
 import { readHarness } from "./harness.js";
-import { evaluatorLines, type EvaluatorOutcome } from "./evaluator.js";
+import { EXTRA_WORK_RUBRIC_ID, evaluatorLines, type EvaluatorOutcome } from "./evaluator.js";
 
 export interface ReviewFailure {
   id: string;
@@ -332,9 +332,146 @@ export async function runReview(root: string, contract: Pick<Contract, "goal" | 
   }
 }
 
-/** Everything one review objects to: the reviewer's item verdicts and extras, then each rubric the evaluator judged not met. */
-export function objectionLines(review: Pick<ReviewOutcome, "fails" | "extra"> & { evaluator?: Pick<EvaluatorOutcome, "ran" | "failed"> | undefined }): string[] {
-  return [...reviewLines(review), ...(review.evaluator ? evaluatorLines(review.evaluator) : [])];
+/** One thing the evaluator judged not met, in its own words. */
+export interface EvaluatorClaim {
+  id: string;
+  property: string;
+  rationale: string;
+}
+
+/**
+ * The reviewer's check of what the evaluator alone objected to. The evaluator judges from Guardian's record of the
+ * run, so it can object to an edit that was later replaced; the reviewer looks at the project as it is.
+ */
+export interface Adjudication {
+  ran: boolean;
+  /** Why it didn't run, or why its answer couldn't be used. */
+  reason?: string;
+  seconds: number;
+  /** Claims the reviewer found to be true of the project: they stand as objections. */
+  confirmed: Array<{ id: string; evidence: string }>;
+  /** Claims the reviewer checked against the project and found untrue: kept on the record, never sent back. */
+  dismissed: Array<{ id: string; property: string; rationale: string; evidence: string }>;
+  /** Claims with no clear answer: they stand as objections, not adjudicated. */
+  unclear: string[];
+}
+
+/**
+ * Guardian's own instructions for that check. Not part of what the reviewer's self-improvement changes. `{goal}`,
+ * `{items}` and `{claims}` are filled in.
+ */
+export const ADJUDICATE_PROMPT = `Another checker read a log of an AI coding agent's work and claims parts of a goal are not met. It never saw the project, only the log, and the log can show an edit that was later replaced. You decide each claim against the project as it is now. The user's goal:
+{goal}
+Done when:
+{items}
+
+This folder is a throwaway copy of the project as the agent left it. See the work with \`git status\`, \`git diff HEAD\` and \`git log\`.
+
+The claims:
+{claims}
+
+Do not take a claim's word for anything. For each one, open the files it talks about, and run the project's own tests or a small check of your own where that settles it. Answer "confirmed" only if the claim is true of the project now and means the item it names is really not met, or, for the claim about work nobody asked for, that such a change is really in the project. Tests, type declarations, documentation and comments for the requested work are part of that work. Answer "dismissed" if the project shows the claim is untrue, already fixed, or about something the item does not ask for. If you cannot tell, answer "unclear".
+
+Stay in this folder. Don't install, publish, push or use the network.
+Keep checks short and always finish: your last message must be the JSON answer, with every claim id listed exactly once. Escape quotes inside evidence strings so the JSON stays valid.
+Answer with JSON only, no prose: {"claims":[{"id":"sc_1","verdict":"confirmed or dismissed or unclear","evidence":"one line quoting what you ran or read"}]}`;
+
+/**
+ * What the evaluator objected to that the reviewer did not: an item the reviewer passed, or unrequested work when
+ * the reviewer named none. Where the reviewer already objects to the same thing there is nothing to settle.
+ */
+export function claimsToAdjudicate(review: Pick<ReviewOutcome, "fails" | "extra">, evaluator: Pick<EvaluatorOutcome, "ran" | "failed"> | undefined): EvaluatorClaim[] {
+  if (!evaluator?.ran) return [];
+  const failed = new Set(review.fails.map((f) => f.id));
+  return evaluator.failed.filter((c) => (c.id === EXTRA_WORK_RUBRIC_ID ? review.extra.length === 0 : !failed.has(c.id)));
+}
+
+export function adjudicatePrompt(contract: Pick<Contract, "goal" | "successCriteria">, claims: EvaluatorClaim[]): string {
+  const items = contract.successCriteria.length ? contract.successCriteria.map((c) => `- ${c.id}: ${c.text}`).join("\n") : "- goal: the goal as stated";
+  const list = claims
+    .map((c) => (c.id === EXTRA_WORK_RUBRIC_ID ? `- ${c.id} (the run changed things the request doesn't need): ${c.rationale}` : `- ${c.id} (${c.property}) is not met: ${c.rationale}`))
+    .join("\n");
+  return ADJUDICATE_PROMPT.replace("{goal}", () => contract.goal).replace("{items}", () => items).replace("{claims}", () => list);
+}
+
+/** The reviewer's answer on each claim. A claim left out or answered unclearly is unclear: it is never dismissed by silence. */
+export function parseAdjudication(stdout: string, claims: EvaluatorClaim[]): Pick<Adjudication, "confirmed" | "dismissed" | "unclear"> | null {
+  const text = agentText(stdout);
+  if (text === null) return null;
+  const answer = firstObjectWith(text, "claims");
+  if (!answer) return null;
+  const said = new Map<string, { verdict: string; evidence: string }>();
+  for (const e of answer.claims as unknown[]) {
+    const c = (e ?? {}) as Record<string, unknown>;
+    if (str(c.id)) said.set(str(c.id), { verdict: str(c.verdict).toLowerCase(), evidence: str(c.evidence) });
+  }
+  const out: Pick<Adjudication, "confirmed" | "dismissed" | "unclear"> = { confirmed: [], dismissed: [], unclear: [] };
+  for (const claim of claims) {
+    const a = said.get(claim.id);
+    // A dismissal has to say what was looked at: without evidence it is not a check of the project.
+    if (a && /^dismiss/.test(a.verdict) && a.evidence) out.dismissed.push({ ...claim, evidence: a.evidence });
+    else if (a && /^confirm/.test(a.verdict)) out.confirmed.push({ id: claim.id, evidence: a.evidence });
+    else out.unclear.push(claim.id);
+  }
+  return out;
+}
+
+/** One more reviewer call, in a fresh copy of the project, on what the evaluator alone objected to. Never throws. */
+export async function adjudicate(root: string, contract: Pick<Contract, "goal" | "successCriteria">, claims: EvaluatorClaim[], budgetMs = REVIEW_BUDGET_MS): Promise<Adjudication> {
+  const started = Date.now();
+  const seconds = (): number => Math.round((Date.now() - started) / 1000);
+  const notRun = (reason: string): Adjudication => ({ ran: false, reason, seconds: seconds(), confirmed: [], dismissed: [], unclear: claims.map((c) => c.id) });
+  if (process.env.GOAL_GUARDIAN_REVIEWING) return notRun("already inside a review");
+  if (!resolveReviewer()) return notRun("cursor-agent isn't installed");
+  const copy = await makeReviewCopy(root);
+  if (!copy) return notRun("the project isn't a git repository Guardian can copy");
+  try {
+    return await adjudicateIn(copy.dir, copy.scratch, contract, claims, budgetMs);
+  } finally {
+    await fsp.rm(copy.scratch, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+/** The same check in a prepared copy. Never throws. */
+export async function adjudicateIn(dir: string, scratch: string, contract: Pick<Contract, "goal" | "successCriteria">, claims: EvaluatorClaim[], budgetMs = REVIEW_BUDGET_MS): Promise<Adjudication> {
+  const started = Date.now();
+  const seconds = (): number => Math.round((Date.now() - started) / 1000);
+  const notRun = (reason: string): Adjudication => ({ ran: false, reason, seconds: seconds(), confirmed: [], dismissed: [], unclear: claims.map((c) => c.id) });
+  const run = await askAgent(adjudicatePrompt(contract, claims), dir, scratch, budgetMs);
+  if (!run.ok) return notRun(run.reason);
+  const parsed = parseAdjudication(run.stdout, claims);
+  if (!parsed) return notRun("the reviewer's answer on the evaluator's claims couldn't be read");
+  return { ran: true, seconds: seconds(), ...parsed };
+}
+
+type Reviewed = Pick<ReviewOutcome, "fails" | "extra"> & {
+  evaluator?: Pick<EvaluatorOutcome, "ran" | "failed"> | undefined;
+  adjudication?: Pick<Adjudication, "ran" | "confirmed" | "dismissed"> | undefined;
+};
+
+/**
+ * Everything one review objects to: the reviewer's item verdicts and extras, then each rubric the evaluator judged
+ * not met, except those the reviewer checked against the project and dismissed.
+ */
+export function objectionLines(review: Reviewed): string[] {
+  if (!review.evaluator) return reviewLines(review);
+  const dismissed = new Set((review.adjudication?.dismissed ?? []).map((d) => d.id));
+  const confirmed = new Map((review.adjudication?.confirmed ?? []).map((c) => [c.id, c.evidence]));
+  const standing = { ran: review.evaluator.ran, failed: review.evaluator.failed.filter((f) => !dismissed.has(f.id)) };
+  const lines = evaluatorLines(standing).map((line, i) => {
+    const evidence = confirmed.get(standing.failed[i]!.id);
+    return evidence ? `${line} The reviewer checked the project and confirms it: ${evidence}` : line;
+  });
+  return [...reviewLines(review), ...lines];
+}
+
+/** What the evaluator raised and the reviewer dismissed after checking the project: shown to the user, never sent back. */
+export function dismissedLines(review: { adjudication?: Pick<Adjudication, "dismissed"> | undefined }): string[] {
+  return (review.adjudication?.dismissed ?? []).map((d) =>
+    d.id === EXTRA_WORK_RUBRIC_ID
+      ? `The evaluator raised unrequested work (${d.rationale}); the reviewer checked the project and dismissed it: ${d.evidence}`
+      : `The evaluator raised ${d.id} (${d.rationale}); the reviewer checked the project and dismissed it: ${d.evidence}`,
+  );
 }
 
 /** One line per objection, as the agent and the panel see them. */

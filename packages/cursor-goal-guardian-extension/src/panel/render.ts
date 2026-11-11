@@ -115,7 +115,8 @@ function renderReviews(vm: PanelViewModel): string {
       return `<p class="review-line">${escapeHtml(`Reviewer's opinion: ${line.replace(/^Reviewer: /, "")}`)} ${buttons}</p>`;
     });
     const label = r.label && r.label.source !== "user" ? `<p class="review-line">Counted as ${r.label.label === "right" ? "a right call" : "a wrong call"}: ${SOURCE_WORD[r.label.source]}.</p>` : "";
-    return lines.join("") + label;
+    const dismissed = r.dismissed.map((line) => `<p class="review-line">${escapeHtml(line)}</p>`);
+    return lines.join("") + label + dismissed.join("");
   });
   return `<div class="reviews">${blocks.join("")}</div>`;
 }

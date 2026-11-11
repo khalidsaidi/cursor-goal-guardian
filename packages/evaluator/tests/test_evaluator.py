@@ -90,7 +90,7 @@ class EvaluatorTest(unittest.TestCase):
         for p in self.prompts():
             self.assertIn(mission, p["prompt"])
             self.assertIn('"property": "Tests cover it and pass"', p["prompt"])
-            self.assertIn("The agent changed nothing that the user's request does not need.", p["prompt"])
+            self.assertIn("The agent changed nothing that the user's request does not need. Tests, type declarations, documentation and comments for the work the request asks for are part of that work, not extra.", p["prompt"])
             self.assertIn('(tool call): run_terminal_command({"command": "npm test"})', p["prompt"])
             self.assertIn("31 passing", p["prompt"])
             self.assertIn("Do not delegate", p["prompt"])

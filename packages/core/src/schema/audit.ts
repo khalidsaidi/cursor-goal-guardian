@@ -261,6 +261,18 @@ export const goalReviewRecordSchema = z
       })
       .strict()
       .optional(),
+    /** The reviewer's check, against the project, of what the evaluator alone objected to. */
+    adjudication: z
+      .object({
+        ran: z.boolean(),
+        reason: z.string().optional(),
+        seconds: z.number().int().nonnegative(),
+        confirmed: z.array(z.object({ id: z.string(), evidence: z.string() }).strict()),
+        dismissed: z.array(z.object({ id: z.string(), property: z.string(), rationale: z.string(), evidence: z.string() }).strict()),
+        unclear: z.array(z.string()),
+      })
+      .strict()
+      .optional(),
     /** Written by an earlier second check that the evaluator replaced. Still read so old records parse; never used. */
     monitor: z
       .object({
