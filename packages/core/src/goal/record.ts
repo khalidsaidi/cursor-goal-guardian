@@ -97,11 +97,59 @@ export function readShrunkFiles(root: string): ShrunkFile[] {
   return shrunk;
 }
 
-/** These hold what commands printed and what the user typed: never let them reach a commit. */
+const KEPT_OUT = ["shell-output.jsonl", "prompts.json", "edits.jsonl"];
+
+/** These hold what commands printed, what was edited and what the user typed: never let them reach a commit. */
 async function keepOutOfGit(root: string): Promise<void> {
   const dir = getGuardianPaths(root).telemetryDir;
   await fsp.mkdir(dir, { recursive: true });
-  await fsp.writeFile(path.join(dir, ".gitignore"), "shell-output.jsonl\nprompts.json\n", { flag: "wx" }).catch(() => undefined);
+  const file = path.join(dir, ".gitignore");
+  const have = await fsp.readFile(file, "utf8").catch(() => "");
+  const missing = KEPT_OUT.filter((name) => !have.split("\n").includes(name));
+  if (missing.length) await fsp.appendFile(file, `${have && !have.endsWith("\n") ? "\n" : ""}${missing.join("\n")}\n`).catch(() => undefined);
+}
+
+export interface FileEdit {
+  ts: string;
+  file: string;
+  /** What was replaced by what, each side trimmed. */
+  edits: Array<{ old: string; new: string }>;
+}
+
+const EDIT_SIDE_MAX = 1500;
+const EDITS_PER_CALL = 8;
+const KEEP_EDITS = 400;
+
+/** What an edit changed, as Cursor's hook reports it, so the turn can be reviewed piece by piece later. */
+export async function recordFileEdit(root: string, file: string, edits: unknown): Promise<void> {
+  if (!file || file.startsWith(".cursor/")) return;
+  await keepOutOfGit(root);
+  const cut = (v: unknown): string => {
+    const text = typeof v === "string" ? v : "";
+    return text.length <= EDIT_SIDE_MAX ? text : `${text.slice(0, EDIT_SIDE_MAX)}\n… (${text.length - EDIT_SIDE_MAX} more characters)`;
+  };
+  const list = (Array.isArray(edits) ? edits : []).slice(0, EDITS_PER_CALL).map((e) => ({ old: cut((e as { old_string?: unknown })?.old_string), new: cut((e as { new_string?: unknown })?.new_string) }));
+  const p = getGuardianPaths(root).edits;
+  await appendLine(p, JSON.stringify({ ts: nowIso(), file, edits: list } satisfies FileEdit));
+  const size = await fsp.stat(p).then((s) => s.size, () => 0);
+  if (size > ROTATE_BYTES) {
+    const kept = (await fsp.readFile(p, "utf8")).split("\n").filter(Boolean).slice(-KEEP_EDITS);
+    await fsp.writeFile(p, `${kept.join("\n")}\n`);
+  }
+}
+
+export async function readFileEdits(root: string): Promise<FileEdit[]> {
+  const raw = await fsp.readFile(getGuardianPaths(root).edits, "utf8").catch(() => "");
+  const out: FileEdit[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    try {
+      out.push(JSON.parse(line) as FileEdit);
+    } catch {
+      // A torn last line is not evidence.
+    }
+  }
+  return out;
 }
 
 export async function recordShellOutput(root: string, entry: { command: string; output: string; durationMs?: number }): Promise<void> {

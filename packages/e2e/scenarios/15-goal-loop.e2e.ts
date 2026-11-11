@@ -33,8 +33,8 @@ describe("15 [deterministic] shipped binaries: the goal loop", () => {
   };
   const stop = (loop_count: number) => hook({ hook_event_name: "stop", status: "completed", loop_count });
   const report = async (args: Record<string, unknown>): Promise<{ accepted: boolean; unproved: string[]; unclaimed: string[] }> => {
-    hook({ hook_event_name: "beforeMCPExecution", mcp_server_name: "goal-guardian", tool_name: "guardian_report_goal" });
-    const res = (await client.callTool({ name: "guardian_report_goal", arguments: args })) as { content: Array<{ text: string }> };
+    hook({ hook_event_name: "beforeMCPExecution", mcp_server_name: "goal-guardian", tool_name: "update_goal" });
+    const res = (await client.callTool({ name: "update_goal", arguments: args })) as { content: Array<{ text: string }> };
     return JSON.parse(res.content[0]!.text);
   };
   const pause = () => new Promise((r) => setTimeout(r, 20));
@@ -96,14 +96,14 @@ describe("15 [deterministic] shipped binaries: the goal loop", () => {
   });
 
   it("reports where the goal stands", async () => {
-    const res = (await client.callTool({ name: "guardian_get_status", arguments: {} })) as { content: Array<{ text: string }> };
-    expect(JSON.parse(res.content[0]!.text).goalPhase).toBe("complete");
+    const res = (await client.callTool({ name: "get_goal", arguments: {} })) as { content: Array<{ text: string }> };
+    expect(JSON.parse(res.content[0]!.text).goal.status).toBe("complete");
   });
 
   it("refuses to let the agent rewrite the goal without the user's words", async () => {
-    const res = (await client.callTool({ name: "guardian_update_goal", arguments: { user_words: "Something smaller" } })) as { isError?: boolean };
+    const res = (await client.callTool({ name: "guardian_change_goal", arguments: { user_words: "Something smaller" } })) as { isError?: boolean };
     expect(res.isError).toBe(true);
-    const ok = (await client.callTool({ name: "guardian_get_contract", arguments: {} })) as { content: Array<{ text: string }> };
+    const ok = (await client.callTool({ name: "get_goal", arguments: {} })) as { content: Array<{ text: string }> };
     expect(ok.content[0]!.text).toContain("Add a subtract function");
   });
 });

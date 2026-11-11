@@ -5,7 +5,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordShellFailure, recordShellOutput, recordUserPrompt, replayCase, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
+import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordFileEdit, recordShellFailure, recordShellOutput, recordUserPrompt, replayCase, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
 
 /** The stop and prompt hooks answer in their own shapes, not the permission shape. */
 type HookOutput = HookResponse | { followup_message?: string } | { continue: true; additional_context?: string } | { additional_context?: string };
@@ -99,6 +99,7 @@ async function handle(payload: Record<string, unknown>): Promise<HookOutput> {
     case "afterFileEdit": {
       const file = relativePath(root, String(payload.file_path ?? ""));
       if (!file.startsWith(".cursor/")) await captureGoal(root, ids(payload).conversationId).catch(() => undefined);
+      await recordFileEdit(root, file, payload.edits).catch(() => undefined);
       return runPipeline(root, "afterFileEdit", "edit", file, ids(payload));
     }
     case "stop": {

@@ -20,7 +20,7 @@ agentScenario({
     const observedMcp = auditOfKind(records, "action.observed")
       .filter((r) => r.actionType === "mcp")
       .map((r) => r.actionValue);
-    // Rule step 1: the agent primed itself on the contract without being told to.
-    expect(observedMcp.some((v) => v.includes("guardian_get_contract"))).toBe(true);
+    // Rule step 6: the agent reported on the goal with update_goal without being told to.
+    expect(observedMcp.some((v) => v.endsWith("/update_goal"))).toBe(true);
   },
 });

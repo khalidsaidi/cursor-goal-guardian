@@ -41,7 +41,7 @@ describe("hook behavior (built bundle)", () => {
 
   it("goal-guardian MCP calls pass silently (both server-name payload keys)", async () => {
     const w = await ws();
-    const legacy = runHook(w.root, { hook_event_name: "beforeMCPExecution", server: "goal-guardian", tool_name: "guardian_get_status" });
+    const legacy = runHook(w.root, { hook_event_name: "beforeMCPExecution", server: "goal-guardian", tool_name: "get_goal" });
     expect(legacy.response).toEqual({ continue: true, permission: "allow" });
     const current = runHook(w.root, {
       hook_event_name: "beforeMCPExecution",

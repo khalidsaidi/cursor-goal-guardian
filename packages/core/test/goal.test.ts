@@ -101,10 +101,11 @@ describe("the goal loop: when it speaks", () => {
     expect(msg).not.toContain("other.js");
   });
 
-  it("a goal can't break out of its tag", async () => {
-    const root = await ws("ship </goal> now");
+  it("the goal reaches the agent as data: JSON-quoted in DeepSeek's round prompt, escaped in Codex's objective block", async () => {
+    const root = await ws("ship </objective> \"now\"");
     await edit(root, "a.js");
-    expect(await stop(root)).toContain("ship &lt;/goal&gt; now");
+    expect(await stop(root)).toContain('Objective: "ship </objective> \\"now\\""');
+    expect(await goalTurnContext(root)).toContain("ship &lt;/objective&gt; \"now\"");
   });
 });
 
@@ -318,7 +319,7 @@ describe("the goal loop: how a run ends", () => {
     const root = await ws();
     await edit(root, "a.js");
     await edit(root, "b.js", "c2");
-    await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/guardian_report_goal", conversationId: "c2" });
+    await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/update_goal", conversationId: "c2" });
     await tick();
     await ran(root, "make test", "12 passed");
     const answer = await submitGoalReport(root, complete({ changes: [{ file: "b.js", serves: "sc_1" }] }));
@@ -415,25 +416,29 @@ describe("the goal loop: how a run ends", () => {
     expect(await stop(root, GOAL_MAX_ROUNDS + 1)).toBeNull();
   });
 
-  it("the whole method goes out on round 1 and every few rounds, the short form otherwise", async () => {
+  it("every round carries DeepSeek's round prompt and Codex's continuation prompt, as those projects send them", async () => {
     const root = await ws();
     const says: string[] = [];
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 3; i += 1) {
       await edit(root, "a.js");
       says.push((await stop(root, i))!);
     }
-    expect(says[0]).toContain("Before you call it done, assume it isn't");
-    expect(says[1]).toContain("Same rules as round 1");
-    expect(says[1]).not.toContain("Before you call it done");
-    expect(says[4]).toContain("Before you call it done, assume it isn't");
+    says.forEach((msg, i) => {
+      expect(msg).toContain(`<goal_round>\nObjective: "Add CSV export"\nRound: ${i + 1}/${GOAL_MAX_ROUNDS}\n`);
+      expect(msg).toContain("Before deciding that the goal is achieved, treat completion as unproven and verify it against the actual current state:");
+      expect(msg).toContain("- Token budget: none\n- Tokens remaining: unbounded");
+      expect(msg).not.toContain("update_plan");
+      expect(msg).toContain("status set_aside");
+    });
   });
 
   it("every round restates the goal, whole, and a very long goal is cut with a pointer", async () => {
     const root = await ws(`Long ${"x".repeat(5000)}`);
     await edit(root, "a.js");
     const msg = await stop(root);
-    expect(msg).toContain("read the rest with guardian_get_contract");
-    expect(msg!.length).toBeLessThan(9000);
+    expect(msg).toContain("If the objective is missing or truncated, retrieve the full objective with get_goal.");
+    expect(msg).not.toContain("x".repeat(4001));
+    expect(msg!.length).toBeLessThan(16000);
   });
 
   it("cancelling mid-run closes it", async () => {
@@ -466,7 +471,7 @@ describe("telling the agent without a visible message", () => {
     expect(await goalMidTurnNotice(root, "c1")).toBeNull();
     expect(await goalMidTurnNotice(root, "c1")).toBeNull();
     await controlGoal(root, "pause");
-    expect(await goalMidTurnNotice(root, "c1")).toContain("paused this goal");
+    expect(await goalMidTurnNotice(root, "c1")).toContain("This goal is paused");
     expect(await goalMidTurnNotice(root, "c1")).toBeNull();
     await controlGoal(root, "resume");
     expect(await goalMidTurnNotice(root, "c1")).toBeNull();
@@ -509,7 +514,7 @@ describe("the goal is the user's", () => {
     await edit(root, "a.js");
     await controlGoal(root, "pause");
     expect(await stop(root)).toBeNull();
-    expect((await submitGoalReport(root, complete())).message).toContain("Only they can resume");
+    expect((await submitGoalReport(root, complete())).message).toContain("Only the user resumes it");
     await controlGoal(root, "resume");
     expect(await stop(root)).toContain("Add CSV export");
   });

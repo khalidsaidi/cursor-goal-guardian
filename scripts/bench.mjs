@@ -83,8 +83,7 @@ log("\n## 2. MCP tool round-trips (packaged server, real stdio)\n");
   await client.connect(new StdioClientTransport({ command: "node", args: [MCP], env: { ...process.env, GOAL_GUARDIAN_WORKSPACE_ROOT: ws.root }, stderr: "ignore" }));
   log(`- cold start + handshake: ${(performance.now() - t0).toFixed(1)}ms`);
   for (const [name, args] of [
-    ["guardian_get_contract", {}],
-    ["guardian_get_status", {}],
+    ["get_goal", {}],
   ]) {
     const samples = [];
     for (let i = 0; i < 50; i++) {

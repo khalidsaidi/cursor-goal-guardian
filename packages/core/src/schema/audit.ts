@@ -111,7 +111,7 @@ export const goalReportRecordSchema = z
     kind: z.literal("goal.report"),
     /** The goal this report is about: a report on a goal the user has since changed doesn't count. */
     goalHash: z.string().optional(),
-    status: z.enum(["complete", "blocked", "set_aside"]),
+    status: z.enum(["complete", "blocked", "set_aside", "paused"]),
     proofs: z.array(goalProofSchema),
     changes: z.array(z.object({ file: z.string(), serves: z.string() }).strict()),
     /** Files that lost most of their lines, which the agent says the goal or the user asked for. */
@@ -121,14 +121,14 @@ export const goalReportRecordSchema = z
   })
   .strict();
 
-/** The user paused, resumed or closed the goal, from the panel. The agent can't do any of these. */
+/** The goal was paused, resumed or closed. The user does these from the panel; the agent can only pause, and only on the user's quoted request. */
 export const goalControlRecordSchema = z
   .object({
     ...base,
     kind: z.literal("goal.control"),
     goalHash: z.string(),
     operation: z.enum(["pause", "resume", "done"]),
-    actor: z.literal("user"),
+    actor: z.enum(["user", "agent"]),
   })
   .strict();
 
@@ -206,6 +206,20 @@ export const goalReviewRecordSchema = z
     seconds: z.number().int().nonnegative(),
     fails: z.array(z.object({ id: z.string(), evidence: z.string() }).strict()),
     extra: z.array(z.object({ file: z.string(), what: z.string() }).strict()),
+    /** The paper's monitor on the same run: its scores on MRT's 1 to 5 scale and its own summary. */
+    monitor: z
+      .object({
+        ran: z.boolean(),
+        reason: z.string().optional(),
+        hierarchical: z.number().nullable(),
+        sequential: z.number().nullable(),
+        hybrid: z.number().nullable(),
+        summary: z.string(),
+        calls: z.number().int().nonnegative(),
+        seconds: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

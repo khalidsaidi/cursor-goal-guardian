@@ -2,7 +2,7 @@ import { goalHash, goalPhaseOf } from "../goal/loop.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalReviewRecord, ImproveRunRecord } from "../schema/audit.js";
 import { enoughToImprove, improveRunning, reviewLabels, type ReviewLabel } from "../goal/improve.js";
-import { reviewLines } from "../goal/review.js";
+import { objectionLines } from "../goal/review.js";
 
 export interface TourStep {
   id: "connect" | "ask" | "steer" | "center";
@@ -102,11 +102,8 @@ function buildTour(inputs: PanelInputs): PanelTour {
       id: "steer",
       label: "Type /guardian in the chat",
       hint: "a plain-language briefing of the session",
-      // Only the briefing tool counts — the rule calls guardian_get_contract at
-      // every session start, which says nothing about the USER steering.
-      done: records.some(
-        (r) => r.kind === "action.observed" && r.actionType === "mcp" && r.actionValue.includes("guardian_get_status"),
-      ),
+      // The briefing reads the goal with get_goal; nothing else asks the agent to.
+      done: records.some((r) => r.kind === "action.observed" && r.actionType === "mcp" && r.actionValue.endsWith("/get_goal")),
     },
     {
       id: "center",
@@ -174,11 +171,11 @@ function buildReviews(records: AuditRecord[]): PanelViewModel["reviews"] {
   const feedback = new Map<string, Map<number, ReviewLabel>>();
   for (const r of records) if (r.kind === "review.feedback") feedback.set(r.reviewId, (feedback.get(r.reviewId) ?? new Map()).set(r.index, r.label));
   return records
-    .filter((r): r is GoalReviewRecord & { id: string } => r.kind === "goal.review" && r.ran && Boolean(r.id) && r.fails.length + r.extra.length > 0)
+    .filter((r): r is GoalReviewRecord & { id: string } => r.kind === "goal.review" && Boolean(r.id) && objectionLines(r).length > 0)
     .slice(-REVIEWS_SHOWN)
     .reverse()
     .map((r) => {
-      const lines = reviewLines(r);
+      const lines = objectionLines(r);
       return { id: r.id, lines, feedback: lines.map((_, i) => feedback.get(r.id)?.get(i) ?? null), label: labels.get(r.id) ?? null };
     });
 }

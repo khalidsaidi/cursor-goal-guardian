@@ -73,15 +73,15 @@ describe("14 [deterministic] shipped binaries: full functionality on this platfo
     return JSON.parse(res.content[0]!.text) as Record<string, unknown>;
   }
 
-  it("the goal grows on the record: update_goal, get_contract", async () => {
-    await tool("guardian_update_goal", {
+  it("the goal grows on the record: guardian_change_goal, get_goal", async () => {
+    await tool("guardian_change_goal", {
       user_words: "Finish the math utilities and ship the CSV exporter",
       add_criteria: ["Exporter writes valid CSV"],
     });
 
-    const contract = (await tool("guardian_get_contract")) as { goal: string; successCriteria: Array<{ id: string; text: string }> };
-    expect(contract.goal).toContain("CSV exporter");
-    expect(contract.successCriteria.some((c) => c.text.includes("Exporter"))).toBe(true);
+    const { goal } = (await tool("get_goal")) as { goal: { objective: string; done_when: Array<{ id: string; text: string }> } };
+    expect(goal.objective).toContain("CSV exporter");
+    expect(goal.done_when.some((c) => c.text.includes("Exporter"))).toBe(true);
   });
 
   it("hook: a command -> bare allow, no message", () => {
@@ -95,7 +95,7 @@ describe("14 [deterministic] shipped binaries: full functionality on this platfo
     const { out } = hook(ws, {
       hook_event_name: "beforeMCPExecution",
       mcp_server_name: "goal-guardian",
-      tool_name: "guardian_get_status",
+      tool_name: "get_goal",
     });
     expect(out.permission).toBe("allow");
     expect(out.userMessage).toBeUndefined();
@@ -107,13 +107,13 @@ describe("14 [deterministic] shipped binaries: full functionality on this platfo
     expect(observed.length).toBeGreaterThan(0);
   });
 
-  it("a report on the goal goes on the record, and get_status shows where the goal stands", async () => {
-    const answer = await tool("guardian_report_goal", { status: "complete", proofs: [], changes: [] });
+  it("a report on the goal goes on the record, and get_goal shows where the goal stands", async () => {
+    const answer = await tool("update_goal", { status: "complete", proofs: [], changes: [] });
     expect(answer.accepted).toBe(false);
     expect(tapeKinds(ws)).toContain("goal.report");
-    const status = (await tool("guardian_get_status")) as { goal: string; goalPhase: string };
-    expect(status.goal).toContain("CSV exporter");
-    expect(status.goalPhase).toBe("active");
+    const { goal } = (await tool("get_goal")) as { goal: { objective: string; status: string } };
+    expect(goal.objective).toContain("CSV exporter");
+    expect(goal.status).toBe("active");
   });
 
 });

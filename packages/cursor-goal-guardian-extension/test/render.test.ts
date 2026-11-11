@@ -85,7 +85,7 @@ describe("panel sections", () => {
   it("tour disappears when dismissed and when every step is done", () => {
     expect(renderSections(buildPanelViewModel(inputs({ tourDismissed: true }))).tour).toBe("");
     const records: AuditRecord[] = [
-      { ts: at(30), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/guardian_get_status" },
+      { ts: at(30), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/get_goal" },
     ];
     expect(renderSections(buildPanelViewModel(inputs({ records, commandCenterUsed: true }))).tour).toBe("");
   });

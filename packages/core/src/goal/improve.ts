@@ -59,9 +59,11 @@ export function reviewLabels(records: AuditRecord[]): Map<string, { label: Revie
   }
   const said = new Map<string, ReviewFeedbackRecord[]>();
   for (const r of records) if (r.kind === "review.feedback") said.set(r.reviewId, [...(said.get(r.reviewId) ?? []).filter((x) => x.index !== r.index), r]);
-  for (const [id, feedback] of said) {
+  for (let [id, feedback] of said) {
     const review = reviews.find((r) => r.id === id);
     const total = review ? review.fails.length + review.extra.length : 0;
+    // The monitor's line comes after the reviewer's own and isn't what RRSI improves: a verdict on it isn't a label.
+    feedback = feedback.filter((f) => f.index < total);
     // One objection the user calls right makes the review right to object; it was wrong only if every one was.
     if (feedback.some((f) => f.label === "right")) out.set(id, { label: "right", source: "user" });
     else if (total > 0 && feedback.length >= total) out.set(id, { label: "wrong", source: "user" });

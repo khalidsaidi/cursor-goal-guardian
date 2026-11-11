@@ -40,7 +40,7 @@ afterAll(async () => {
 
 describe("unresolvable workspace", () => {
   it("tools answer with guidance instead of writing into the wrong place", async () => {
-    const res = (await client.callTool({ name: "guardian_get_contract", arguments: {} })) as {
+    const res = (await client.callTool({ name: "get_goal", arguments: {} })) as {
       isError?: boolean;
       content: Array<{ text: string }>;
     };

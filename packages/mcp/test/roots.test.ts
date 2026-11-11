@@ -43,15 +43,15 @@ afterAll(async () => {
 
 describe("workspace resolution via MCP roots", () => {
   it("reads the contract from the client-advertised root, not env or cwd", async () => {
-    const res = (await client.callTool({ name: "guardian_get_contract", arguments: {} })) as {
+    const res = (await client.callTool({ name: "get_goal", arguments: {} })) as {
       content: Array<{ text: string }>;
     };
-    expect(JSON.parse(res.content[0]!.text).goal).toBe("Roots resolution works");
+    expect(JSON.parse(res.content[0]!.text).goal.objective).toBe("Roots resolution works");
   });
 
   it("writes through tools into the advertised root", async () => {
     const res = (await client.callTool({
-      name: "guardian_update_goal",
+      name: "guardian_change_goal",
       arguments: { user_words: "Rooted goal update" },
     })) as { isError?: boolean };
     expect(res.isError).not.toBe(true);

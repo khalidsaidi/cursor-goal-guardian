@@ -47,7 +47,7 @@ for (const entry of await fs.readdir(compiled)) {
   if (!target.startsWith("win32")) await fs.chmod(path.join(binDir, entry), 0o755);
 }
 
-// Google's RRSI runs as it is, in Python, so the VSIX carries a Python of its own: python-build-standalone,
+// Google's RRSI and the paper's monitor run as they are, in Python, so the VSIX carries a Python of its own: python-build-standalone,
 // pinned and checksum-verified, like the binaries above. Nothing is downloaded on the user's machine.
 const PYTHON_RELEASE = "20261026";
 const PYTHON_VERSION = "3.12.16";
@@ -119,8 +119,20 @@ async function bundleRsi() {
   await fs.copyFile(path.join(root, "NOTICE"), path.join(extDir, "NOTICE"));
 }
 
+/** The paper's monitor (MRT) unmodified, and Guardian's adapter for it. It runs on the same bundled Python. */
+async function bundleMonitor() {
+  const monitorDir = path.join(extDir, "monitor");
+  await fs.rm(monitorDir, { recursive: true, force: true });
+  const skip = (src) => !/(^|[\\/])(__pycache__|tests)([\\/]|$)/.test(src);
+  const vendored = path.join(root, "third_party", "mrt");
+  await fs.cp(vendored, path.join(monitorDir, "mrt"), { recursive: true, filter: (src) => skip(path.relative(vendored, src)) });
+  const adapter = path.join(root, "packages", "monitor", "cgg_monitor");
+  await fs.cp(adapter, path.join(monitorDir, "cgg_monitor"), { recursive: true, filter: (src) => skip(path.relative(adapter, src)) });
+}
+
 await bundlePython();
 await bundleRsi();
+await bundleMonitor();
 
 const out = `cursor-goal-guardian-${target}.vsix`;
 run("pnpm", ["dlx", "@vscode/vsce", "package", "--no-dependencies", "--target", target, "--out", out], extDir);

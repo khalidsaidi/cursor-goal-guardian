@@ -40,16 +40,11 @@ describe("13 [deterministic] the packaged extension binaries actually run", () =
         }),
       );
       const tools = await client.listTools();
-      expect(tools.tools.map((t) => t.name).sort()).toEqual([
-        "guardian_get_contract",
-        "guardian_get_status",
-      "guardian_report_goal",
-        "guardian_update_goal",
-      ]);
-      const res = (await client.callTool({ name: "guardian_get_contract", arguments: {} })) as {
+      expect(tools.tools.map((t) => t.name).sort()).toEqual(["get_goal", "guardian_change_goal", "update_goal"]);
+      const res = (await client.callTool({ name: "get_goal", arguments: {} })) as {
         content: Array<{ text: string }>;
       };
-      expect(JSON.parse(res.content[0]!.text).goal).toBe("Finish the math utilities");
+      expect(JSON.parse(res.content[0]!.text).goal.objective).toBe("Finish the math utilities");
       await ws.cleanup();
     } catch (err) {
       await ws.cleanup(true);

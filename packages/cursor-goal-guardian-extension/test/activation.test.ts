@@ -122,8 +122,8 @@ describe("activation surface", () => {
     const rulePath = path.join(root, GUARDIAN_RULE_RELATIVE_PATH);
     const rule = await fs.readFile(rulePath, "utf8");
     expect(rule).toContain("alwaysApply: true");
-    expect(rule).toContain("guardian_get_contract");
-    expect(rule).toContain("guardian_report_goal");
+    expect(rule).toContain("guardian_change_goal");
+    expect(rule).toContain("`update_goal`");
     expect(await fileExists(path.join(root, ".cursor", "hooks.json"))).toBe(true);
     expect(await fileExists(path.join(root, ".cursor", "mcp.json"))).toBe(true);
 

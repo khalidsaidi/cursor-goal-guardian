@@ -81,7 +81,7 @@ describe("get-started tour", () => {
 
   it("every step completes from evidence on the tape, not clicks", () => {
     const records: AuditRecord[] = [
-      { ts: at(30), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/guardian_get_status" },
+      { ts: at(30), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/get_goal" },
     ];
     const vm = buildPanelViewModel(baseInputs({ records, commandCenterUsed: true }));
     expect(stepById(vm)).toEqual({ connect: true, ask: true, steer: true, center: true });
@@ -109,13 +109,13 @@ describe("get-started tour", () => {
     expect(stepById(vm).steer).toBe(false);
   });
 
-  it("the rule's session-start get_contract does NOT tick the steer step; only get_status does", () => {
+  it("reporting on the goal does NOT tick the steer step; only reading it with get_goal does", () => {
     const inputs = baseInputs();
     inputs.records = [
-      { ts: at(10), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/guardian_get_contract" },
+      { ts: at(10), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/update_goal" },
     ];
     expect(stepById(buildPanelViewModel(inputs)).steer).toBe(false);
-    inputs.records.push({ ts: at(5), kind: "action.observed", actionType: "mcp", actionValue: "/guardian_get_status" });
+    inputs.records.push({ ts: at(5), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/get_goal" });
     expect(stepById(buildPanelViewModel(inputs)).steer).toBe(true);
   });
 

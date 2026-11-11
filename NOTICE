@@ -12,3 +12,53 @@ Left out because Guardian doesn't use them: domains/coding, domains/eng and
 domains/workspace (RRSI's benchmark instances), assets/ (an overview image),
 and RRSI's third_party/ (archipelago and harbor_terminus2 benchmark runners).
 Guardian's own domain for RRSI is packages/rsi.
+
+This product includes software developed by OpenAI:
+OpenAI Codex
+https://github.com/openai/codex, commit ac54a05
+Licensed under the Apache License, Version 2.0 (see third_party/codex/LICENSE
+and third_party/codex/NOTICE).
+
+third_party/codex holds Codex's own files, unmodified: LICENSE, NOTICE, its
+goal extension (codex-rs/ext/goal: source, prompt templates and tests), and
+the two files that extension's prompts depend on
+(codex-rs/prompts/src/update_plan_instructions.rs and
+codex-rs/core/src/context/user_goal.rs). The rest of Codex is left out.
+Guardian's goal loop sends Codex's continuation and objective-updated prompts
+word for word, and its get_goal and update_goal tools carry Codex's names,
+descriptions and statuses. Codex's Rust runtime is not run: it is built into
+Codex's own agent. scripts/gen-vendored.mjs reads the text out of these files
+into packages/core/src/goal/vendored.generated.ts.
+
+This product includes software developed by DeepSeek:
+DeepSeek Harness
+https://github.com/deepseek-ai/deepseek-harness, commit fcc0ad4
+Licensed under the MIT License (see third_party/deepseek-harness/LICENSE).
+
+third_party/deepseek-harness holds DeepSeek Harness's own files, unmodified:
+LICENSE, its goal packages (packages/goal: goal, goal-round-driver, tool-goal
+and command-goal, with their tests and documentation) and
+docs/subsystems/goal.md. The rest of the harness is left out. Guardian runs
+two of its functions as they are, with types stripped: renderGoalRoundPrompt
+(the <goal_round> prompt) and renderWrapupContext (the closing instructions),
+and uses its blocked-round threshold and refusal message. Its goal service,
+round driver and tool plumbing are not run: they are built on the harness's
+own framework.
+
+This product includes software developed by Scale AI:
+Monitor Red Teaming (MRT), the code of "Reliable Weak-to-Strong Monitoring of
+LLM Agents"
+https://github.com/scaleapi/mrt, commit 3535620
+Licensed under the MIT License (see third_party/mrt/LICENSE).
+
+third_party/mrt holds MRT's own files, unmodified, at their upstream paths:
+LICENSE, README.md, the monitor (utils/pipeline_utils.py), its prompts
+(task_pairs/base_task_definition.py), its transcript format and verdict parser
+(utils/logging_utils.py, utils/analysis_utils.py), llms/base.py, and the
+modules those import. third_party/mrt/VENDORED.md, which is Guardian's, lists
+them and what is left out (the benchmark, the API providers, the experiment
+scripts and notebooks). Guardian runs MRT's hierarchical and sequential
+monitors as they are, with MRT's prompts, on the bundled Python; its adapter is
+packages/monitor. The hybrid score, 0.5 x hierarchical + 0.5 x sequential, is
+one line of Guardian's, from the paper's section 3.5: MRT's repository has no
+code for it.

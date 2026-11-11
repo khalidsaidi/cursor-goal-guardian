@@ -38,12 +38,8 @@ describe("tool surface", () => {
   it("exposes exactly the goal tools — the permit and task machinery is gone", async () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
-    expect(names).toEqual([
-      "guardian_get_contract",
-      "guardian_get_status",
-      "guardian_report_goal",
-      "guardian_update_goal",
-    ]);
+    // Codex's get_goal and update_goal by their own names, and Guardian's own tool for a redirected goal.
+    expect(names).toEqual(["get_goal", "guardian_change_goal", "update_goal"]);
     expect(names).not.toContain("guardian_issue_permit");
     expect(names).not.toContain("guardian_check_step");
     expect(names).not.toContain("guardian_commit_result");
@@ -51,41 +47,35 @@ describe("tool surface", () => {
   });
 });
 
-describe("guardian_get_contract", () => {
-  it("returns the contract with criterion ids and boundaries", async () => {
-    const result = await callJson("guardian_get_contract");
-    expect(result.goal).toBe("Ship the CSV export feature");
-    expect(result.successCriteria).toEqual([{ id: "sc_1", text: "Users can export the report table as CSV" }]);
-    expect(result.constraints).toEqual(["No new dependencies"]);
-    expect(result).not.toHaveProperty("activeTask");
+describe("get_goal", () => {
+  it("carries Codex's description and returns the user's goal with its done-when ids, status and usage", async () => {
+    const tools = await client.listTools();
+    const tool = tools.tools.find((t) => t.name === "get_goal")!;
+    expect(tool.description).toContain("Get the current goal for this thread, including status, budgets, token and elapsed-time usage, and remaining token budget.");
+    const { goal } = (await callJson("get_goal")) as { goal: Record<string, unknown> };
+    expect(goal.objective).toBe("Ship the CSV export feature");
+    expect(goal.done_when).toEqual([{ id: "sc_1", text: "Users can export the report table as CSV" }]);
+    expect(goal.constraints).toEqual(["No new dependencies"]);
+    expect(goal.status).toBe("active");
+    expect(goal.token_budget).toBeNull();
   });
 });
 
-describe("guardian_get_status", () => {
-  it("summarizes the session from the contract and the tape", async () => {
-    const result = await callJson("guardian_get_status");
-    expect(result.goal).toBe("Ship the CSV export feature");
-    expect(result.goalPhase).toBe("active");
-    expect(result).not.toHaveProperty("tasks");
-    expect(result).not.toHaveProperty("counts24h");
-  });
-});
-
-describe("guardian_update_goal", () => {
+describe("guardian_change_goal", () => {
   const contractFile = () => path.join(ws.root, ".cursor", "goal-guardian", "contract.json");
   let saved = "";
   beforeEach(async () => { saved = await fs.readFile(contractFile(), "utf8"); });
   afterEach(async () => { await fs.writeFile(contractFile(), saved); });
 
   it("the user's words become the goal, a list in them the done-when items, and items can be added", async () => {
-    const result = await callJson("guardian_update_goal", {
+    const result = await callJson("guardian_change_goal", {
       user_words: "Ship the CSV export feature, plus filters",
       add_criteria: ["Filter state is preserved in the export"],
     });
     expect(result.goal).toBe("Ship the CSV export feature, plus filters");
     expect((result.criteria as Array<{ id: string; text: string }>).map((c) => c.id)).toEqual(["sc_1"]);
-    expect((await callJson("guardian_get_contract")).goal).toBe("Ship the CSV export feature, plus filters");
-    const listed = await callJson("guardian_update_goal", { user_words: "Ship it.\n- one thing\n- another thing" });
+    expect(((await callJson("get_goal")).goal as { objective: string }).objective).toBe("Ship the CSV export feature, plus filters");
+    const listed = await callJson("guardian_change_goal", { user_words: "Ship it.\n- one thing\n- another thing" });
     expect(listed.goal).toBe("Ship it.");
     expect((listed.criteria as Array<{ text: string }>).map((c) => c.text)).toEqual(["one thing", "another thing"]);
   });
@@ -98,26 +88,35 @@ describe("only the user changes the goal", () => {
   afterEach(async () => { await fs.writeFile(contractFile(), saved); });
 
   const prompts = () => path.join(ws.root, ".cursor", "goal-guardian", "telemetry", "prompts.json");
-  const call = (args: Record<string, unknown>) => client.callTool({ name: "guardian_update_goal", arguments: args }) as Promise<{ isError?: boolean; content: Array<{ text: string }> }>;
+  const call = (args: Record<string, unknown>) => client.callTool({ name: "guardian_change_goal", arguments: args }) as Promise<{ isError?: boolean; content: Array<{ text: string }> }>;
 
   it("refuses words the user never said, and accepts theirs", async () => {
     await fs.mkdir(path.dirname(prompts()), { recursive: true });
     await fs.writeFile(prompts(), JSON.stringify(["please make it JSON export instead"]));
-    const before = String((await callJson("guardian_get_contract")).goal);
+    const before = String(((await callJson("get_goal")).goal as { objective: string }).objective);
     const invented = await call({ user_words: "make it smaller" });
     expect(invented.isError).toBe(true);
     expect(invented.content[0]!.text).toContain("only the user changes");
-    expect(String((await callJson("guardian_get_contract")).goal)).toBe(before);
+    expect(String(((await callJson("get_goal")).goal as { objective: string }).objective)).toBe(before);
     expect((await call({ add_criteria: ["a new item"] })).isError).toBeFalsy();
     expect((await call({ user_words: "make it JSON export instead" })).isError).toBeFalsy();
-    expect(String((await callJson("guardian_get_contract")).goal)).toBe("make it JSON export instead");
+    expect(String(((await callJson("get_goal")).goal as { objective: string }).objective)).toBe("make it JSON export instead");
     await fs.rm(prompts());
   });
 });
 
-describe("guardian_report_goal", () => {
+describe("update_goal", () => {
+  it("carries Codex's description and statuses, plus Guardian's set_aside", async () => {
+    const tool = (await client.listTools()).tools.find((t) => t.name === "update_goal")!;
+    expect(tool.description!.startsWith("Update the existing goal.\nSet status to `paused` only at the user's explicit request to pause this goal, never on your own initiative.")).toBe(true);
+    expect(tool.description).toContain("Guardian adds status `set_aside`");
+    const status = (tool.inputSchema.properties as Record<string, { enum: string[]; description: string }>).status!;
+    expect(status.enum).toEqual(["complete", "blocked", "paused", "set_aside"]);
+    expect(status.description).toContain("Set to `complete` only when the objective is achieved and no required work remains.");
+  });
+
   it("answers at once with what doesn't hold, and records the claim", async () => {
-    const answer = await callJson("guardian_report_goal", { status: "complete", proofs: [{ criterion: "sc_1", command: "make test", quote: "12 passed" }] });
+    const answer = await callJson("update_goal", { status: "complete", proofs: [{ criterion: "sc_1", command: "make test", quote: "12 passed" }] });
     expect(answer.accepted).toBe(false);
     expect(JSON.stringify(answer.unproved)).toContain("no record of `make test`");
     expect(auditOfKind(await readAudit(ws.root), "goal.report").length).toBeGreaterThanOrEqual(1);
@@ -127,11 +126,11 @@ describe("guardian_report_goal", () => {
 describe("robustness", () => {
   it("rejects malformed arguments but stays alive for the next call", async () => {
     const outcome = await client
-      .callTool({ name: "guardian_report_goal", arguments: { status: "teleport" } })
+      .callTool({ name: "update_goal", arguments: { status: "teleport" } })
       .then((res) => res as { isError?: boolean })
       .catch(() => ({ isError: true }));
     expect(outcome.isError).toBe(true);
-    const alive = await callJson("guardian_get_contract");
-    expect(String(alive.goal)).toContain("CSV export");
+    const alive = (await callJson("get_goal")).goal as { objective: string };
+    expect(alive.objective).toContain("CSV export");
   });
 });
