@@ -234,7 +234,7 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
     await appendAudit(root, {
       ts, kind: "goal.review", ...(chat ? { conversationId: chat } : {}), goalHash: hash, reportTs, id,
       ...(outcome.ran ? (skippedCase ? { caseSaved: false, caseSkipped: skippedCase } : { caseSaved: true }) : {}),
-      ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra, monitor,
+      ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra, ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), monitor,
     });
     const lines = objectionLines({ ...outcome, monitor });
     if (lines.length) {
@@ -342,9 +342,12 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     // The reviewer objected to this very report: that goes back as a round, like anything else that doesn't hold.
     if (seq.report.status === "complete" && latest && latest.reportTs === seq.report.ts && objected === latest) reviewer = objectionLines(latest);
     if (seq.report.status === "complete" && !unproved.length && !unclaimed.length && !extras.length && !reviewer.length) {
-      // Reviews ran out with an objection standing: the record decides, and the objection goes to the user.
-      const standing = objected && reviews.length >= MAX_REVIEWS && reviews.indexOf(objected) === reviews.length - 1 ? objectionLines(objected) : [];
-      await end(root, seq, conversationId, hash, "proved", { ...(standing.length ? { reviewer: standing } : {}), proved: result.proved, extras: result.extras, changes: seq.report.changes.map((c) => ({ file: projectPath(root, c.file), serves: c.serves })), ...(seq.report.removed?.length ? { removed: seq.report.removed } : {}) }, input.tokens);
+      // Reviews ran out with an objection: the record decides. If nothing changed since, the objection stands and goes
+      // to the user; if the agent changed the project after it, that final state simply wasn't reviewed again.
+      const last = objected && reviews.length >= MAX_REVIEWS && reviews.indexOf(objected) === reviews.length - 1 ? objected : null;
+      const changedSince = Boolean(last?.tree && seq.tree && last.tree !== seq.tree.fingerprint);
+      const standing = last && !changedSince ? objectionLines(last) : [];
+      await end(root, seq, conversationId, hash, "proved", { ...(standing.length ? { reviewer: standing } : {}), ...(changedSince ? { changedSinceReview: true } : {}), proved: result.proved, extras: result.extras, changes: seq.report.changes.map((c) => ({ file: projectPath(root, c.file), serves: c.serves })), ...(seq.report.removed?.length ? { removed: seq.report.removed } : {}) }, input.tokens);
       return null;
     }
   } else {

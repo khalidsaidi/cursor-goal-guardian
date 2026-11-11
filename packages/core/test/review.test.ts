@@ -203,4 +203,23 @@ describe("the reviewer in the goal loop", () => {
     expect(await kinds(root, "goal.review")).toHaveLength(MAX_REVIEWS);
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "proved", reviewer: expect.arrayContaining(["Reviewer: sc_1 isn't done: the export is a comment, not code"]) }]);
   });
+
+  it("an objection the agent answered by changing the project isn't left standing: that state just wasn't reviewed again", async () => {
+    const root = await doneWork();
+    process.env.GOAL_GUARDIAN_REVIEWER = await answering(OBJECTS);
+    for (let n = 0; n < MAX_REVIEWS; n += 1) {
+      expect((await submitGoalReport(root, report)).accepted).toBe(false);
+      expect(await stop(root, n)).toContain("Reviewer:");
+    }
+    await tick();
+    await fs.writeFile(path.join(root, "a.js"), "three\n");
+    await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js", conversationId: "c1" });
+    await tick();
+    await recordShellOutput(root, { command: "make test", output: "12 passed", durationMs: 0 });
+    expect((await submitGoalReport(root, report)).accepted).toBe(true);
+    expect(await stop(root, MAX_REVIEWS)).toBeNull();
+    const [end] = await kinds(root, "goal.end");
+    expect(end).toMatchObject({ outcome: "proved", changedSinceReview: true });
+    expect(end).not.toHaveProperty("reviewer");
+  });
 });

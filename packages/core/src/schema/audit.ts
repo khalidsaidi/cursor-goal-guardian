@@ -206,6 +206,8 @@ export const goalReviewRecordSchema = z
     seconds: z.number().int().nonnegative(),
     fails: z.array(z.object({ id: z.string(), evidence: z.string() }).strict()),
     extra: z.array(z.object({ file: z.string(), what: z.string() }).strict()),
+    /** The project's state when it was reviewed, so a later change can be told from an objection ignored. */
+    tree: z.string().optional(),
     /** The paper's monitor on the same run: its scores on MRT's 1 to 5 scale and its own summary. */
     monitor: z
       .object({
@@ -283,8 +285,10 @@ export const goalEndRecordSchema = z
     /** Every changed file and the done-when item the agent says it serves, for the user to look over. */
     changes: z.array(z.object({ file: z.string(), serves: z.string() }).strict()).optional(),
     removed: z.array(z.string()).optional(),
-    /** The reviewer's last objections, if it still objected when its reviews ran out: the user's call. */
+    /** The review's last objections, if it still objected when its reviews ran out and nothing changed after: the user's call. */
     reviewer: z.array(z.string()).optional(),
+    /** The last review objected and the project changed afterwards: that final state was not reviewed again. */
+    changedSinceReview: z.boolean().optional(),
     goalFileEdited: z.boolean().optional(),
     /** The agent never reported in this run, so asking again in this chat would only repeat it. */
     noReport: z.boolean().optional(),

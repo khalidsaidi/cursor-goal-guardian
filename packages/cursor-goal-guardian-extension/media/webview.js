@@ -58,12 +58,14 @@
       tokens
     ].filter(Boolean);
     const spent = parts.length ? ` (${parts.join(", ")})` : "";
-    const head = `${GOAL_RUN_WORD[g.outcome]}${g.round ? ` (round ${g.round})` : spent}`;
+    const disputed = g.outcome === "proved" && g.reviewer.length > 0;
+    const head = `${disputed ? "Goal proved on Guardian's record, but the review still objects" : GOAL_RUN_WORD[g.outcome]}${g.round ? ` (round ${g.round})` : spent}`;
     const lines = [
       ...g.detail,
       ...g.changes.filter((c) => c.serves !== "extra").map((c) => `Changed for ${c.serves}: ${c.files.join(", ")}`),
       ...g.extras.map((f) => `Not for any done-when item, your call: ${f}`),
       ...vm.reviews.length ? [] : g.reviewer.map((l) => `Reviewer's opinion: ${l.replace(/^Reviewer: /, "")}`),
+      ...g.changedSinceReview ? ["The last review objected, and the agent changed the project after it. That final state wasn't reviewed again."] : [],
       ...g.goalFileEdited ? ["The agent edited Guardian's goal files during this run."] : []
     ];
     return `<p class="review-line">${escapeHtml(head)}</p>${lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("")}`;

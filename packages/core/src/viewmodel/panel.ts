@@ -30,6 +30,8 @@ export interface PanelViewModel {
   goalRun: {
     ts: string;
     outcome: "working" | "proved" | "blocked" | "set_aside" | "stalled" | "limit" | "stopped";
+    /** The last review objected and the project changed afterwards, unreviewed. */
+    changedSinceReview: boolean;
     round: number | null;
     detail: string[];
     extras: string[];
@@ -135,11 +137,11 @@ function buildGoalRun(records: AuditRecord[]): PanelViewModel["goalRun"] {
   for (let i = records.length - 1; i >= 0; i -= 1) {
     const r = records[i]!;
     if (r.kind === "goal.round") {
-      return { ts: r.ts, outcome: "working", round: r.round, detail: [...r.unproved], extras: r.extras, changes: [], reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: null, seconds: null, tokens: r.tokens ?? null };
+      return { ts: r.ts, outcome: "working", changedSinceReview: false, round: r.round, detail: [...r.unproved], extras: r.extras, changes: [], reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: null, seconds: null, tokens: r.tokens ?? null };
     }
     if (r.kind === "goal.end") {
       const detail = r.outcome === "proved" ? (r.proved ?? []).map(proofLine) : r.reason ? [r.reason] : (r.unproved ?? []);
-      return { ts: r.ts, outcome: r.outcome, round: null, detail, extras: r.extras ?? [], changes: groupChanges(r.changes ?? []), reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: r.rounds ?? null, seconds: r.seconds ?? null, tokens: r.tokens ?? null };
+      return { ts: r.ts, outcome: r.outcome, changedSinceReview: r.changedSinceReview === true, round: null, detail, extras: r.extras ?? [], changes: groupChanges(r.changes ?? []), reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: r.rounds ?? null, seconds: r.seconds ?? null, tokens: r.tokens ?? null };
     }
   }
   return null;
@@ -148,6 +150,8 @@ function buildGoalRun(records: AuditRecord[]): PanelViewModel["goalRun"] {
 function goalStatus(phase: PanelViewModel["goalPhase"], run: PanelViewModel["goalRun"]): PanelViewModel["status"] {
   if (phase === "none") return { lamp: "idle", word: "no goal" };
   if (phase === "paused") return { lamp: "idle", word: "paused" };
+  // The record backs every item, but the review still objects to this very state: not a clean "proved".
+  if (phase === "complete" && run?.outcome === "proved" && run.reviewer.length) return { lamp: "warn", word: "disputed" };
   if (phase === "complete") return run?.outcome === "proved" ? { lamp: "on", word: "proved" } : { lamp: "idle", word: "closed" };
   if (run?.outcome === "blocked") return { lamp: "warn", word: "blocked" };
   if (run?.outcome === "stalled" || run?.outcome === "limit") return { lamp: "warn", word: "stalled" };
