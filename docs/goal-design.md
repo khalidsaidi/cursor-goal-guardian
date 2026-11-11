@@ -42,7 +42,9 @@ A changed goal is announced with Codex's `objective_updated.md`. An accepted `co
 
 The MCP tools are Codex's: `get_goal` and `update_goal`, with Codex's names, descriptions and statuses (`complete`, `blocked`, `paused`). Guardian adds what it needs to check a claim (`proofs`, `changes`, `removed`, `reason`, `user_words`) and the status `set_aside`. `guardian_change_goal` is Guardian's own: neither original lets the user redirect an open goal from chat.
 
-Not run: Codex's Rust runtime, which is built into Codex's own agent, and DeepSeek Harness's goal service, round driver and tool plumbing, which are built on its own framework. In Cursor the stop hook plays the driver's part. DeepSeek Harness's own tool file calls its tools "Codex-shaped": Codex is the upstream of both.
+The goal's state is kept by DeepSeek Harness's real goal service, from its published packages at the vendored version, run with a stand-in agent as its own tests do (`packages/core/src/goal/engine.ts`). Every change of phase, objective, revision or round count is one of its `GoalService` calls, saved as `goal.engine` records and replayed in each new process; `goalPhaseOf` reads its `foldGoal`. A send-back is admitted as one of its goal rounds, against its cap of 256 per goal; Cursor's 20 per message still applies. Its "blocked" phase is resumed by the user's next agent-mode message, which is Guardian's policy; "paused" only from the panel, which is also its own rule.
+
+Not run yet: DeepSeek Harness's round driver and tool plumbing, and Codex's Rust code. Codex's goal crate builds and passes its tests unmodified, and its goal store runs standalone; its continuation scheduling starts Codex's own turns, so in Cursor the stop hook plays that part. DeepSeek Harness's own tool file calls its tools "Codex-shaped": Codex is the upstream of both.
 
 ## Proof
 

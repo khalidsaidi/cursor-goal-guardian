@@ -26,8 +26,11 @@ the two files that extension's prompts depend on
 codex-rs/core/src/context/user_goal.rs). The rest of Codex is left out.
 Guardian's goal loop sends Codex's continuation and objective-updated prompts
 word for word, and its get_goal and update_goal tools carry Codex's names,
-descriptions and statuses. Codex's Rust runtime is not run: it is built into
-Codex's own agent. scripts/gen-vendored.mjs reads the text out of these files
+descriptions and statuses. Codex's Rust code is not run by Guardian today. It
+could be in part: its goal crate builds and passes its 36 tests unmodified, and
+its goal store (codex-state) runs in a standalone 21 MB binary; only its
+continuation scheduling starts Codex's own turns, which Cursor's stop hook has
+to do instead. scripts/gen-vendored.mjs reads the text out of these files
 into packages/core/src/goal/vendored.generated.ts.
 
 This product includes software developed by DeepSeek:
@@ -41,9 +44,16 @@ and command-goal, with their tests and documentation) and
 docs/subsystems/goal.md. The rest of the harness is left out. Guardian runs
 two of its functions as they are, with types stripped: renderGoalRoundPrompt
 (the <goal_round> prompt) and renderWrapupContext (the closing instructions),
-and uses its blocked-round threshold and refusal message. Its goal service,
-round driver and tool plumbing are not run: they are built on the harness's
-own framework.
+and uses its blocked-round threshold and refusal message.
+
+Guardian's goal state is kept by DeepSeek Harness's published packages
+(@deepseek-ai/dsh-goal, dsh-session, dsh-session-projection, dsh-agent and
+dsh-llm 0.2.2-rc.1, the vendored version, and @deepseek-ai/cordis 4.1.0, MIT),
+bundled unmodified except that dsh-llm's run-time read of its own version is
+inlined at build time (scripts/dsh-bundle.mjs). Every change to the goal is
+made by its GoalService and read by its foldGoal; Guardian's adapter is
+packages/core/src/goal/engine.ts. Its round driver and tool plumbing are not
+run yet.
 
 This product includes software developed by Scale AI:
 Monitor Red Teaming (MRT), the code of "Reliable Weak-to-Strong Monitoring of
