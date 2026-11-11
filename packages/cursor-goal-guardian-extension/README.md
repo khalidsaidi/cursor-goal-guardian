@@ -165,7 +165,8 @@ Guardian folder, excluded from git.
 **What it can't do:** it can't tell whether a command really tests what the agent says it
 does (a script that just prints "passed" would get through), or whether a file the agent
 tied to the goal was truly needed. The receipts are there so you can judge that. Outside
-git, changes made by commands go unseen. Whether it reduces drift hasn't been measured. It doesn't run in
+git, changes made by commands go unseen. It has been measured only on a test rig with a stand-in model,
+not on a real Cursor model (the repository's README has the numbers and their limits). It doesn't run in
 headless runs of the command-line agent, where Cursor fires no stop hook, or in Cmd+K, Ask or
 Plan mode. Cursor only runs project hooks in a trusted workspace.
 

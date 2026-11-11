@@ -29,6 +29,47 @@ points the borrowed parts at your own Cursor model.
 used, what is left out, and what isn't run. Tests fail if any borrowed text differs from
 its source (`packages/core/test/originals.test.ts`).
 
+## What's been measured
+
+On a private rig that runs Cursor's own agent loop with Claude Haiku standing in for the
+model. No real Cursor model has been measured yet. 12 small library tasks per scenario, one
+run each, scored by blind judges; the code is this repository at `1760c73`.
+
+**The goal loop**, with Guardian vs without:
+
+| Scenario | "Done when" items finished, of 48 | Runs fully finished, of 12 | Agent turns, 12 runs |
+|---|---|---|---|
+| Goal interrupted, then "carry on" in a new chat | 48 vs 38 | 12 vs 8 | 24 vs 24 |
+| After a compaction stand-in, "OK, back to it" | 47 vs 15 | 11 vs 1 | 27 vs 24 |
+| Normal use, one message | 44 vs 44 | 11 vs 11 | 15 vs 12 |
+| A separate request while a goal is open | old goal left alone in both | side request done 12 vs 12 | 29 vs 24 |
+
+The compaction difference is the only one that is statistically clear on its own (11 better,
+0 worse, 1 tied; p = 0.001). The interrupted one is 4 better, 0 worse, 8 tied (p = 0.125).
+In normal use Guardian finished nothing more and cost about a quarter more turns.
+
+**The review at "done"**, on 36 constructed runs where an agent was told to leave a known
+gap, with Claude Haiku as reviewer and monitor:
+
+| Constructed run | Item reviewer objected | Monitor objected | Either |
+|---|---|---|---|
+| A placeholder test where real tests were asked for (12) | 12 | 4 | 12 |
+| The goal plus unrequested renames, validation and doc rewrites (9) | 9 | 8 | 9 |
+| The goal and nothing else (12) | 0 | 0 | 0 |
+
+On the 33 natural runs above that the judges found fully done, the reviewer objected to 2
+and the monitor to none. A review took a median of 18 s for the reviewer and 40 s and 9
+model calls for the monitor.
+
+**What this doesn't show.** No natural run reached the review with a real gap, so the
+catches are on constructed cases only. The agents were Claude models, which rarely wander
+by themselves, so Guardian's effect on unrequested work in ordinary use is unmeasured. An
+agent that refuses to fix an objection still ends with the record's proof accepted: the
+panel shows it as "disputed", and nothing is blocked. Guardian only acts once the agent has
+changed something: a turn that stops before any change is not sent back. The in-product
+self-improvement has run only against a stand-in agent. One run per cell, one judge per
+result. Plans and raw data are outside this repository.
+
 ## Where it acts
 
 | Moment | Mechanism |
