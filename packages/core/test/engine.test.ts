@@ -232,7 +232,7 @@ describe("the rest of DeepSeek's goal feature runs as their own code", () => {
 
   it("their tools run through their pipeline: create in the user's turn, read back as their JSON", async () => {
     const root = await ws();
-    await engineRun(root, undefined, "none", { type: "user-message" });
+    await engineRun(root, undefined, "none", { type: "user-message", text: "please do the export" });
     const created = await tool(root, "create_goal", { objective: "Add CSV export" });
     expect(created.isError).toBe(false);
     expect(JSON.parse(created.text)).toMatchObject({ goal: { objective: "Add CSV export", phase: "active", revision: 1, roundsStarted: 0, maxGoalRounds: 256 }, activation: "armed" });
@@ -241,7 +241,7 @@ describe("the rest of DeepSeek's goal feature runs as their own code", () => {
 
   it("their authority decides: in a goal round the model can't pause, and can't report blocked before 3 rounds", async () => {
     const root = await ws();
-    await engineRun(root, undefined, "none", { type: "user-message" });
+    await engineRun(root, undefined, "none", { type: "user-message", text: "please do the export" });
     await tool(root, "create_goal", { objective: "Add CSV export" });
     expect((await engineRun(root, undefined, "none", { type: "round" })).prompt).toContain("<goal_round>");
     const goal = (await view(root))!;
@@ -260,9 +260,9 @@ describe("the rest of DeepSeek's goal feature runs as their own code", () => {
 
   it("in a turn the user's message opened, their tool lets the model pause", async () => {
     const root = await ws();
-    await engineRun(root, undefined, "none", { type: "user-message" });
+    await engineRun(root, undefined, "none", { type: "user-message", text: "please do the export" });
     await tool(root, "create_goal", { objective: "Add CSV export" });
-    await engineRun(root, undefined, "none", { type: "user-message" });
+    await engineRun(root, undefined, "none", { type: "user-message", text: "please do the export" });
     const goal = (await view(root))!;
     expect((await tool(root, "update_goal", { goal_id: goal.id, revision: goal.revision, action: "pause" })).isError).toBe(false);
     expect((await view(root))!.phase).toBe("paused");

@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CODEX_TOOLS, codexGetGoal, goalBudget, goalPhaseOf, readGoalRecords, runGoalTool, type EngineToolDefinition } from "@goal-guardian/core";
+import { guardContract, CODEX_TOOLS, codexGetGoal, goalBudget, goalPhaseOf, readGoalRecords, runGoalTool, type EngineToolDefinition } from "@goal-guardian/core";
 import { readContractSafe, workspaceRoot } from "../workspace.js";
 
 /** Codex's get_goal, by its own name and description. Guardian's goal also carries the user's "done when" list. */
@@ -12,6 +12,8 @@ export function registerGetGoal(server: McpServer, theirs: EngineToolDefinition)
     },
     async () => {
       const root = await workspaceRoot();
+      // The goal is the user's: a goal file changed by anything else is put back before it is read or built on.
+      await guardContract(root).catch(() => false);
       const contract = await readContractSafe(root);
       const records = await readGoalRecords(root);
       const status = goalPhaseOf(records, contract);

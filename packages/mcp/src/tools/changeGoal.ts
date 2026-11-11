@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { criteriaFromTexts, ensureGuardianFiles, parseRequest, readUserPrompts, setEngineGoal, setGoalBudget, userSaid, writeContract } from "@goal-guardian/core";
+import { guardContract, criteriaFromTexts, ensureGuardianFiles, parseRequest, readUserPrompts, setEngineGoal, setGoalBudget, userSaid, writeContract } from "@goal-guardian/core";
 import { readContractSafe, workspaceRoot } from "../workspace.js";
 
 /** Guardian's own tool: neither original lets the user redirect an open goal from chat. */
@@ -27,6 +27,8 @@ export function registerChangeGoal(server: McpServer): void {
     },
     async ({ user_words, add_criteria, token_budget }) => {
       const root = await workspaceRoot();
+      // The goal is the user's: a goal file changed by anything else is put back before it is read or built on.
+      await guardContract(root).catch(() => false);
       try {
         if (token_budget !== undefined) {
           // Codex sets a budget only on an explicit request: Guardian asks to see the request, as for any change.

@@ -45,7 +45,7 @@ export async function readGoalRecords(workspaceRoot: string): Promise<AuditRecor
   const out: AuditRecord[] = [];
   if (raw.includes(ENGINE)) await loadEngineFold().catch(() => undefined);
   for (const line of raw.split("\n")) {
-    if (!line.includes(ENGINE) && !line.includes('"goal.round"') && !line.includes('"goal.end"') && !line.includes('"goal.control"') && !line.includes('"goal.notice"') && !line.includes('"goal.set"') && !line.includes('"goal.review"') && !line.includes('"review.feedback"') && !line.includes('"improve.')) continue;
+    if (!line.includes(ENGINE) && !line.includes('"goal.round"') && !line.includes('"goal.end"') && !line.includes('"goal.control"') && !line.includes('"goal.notice"') && !line.includes('"goal.set"') && !line.includes('"goal.authorized"') && !line.includes('"goal.restored"') && !line.includes('"goal.review"') && !line.includes('"review.feedback"') && !line.includes('"improve.')) continue;
     try {
       out.push(auditRecordSchema.parse(JSON.parse(line)));
     } catch {

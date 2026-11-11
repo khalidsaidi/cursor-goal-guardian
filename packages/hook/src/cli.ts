@@ -5,7 +5,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordFileEdit, recordShellFailure, recordShellOutput, recordUserPrompt, replayCase, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
+import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordFileEdit, recordShellFailure, recordShellOutput, recordUserPrompt, replayCase, goalStopFailed, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
 
 /** The stop and prompt hooks answer in their own shapes, not the permission shape. */
 type HookOutput = HookResponse | { followup_message?: string } | { continue: true; additional_context?: string } | { additional_context?: string };
@@ -104,12 +104,13 @@ async function handle(payload: Record<string, unknown>): Promise<HookOutput> {
     }
     case "stop": {
       const { conversationId } = ids(payload);
+      // A failure here must not let the agent go in silence: it is recorded and said, once. Still never blocks.
       const followup = await runGoalStop(root, {
         ...(conversationId ? { conversationId } : {}),
         status: String(payload.status ?? ""),
         loopCount: typeof payload.loop_count === "number" ? payload.loop_count : 0,
         ...turnTokens(payload),
-      }).catch(() => null);
+      }).catch((err: unknown) => goalStopFailed(root, conversationId, err));
       return followup ? { followup_message: followup } : {};
     }
     case "postToolUse":

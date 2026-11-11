@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { writeContract } from "@goal-guardian/core";
 import { makeWorkspace, readAudit, auditOfKind, type TestWorkspace } from "cursor-goal-guardian-testkit";
 import { recordUserPrompt } from "@goal-guardian/core";
 
@@ -68,7 +69,8 @@ describe("guardian_change_goal", () => {
   const contractFile = () => path.join(ws.root, ".cursor", "goal-guardian", "contract.json");
   let saved = "";
   beforeEach(async () => { saved = await fs.readFile(contractFile(), "utf8"); });
-  afterEach(async () => { await fs.writeFile(contractFile(), saved); });
+  // Put back on the user's authority, as the panel would: a raw rewrite of the goal file is something Guardian undoes.
+  afterEach(async () => { await writeContract(ws.root, JSON.parse(saved)); });
 
   it("the user's words become the goal, a list in them the done-when items, and items can be added", async () => {
     // The words have to be the user's own: Cursor's prompt hook reported them.
@@ -91,7 +93,8 @@ describe("only the user changes the goal", () => {
   const contractFile = () => path.join(ws.root, ".cursor", "goal-guardian", "contract.json");
   let saved = "";
   beforeEach(async () => { saved = await fs.readFile(contractFile(), "utf8"); });
-  afterEach(async () => { await fs.writeFile(contractFile(), saved); });
+  // Put back on the user's authority, as the panel would: a raw rewrite of the goal file is something Guardian undoes.
+  afterEach(async () => { await writeContract(ws.root, JSON.parse(saved)); });
 
   const prompts = () => path.join(ws.root, ".cursor", "goal-guardian", "telemetry", "prompts.json");
   const call = (args: Record<string, unknown>) => client.callTool({ name: "guardian_change_goal", arguments: args }) as Promise<{ isError?: boolean; content: Array<{ text: string }> }>;

@@ -143,6 +143,31 @@ export const goalSetRecordSchema = z
   })
   .strict();
 
+/**
+ * The goal as Guardian itself last wrote it, on the user's authority: their request, their change in chat checked
+ * against their words, or the panel. The contract file is compared with this; a difference nobody authorised is undone.
+ */
+export const goalAuthorizedRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.authorized"),
+    goal: z.string(),
+    successCriteria: z.array(z.object({ id: z.string(), text: z.string() }).strict()),
+    constraints: z.array(z.string()),
+  })
+  .strict();
+
+/** The contract file had been changed by something other than the user, and was put back. */
+export const goalRestoredRecordSchema = z
+  .object({
+    ...base,
+    kind: z.literal("goal.restored"),
+    conversationId: z.string().optional(),
+    /** What the file said, briefly, so the user can see what was attempted. */
+    found: z.string(),
+  })
+  .strict();
+
 export const goalNoticeRecordSchema = z
   .object({
     ...base,
@@ -183,6 +208,14 @@ export const goalRoundRecordSchema = z
     /** What the independent reviewer objected to, sent back with this round. */
     reviewer: z.array(z.string()).optional(),
     goalFileEdited: z.boolean().optional(),
+    /** What each part said that let this round start: Guardian's own gates, DeepSeek's round driver, Codex's scheduling. */
+    decidedBy: z.object({ guardian: z.string(), deepseek: z.string(), codex: z.string() }).strict().optional(),
+    /**
+     * Guardian called DeepSeek's `resume` to arm the goal in this process. Their armed state lives in one process and
+     * every hook call is a new one, so their driver can't start a round without it; Guardian does it only when a real
+     * message from the user is on their log since the goal last stopped.
+     */
+    armedByGuardian: z.boolean().optional(),
   })
   .strict();
 
@@ -389,6 +422,8 @@ export const auditRecordSchema = z.discriminatedUnion("kind", [
   goalControlRecordSchema,
   goalNoticeRecordSchema,
   goalSetRecordSchema,
+  goalAuthorizedRecordSchema,
+  goalRestoredRecordSchema,
   goalRoundRecordSchema,
   goalEndRecordSchema,
   goalReviewRecordSchema,

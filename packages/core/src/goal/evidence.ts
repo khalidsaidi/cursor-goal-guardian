@@ -10,7 +10,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { GoalProof } from "../schema/audit.js";
-import { projectPath } from "./evaluate.js";
+import { absentPathsIn, projectPath } from "./evaluate.js";
 import type { ShellOutput } from "./record.js";
 import type { TrajectoryMessage } from "./trajectory.js";
 
@@ -34,21 +34,10 @@ const step = (call: string, result: string): TrajectoryMessage[] => [
   { role: "tool", content: result, tool_calls: null },
 ];
 
-/** Words in a command that read as paths, in any language: something with a slash or a short extension, not an option or a URL. */
-function pathsNamedIn(command: string): string[] {
-  const out = new Set<string>();
-  for (const raw of command.split(/[\s"'`;|&<>()=]+/)) {
-    const word = raw.replace(/^\.\//, "");
-    if (!word || word.startsWith("-") || word.includes("://") || word.includes("*") || word.includes("$")) continue;
-    if (/^[\w@.+-]+(\/[\w@.+-]+)+$/.test(word) || /^[\w@+-][\w@.+-]*\.[A-Za-z][A-Za-z0-9]{0,5}$/.test(word)) out.add(word);
-  }
-  return [...out].slice(0, 12);
-}
-
 function commandEvidence(root: string, proof: GoalProof, outputs: ShellOutput[]): string {
   const command = squash(proof.command ?? "");
   const runs = outputs.filter((o) => squash(o.command) === command);
-  const missing = pathsNamedIn(command).filter((p) => !fs.existsSync(path.join(root, p)));
+  const missing = absentPathsIn(root, command);
   const named = missing.length ? `\nNamed in the command and ABSENT from the project: ${missing.join(", ")}` : "";
   if (!runs.length) return `ABSENT: Guardian's record of this session has no run of this command.${named}`;
   const last = runs[runs.length - 1]!;

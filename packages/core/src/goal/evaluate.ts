@@ -3,6 +3,8 @@
  * the agent names the proof, Guardian confirms it happened. A command must be on the record, have started after
  * the last edit, and have printed the quoted text. A file must exist and contain the quoted text.
  */
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { Contract } from "../schema/contract.js";
@@ -18,6 +20,68 @@ const MIN_QUOTE = 4;
 
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*[A-Za-z]`, "g");
 const normalize = (s: string): string => s.replace(ANSI, "").replace(/\s+/g, " ").trim();
+
+/** The command's words as a shell would split them; anything that was quoted is marked, since quoted text is often code, not a path. */
+function shellWords(command: string): Array<{ text: string; quoted: boolean }> {
+  const out: Array<{ text: string; quoted: boolean }> = [];
+  let cur = "";
+  let quoted = false;
+  let quote: string | null = null;
+  const push = (): void => {
+    if (cur) out.push({ text: cur, quoted });
+    cur = "";
+    quoted = false;
+  };
+  for (const ch of command) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else cur += ch;
+    } else if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      quoted = true;
+    } else if (/\s/.test(ch) || ";|&<>()".includes(ch)) push();
+    else cur += ch;
+  }
+  push();
+  return out;
+}
+
+const PATH_LIKE = /^(?:[\w@.+-]+(?:\/[\w@.+-]+)+|[\w@+-][\w@.+-]*\.[A-Za-z][A-Za-z0-9]{0,5})$/;
+const PROJECT_FILES_MAX = 50_000;
+
+/** Every file in the project, tracked or not, where git can list them. */
+function projectFiles(root: string): string[] | null {
+  const res = spawnSync("git", ["ls-files", "-co", "--exclude-standard", "-z"], { cwd: root, encoding: "utf8", timeout: 5000, maxBuffer: 50_000_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+  if (res.status !== 0 || res.error) return null;
+  return res.stdout.split("\0").filter(Boolean).slice(0, PROJECT_FILES_MAX);
+}
+
+/**
+ * Paths a command names that exist nowhere in the project, in any language: an unquoted word with a slash or a short
+ * extension, not an option, a URL, a pattern, a variable or a redirect target. A name counts as present if a file or
+ * folder by that path exists from the root, or anywhere in the project (the command may run from a subfolder).
+ */
+export function absentPathsIn(root: string, command: string): string[] {
+  const words = shellWords(command.replace(/\d*>>?\s*\S+/g, " "));
+  const named = new Set<string>();
+  for (const w of words) {
+    const word = w.text.replace(/^\.\//, "").replace(/\/+$/, "");
+    if (w.quoted || !word || word.startsWith("-") || word.includes("://") || /[*?$={}~]/.test(word) || word.startsWith("/") || word.includes("..")) continue;
+    if (PATH_LIKE.test(word)) named.add(word);
+  }
+  if (!named.size) return [];
+  let files: string[] | null | undefined;
+  const absent: string[] = [];
+  for (const p of [...named].slice(0, 12)) {
+    if (fs.existsSync(path.join(root, p))) continue;
+    files ??= projectFiles(root);
+    // Outside git there is no list to look through: only what the root itself lacks can be said, so say nothing.
+    if (files === null) continue;
+    if (files.some((f) => f === p || f.endsWith(`/${p}`) || f.startsWith(`${p}/`) || f.includes(`/${p}/`))) continue;
+    absent.push(p);
+  }
+  return absent;
+}
 
 export interface GoalEvaluation {
   /** Why a "done when" item isn't proved, one line each. */
@@ -54,6 +118,9 @@ async function checkProof(root: string, proof: GoalProof, outputs: ShellOutput[]
     const latest = fresh[fresh.length - 1]!;
     if (!normalize(latest.output).includes(quote)) return `the latest run of \`${command}\` did not print "${quote}"`;
     if (tree && latest.tree && latest.tree !== tree) return `files changed after \`${command}\` last ran: run it again`;
+    // A command that names a file the project doesn't have proves nothing about the project, whatever it printed.
+    const absent = absentPathsIn(root, command);
+    if (absent.length) return `\`${command}\` names ${absent.join(", ")}, which ${absent.length === 1 ? "is" : "are"}n't in the project`;
     return null;
   }
   if (proof.file !== undefined) {

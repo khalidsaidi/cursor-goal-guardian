@@ -35,6 +35,8 @@ export interface ReviewOutcome {
 export const REVIEW_BUDGET_MS = 90_000;
 /** Reviews per run on a goal; after that the record alone decides and objections go to the user. */
 export const MAX_REVIEWS = 2;
+/** The most reviews one run can have in all: the extra ones are for a project the agent changed after an objection. */
+export const REVIEW_HARD_LIMIT = 4;
 
 const MAX_ITEMS = 8;
 const TEXT_MAX = 300;

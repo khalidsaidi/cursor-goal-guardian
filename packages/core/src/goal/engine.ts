@@ -36,7 +36,7 @@ export type EngineOp =
   /** A new goal even when the objective reads the same as the completed one. */
   | { type: "create" }
   /** The user sent a message: a turn opens with it, attributed to the user. */
-  | { type: "user-message" }
+  | { type: "user-message"; text: string }
   /** `by: "agent"` goes through their update_goal tool and its authority; otherwise it is the user's own control (their /goal command). */
   | { type: "pause"; by?: "agent" }
   | { type: "resume" }
@@ -66,6 +66,10 @@ export interface EngineResult {
   prompt?: string;
   /** Why no round started, when the reason is on Guardian's side of the adapter (no user message on their log). */
   declined?: string;
+  /** Guardian armed the goal in this process with their `resume` so their driver could start the round. */
+  rearmed?: boolean;
+  /** Guardian recorded their round-limit block through their service, because their `resume` refused at the cap before their driver could. */
+  roundLimitByGuardian?: boolean;
   tool?: EngineToolResult;
   command?: { kind: string; text: string };
 }
@@ -181,8 +185,6 @@ const LOCK_WAIT_MS = 4000;
 const LOCK_STALE_MS = 15_000;
 /** How long their driver gets to hand over a round prompt once the stand-in is idle and the goal armed. */
 const DRIVER_WAIT_MS = 1500;
-/** The user's words stay in Guardian's own prompt record; their session only needs to know a human spoke. */
-const USER_TURN_TEXT = "(a message from the user)";
 
 /** One change at a time per workspace: the hook and the MCP server are separate processes. */
 async function withLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
@@ -315,11 +317,12 @@ function closeTurn(o: Open): void {
 }
 
 /** A turn that starts with the user's message, as their agent records one. */
-function openUserTurn(o: Open): void {
+function openUserTurn(o: Open, text: string): void {
   closeTurn(o);
   o.setStatus("running");
   o.session.append("turn/start", { turn: nextTurn(o) });
-  o.session.append("user/message", o.t.createUserMessage({ content: [{ type: "text", text: USER_TURN_TEXT }], source: { kind: "user" } }), { surfaceOp: "append" });
+  // The user's own message, as Cursor's prompt hook reported it: nothing stands in for it.
+  o.session.append("user/message", o.t.createUserMessage({ content: [{ type: "text", text }], source: { kind: "user" } }), { surfaceOp: "append" });
 }
 
 /** The open turn was opened by a message Cursor's hook reported from the user: their "direct human request". */
@@ -411,7 +414,7 @@ async function editGoal(o: Open, goal: any, objective: string): Promise<void> {
  * a human-authorized `resume` arms it again. The edge Guardian uses is on their log: a real message from the user,
  * recorded at Cursor's prompt hook, since the goal last stopped. With none, nothing is armed and no round starts.
  */
-async function driveRound(o: Open, out: { declined?: string }): Promise<string | undefined> {
+async function driveRound(o: Open, out: { declined?: string; rearmed?: boolean; roundLimitByGuardian?: boolean }): Promise<string | undefined> {
   closeTurn(o);
   o.setStatus("idle");
   o.followups.length = 0;
@@ -424,14 +427,21 @@ async function driveRound(o: Open, out: { declined?: string }): Promise<string |
       out.declined = "their round driver starts no round: the goal is disarmed, and no message from the user is on their log since it last stopped";
       return undefined;
     }
+    // This is Guardian's doing, not theirs, and the record says so. Their armed state lives in one process; every
+    // hook call is a new process, which their rules treat like a session resume: disarmed until a human-authorized
+    // resume. Without this call their driver could never start a round under Cursor. It is made only when a real
+    // message from the user is on their log since the goal last stopped (checked above), once per stop.
     try {
       o.goals.resume(o.agent, { id: goal.id, revision: goal.revision });
+      out.rearmed = true;
     } catch (err) {
-      // Their resume refuses a goal that used all its rounds, before their driver can block it. Their driver's own
-      // words and code for that case are recorded through their service.
+      // Their resume refuses a goal that used all its rounds, so their driver, which would block it with its
+      // round-limit code, never gets to run. Guardian records that same block through their service, with their
+      // code and their message, and marks it as Guardian's doing.
       if (goal.roundsStarted >= goal.maxGoalRounds) {
         o.setStatus("running");
         o.goals.block(o.agent, { id: goal.id, revision: goal.revision }, { code: "round-limit", message: `Goal reached its configured limit of ${goal.maxGoalRounds} rounds.` });
+        out.roundLimitByGuardian = true;
         return undefined;
       }
       throw err;
@@ -476,11 +486,11 @@ export async function engineRun(root: string, objective: string | undefined, leg
       o = await open(seed, full);
     }
     const { goals, agent } = o;
-    const out: { prompt?: string; declined?: string; tool?: EngineToolResult; command?: { kind: string; text: string } } = {};
+    const out: { prompt?: string; declined?: string; rearmed?: boolean; roundLimitByGuardian?: boolean; tool?: EngineToolResult; command?: { kind: string; text: string } } = {};
     const hadGoalBefore = seed.some((e) => e.type === "goal/change");
     const ref = (g: any): { id: string; revision: number } => ({ id: g.id, revision: g.revision });
     try {
-      if (op.type === "user-message") openUserTurn(o);
+      if (op.type === "user-message") openUserTurn(o, op.text);
       let carried: "pause" | "complete" | null = null;
       if (objective !== undefined) {
         const want = objective.trim();

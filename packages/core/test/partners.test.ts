@@ -153,15 +153,17 @@ describe("two goal keepers side by side", () => {
     expect(await kinds(other, "goal.refused")).toMatchObject([{ change: "blocked", by: "codex" }]);
   }, 30_000);
 
-  it("if Codex's own scheduling starts no continuation because its goal is stopped, the run stops", async () => {
+  it("if Codex's goal is stopped while DeepSeek's is active, the two disagree: the run ends unverified and the agent is told", async () => {
     noReviewer();
     const codex = await fakeCodex();
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
     await doneWork(root);
     codex.set({ continue: false, status: "paused" });
-    expect(await stop(root)).toBeNull();
-    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "stopped", reason: "Codex's scheduling started no continuation: its goal is paused" }]);
+    const said = await stop(root);
+    expect(said).toContain("Codex's scheduling started no continuation: its goal is paused while DeepSeek's is active");
+    expect(said).toContain("can't keep this goal going or record it as proved");
+    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "unverified", by: "codex", reason: "Codex's scheduling started no continuation: its goal is paused while DeepSeek's is active" }]);
     expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "continue", by: "codex" }]);
   }, 30_000);
 

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendAudit, defaultContract, getGuardianPaths, goalPhaseOf, readContractSafe, makeReviewCopy, nowIso, parseReview, readAuditTail, recordShellOutput, recordUserPrompt,
-  resolveReviewer, reviewLines, reviewPrompt, runGoalStop, runReview, submitGoalReport, MAX_REVIEWS, REVIEW_PROMPT,
+  resolveReviewer, reviewLines, reviewPrompt, runGoalStop, runReview, submitGoalReport, MAX_REVIEWS, REVIEW_HARD_LIMIT, REVIEW_PROMPT,
 } from "../src/index.js";
 
 const made: string[] = [];
@@ -206,23 +206,48 @@ describe("the reviewer in the goal loop", () => {
     expect(goalPhaseOf(await readAuditTail(root, 1000), await readContractSafe(root))).toBe("active");
   });
 
-  it("an objection the agent answered by changing the project isn't left standing: that state just wasn't reviewed again", async () => {
+  const change = async (root: string, text: string): Promise<void> => {
+    await tick();
+    await fs.writeFile(path.join(root, "a.js"), text);
+    await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js", conversationId: "c1" });
+    await tick();
+    await recordShellOutput(root, { command: "make test", output: "12 passed", durationMs: 0 });
+  };
+
+  it("an objection can't be escaped by changing something else: the changed project is reviewed again, past the usual limit", async () => {
     const root = await doneWork();
     process.env.GOAL_GUARDIAN_REVIEWER = await answering(OBJECTS);
     for (let n = 0; n < MAX_REVIEWS; n += 1) {
       expect((await submitGoalReport(root, report)).accepted).toBe(false);
       expect(await stop(root, n)).toContain("Reviewer:");
     }
-    await tick();
-    await fs.writeFile(path.join(root, "a.js"), "three\n");
-    await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js", conversationId: "c1" });
-    await tick();
-    await recordShellOutput(root, { command: "make test", output: "12 passed", durationMs: 0 });
-    // Both goal keepers accept it, but this state was never reviewed: complete and unchecked, not proved.
-    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
-    expect(await stop(root, MAX_REVIEWS)).toBeNull();
+    // A cosmetic change after two objections gets a fresh review, which still objects: not accepted, not "unchecked".
+    await change(root, "three\n");
+    const third = await submitGoalReport(root, report);
+    expect(third).toMatchObject({ accepted: false });
+    expect(third.outcome).toBeUndefined();
+    expect(third.unproved).toEqual(expect.arrayContaining([expect.stringContaining("Reviewer: sc_1 isn't done")]));
+    expect(await kinds(root, "goal.review")).toHaveLength(MAX_REVIEWS + 1);
+    expect(await stop(root, MAX_REVIEWS)).toContain("Reviewer:");
+    // The same state reported again is disputed at once: the review that saw it objected.
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, outcome: "disputed" });
+    expect(await kinds(root, "goal.review")).toHaveLength(MAX_REVIEWS + 1);
+    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "disputed", reviewer: expect.arrayContaining(["Reviewer: sc_1 isn't done: the export is a comment, not code"]) }]);
+  });
+
+  it("the cost is bounded: after the hard limit of reviews a still-objected run ends disputed, never unchecked", async () => {
+    const root = await doneWork();
+    process.env.GOAL_GUARDIAN_REVIEWER = await answering(OBJECTS);
+    for (let n = 0; n < REVIEW_HARD_LIMIT; n += 1) {
+      if (n >= MAX_REVIEWS) await change(root, `state ${n}\n`);
+      expect((await submitGoalReport(root, report)).accepted).toBe(false);
+      expect(await stop(root, n)).toContain("Reviewer:");
+    }
+    expect(await kinds(root, "goal.review")).toHaveLength(REVIEW_HARD_LIMIT);
+    await change(root, "one more cosmetic change\n");
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, outcome: "disputed" });
+    expect(await kinds(root, "goal.review")).toHaveLength(REVIEW_HARD_LIMIT);
     const [end] = await kinds(root, "goal.end");
-    expect(end).toMatchObject({ outcome: "unchecked", changedSinceReview: true, skipped: [expect.stringContaining("wasn't reviewed again")] });
-    expect(end).not.toHaveProperty("reviewer");
+    expect(end).toMatchObject({ outcome: "disputed", changedSinceReview: true, reason: expect.stringContaining("no reviews are left") });
   });
 });

@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  appendAudit, captureGoal, criteriaFromTexts, defaultContract, evaluateReport, parseRequest, runGoalStop, GOAL_MAX_ROUNDS, getGuardianPaths, nowIso, readShellOutputs, readShrunkFiles, readUserPrompts,
+  appendAudit, captureGoal, criteriaFromTexts, defaultContract, evaluateReport, writeContract, parseRequest, runGoalStop, GOAL_MAX_ROUNDS, getGuardianPaths, nowIso, readShellOutputs, readShrunkFiles, readUserPrompts,
   controlGoal, goalMidTurnNotice, goalPhaseOf, goalTurnContext, lastActiveConversation, recordShellFailure, projectPath, readAuditTail, readContractSafe, readTree, recordShellOutput, recordUserPrompt, runGoalStop, submitGoalReport, userSaid, type GoalReportInput,
 } from "../src/index.js";
 
@@ -23,7 +23,8 @@ async function ws(goal = "Add CSV export", criteria = ["the export test passes"]
   await recordUserPrompt(root, goal, "c1", "agent");
   return root;
 }
-const setGoal = (root: string, goal: string, criteria: string[]) => fs.writeFile(getGuardianPaths(root).contract, JSON.stringify({ ...defaultContract(), goal, successCriteria: criteriaFromTexts(criteria), constraints: [] }));
+// The user's own change of the goal (the panel, or their words in chat): written on their authority, as those paths do.
+const setGoal = (root: string, goal: string, criteria: string[]) => writeContract(root, { ...defaultContract(), goal, successCriteria: criteriaFromTexts(criteria), constraints: [] });
 const tick = () => new Promise((r) => setTimeout(r, 3));
 const edit = async (root: string, file: string, conversationId = "c1") => {
   await tick();

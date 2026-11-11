@@ -12,6 +12,11 @@ import { appendLine, writeJsonAtomic } from "../fsutil.js";
 import { nowIso } from "../clock.js";
 import { getGuardianPaths } from "../paths.js";
 import { engineRun } from "./engine.js";
+import { engineView } from "./engineFold.js";
+import { readGoalRecords } from "../audit/log.js";
+import { readContractSafe } from "../safeReaders.js";
+import { codexGoals, resolveCodexGoals } from "./codexGoals.js";
+import { codexUserSet, codexUserStatus } from "./partners.js";
 
 const HEAD = 600;
 const TAIL = 3400;
@@ -198,9 +203,28 @@ export async function recordUserPrompt(root: string, prompt: string, conversatio
   await keepOutOfGit(root);
   const prompts = await readUserPrompts(root);
   await writeJsonAtomic(getGuardianPaths(root).prompts, [...(prompts ?? []), prompt.slice(0, MAX_PROMPT)].slice(-KEEP_PROMPTS));
-  // DeepSeek's goal tools decide for themselves whether a call comes from "a direct human turn": their session is
-  // told that the user spoke. The words stay in Guardian's own record above.
-  await engineRun(root, undefined, "none", { type: "user-message" }).catch(() => undefined);
+  // DeepSeek's goal tools decide for themselves whether a call comes from "a direct human turn": their session gets
+  // the user's own message, as Cursor reported it.
+  await engineRun(root, undefined, "none", { type: "user-message", text: prompt.slice(0, MAX_PROMPT) }).catch(() => undefined);
+  await resyncCodexOnUserMessage(root).catch(() => undefined);
+}
+
+/**
+ * A real message from the user is the one thing that authorises putting the goal into Codex's store when the two
+ * goal keepers have come apart: its store holds no goal or another one (the goal was typed in the panel, or the
+ * store was emptied), or its goal stopped while DeepSeek's is open. Guardian never repairs that at any other time.
+ */
+async function resyncCodexOnUserMessage(root: string): Promise<void> {
+  if (!resolveCodexGoals()) return;
+  const contract = await readContractSafe(root);
+  if (!contract.goal.trim()) return;
+  const view = engineView(await readGoalRecords(root));
+  // Closed or paused by whoever had the right to: a message alone doesn't reopen it.
+  if (view && (view.phase === "complete" || view.phase === "paused") && view.objective === contract.goal.trim()) return;
+  const held = await codexGoals(root, { op: "get" });
+  if (!held.ran) return;
+  if (!held.goal || (held.goal.objective.trim() !== contract.goal.trim() && held.goal.status === "complete")) await codexUserSet(root, contract.goal, true);
+  else if (held.goal.objective.trim() === contract.goal.trim() && (held.goal.status === "paused" || held.goal.status === "blocked")) await codexUserStatus(root, "active");
 }
 
 /** The user's latest messages, or null where Cursor's hooks never reported any (nothing to check against). */
