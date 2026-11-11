@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { CODEX_TOOLS, MONITOR_BUDGET_WITH_PROGRESS_MS, submitGoalReport } from "@goal-guardian/core";
+import { CODEX_TOOLS, MONITOR_BUDGET_WITH_PROGRESS_MS, submitGoalReport, updateGoalByTool, type EngineToolDefinition } from "@goal-guardian/core";
+import { theirField } from "./theirs.js";
 import { workspaceRoot } from "../workspace.js";
 
 /** Guardian's own status: neither original has it. */
@@ -16,16 +17,26 @@ const GUARDIAN_PART = [
   "With status `blocked`, pass reason.",
   "Guardian adds status `set_aside`: the user's latest message limited the work to part of the goal or asked for something else. Pass their words in user_words. It covers that message only, and a request to continue or finish never counts.",
   "With status `paused`, pass the user's request to pause in user_words.",
+  "The call then goes to DeepSeek Harness's own update_goal, which decides by its own rules and whose answer comes back in `their`. You can call it in its own shape too (goal_id, revision, action); goal_id and revision default to the current goal's. For `complete`, its tool runs once Guardian's check has passed and the turn ends.",
 ].join("\n");
 
-/** Codex's update_goal, by its own name, description and statuses, plus what Guardian needs to check the claim. */
-export function registerUpdateGoal(server: McpServer): void {
+/**
+ * update_goal: Codex's name, description and statuses and DeepSeek Harness's description and parameters, side by
+ * side, plus what Guardian needs to check the claim. The call is carried out by DeepSeek's own tool.
+ */
+export function registerUpdateGoal(server: McpServer, theirs: EngineToolDefinition): void {
   server.registerTool(
     CODEX_TOOLS.update.name,
     {
-      description: `${GUARDIAN_LEAD}\n\n${CODEX_TOOLS.update.description}\n\n${GUARDIAN_PART}`,
+      description: `${GUARDIAN_LEAD}\n\n${CODEX_TOOLS.update.description}\n\nDeepSeek Harness: ${theirs.description}\n\n${GUARDIAN_PART}`,
       inputSchema: {
-        status: z.enum(STATUSES).describe(`${CODEX_TOOLS.update.statusDescription} Guardian adds \`${SET_ASIDE}\`, see the tool description.`),
+        status: z.enum(STATUSES).optional().describe(`${CODEX_TOOLS.update.statusDescription} Guardian adds \`${SET_ASIDE}\`, see the tool description. Give this or DeepSeek's \`action\`.`),
+        goal_id: theirField(theirs, "goal_id"),
+        revision: theirField(theirs, "revision"),
+        action: theirField(theirs, "action"),
+        objective: theirField(theirs, "objective"),
+        max_goal_rounds: theirField(theirs, "max_goal_rounds"),
+        blocked_reason: theirField(theirs, "blocked_reason"),
         proofs: z
           .array(
             z.object({
@@ -47,8 +58,17 @@ export function registerUpdateGoal(server: McpServer): void {
         user_words: z.string().optional().describe("set_aside or paused: the user's request, quoted exactly from their latest message."),
       },
     },
-    async ({ status, proofs, changes, removed, reason, user_words }, extra) => {
+    async ({ status, proofs, changes, removed, reason, user_words, goal_id, revision, action, objective, max_goal_rounds, blocked_reason }, extra) => {
       const root = await workspaceRoot();
+      // DeepSeek's action, or Codex's status read as one. Their edit and resume have no report to check: they go
+      // straight to their tool, which decides.
+      const act = (action as string | undefined) ?? (status === "paused" ? "pause" : status);
+      if (!act) return { isError: true, content: [{ type: "text" as const, text: "Give a status (Codex's shape) or an action (DeepSeek's shape)." }] };
+      if (act === "edit" || act === "resume") {
+        const out = await updateGoalByTool(root, { action: act, ...(typeof goal_id === "string" ? { goal_id } : {}), ...(typeof revision === "number" ? { revision } : {}), ...(typeof objective === "string" ? { objective } : {}), ...(typeof max_goal_rounds === "number" ? { max_goal_rounds } : {}) });
+        return { ...(out.isError ? { isError: true } : {}), content: [{ type: "text" as const, text: out.text }] };
+      }
+      const reported = act === "pause" ? "paused" : act;
       // A review can outlast Cursor's 120 s of silence: where the client asked for progress, keep the call alive.
       const token = extra._meta?.progressToken;
       let beats = 0;
@@ -58,11 +78,11 @@ export function registerUpdateGoal(server: McpServer): void {
       }, 20_000);
       const clean = proofs.map((p) => Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined))) as Array<{ criterion: string }>;
       const answer = await submitGoalReport(root, {
-        status: status as "complete" | "blocked" | "set_aside" | "paused",
+        status: reported as "complete" | "blocked" | "set_aside" | "paused",
         proofs: clean,
         changes,
         ...(removed !== undefined ? { removed } : {}),
-        ...(reason !== undefined ? { reason } : {}),
+        ...(reason !== undefined ? { reason } : typeof blocked_reason === "string" ? { reason: blocked_reason } : {}),
         ...(user_words !== undefined ? { userWords: user_words } : {}),
       }, token === undefined ? {} : { monitorBudgetMs: MONITOR_BUDGET_WITH_PROGRESS_MS }).finally(() => {
         if (beat) clearInterval(beat);

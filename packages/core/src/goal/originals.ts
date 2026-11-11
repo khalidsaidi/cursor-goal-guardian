@@ -87,5 +87,11 @@ export function deepseekBlockThreshold(currentRound: number): string {
   return vendored.deepseekBlockThresholdMessage({ blockedAfterConsecutiveRounds: BLOCKED_AFTER_CONSECUTIVE_ROUNDS }, { goal: { roundsStarted: currentRound } }) as string;
 }
 
+/**
+ * DeepSeek Harness's system-prompt goal policy (tool-goal/src/index.ts `guidance`), from its own function, with its
+ * default threshold. It is the text their tool package registers as the `tool:goal` system-prompt section.
+ */
+export const DEEPSEEK_GOAL_POLICY = vendored.guidance(BLOCKED_AFTER_CONSECUTIVE_ROUNDS) as string;
+
 /** The blocker code DeepSeek Harness's round driver records when the round cap is reached. */
 export const ROUND_LIMIT_CODE = vendored.DEEPSEEK_ROUND_LIMIT_CODE as string;

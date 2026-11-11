@@ -267,16 +267,32 @@ describe("the goal loop: extra work", () => {
 });
 
 describe("the goal loop: how a run ends", () => {
-  it("blocked is refused before turn 3, then accepted and recorded", async () => {
+  it("in a goal round, blocked is refused by DeepSeek's tool before 3 rounds, then accepted and recorded", async () => {
     const root = await ws();
     await edit(root, "a.js");
     const blocked: GoalReportInput = { status: "blocked", proofs: [], changes: [], reason: "needs the API key" };
-    expect((await submitGoalReport(root, blocked)).accepted).toBe(false);
-    expect(await stop(root)).toContain("Blocked isn't accepted yet");
-    expect(await stop(root, 1)).not.toBeNull();
-    expect((await submitGoalReport(root, blocked)).accepted).toBe(true);
-    expect(await stop(root, 2)).toBeNull();
+    expect(await stop(root)).not.toBeNull();
+    const early = await submitGoalReport(root, blocked);
+    expect(early).toMatchObject({ accepted: false, message: "blocked requires at least 3 consecutive goal rounds; current round is 1" });
+    await edit(root, "a.js");
+    expect(await stop(root, 1)).toContain("Blocked isn't accepted yet");
+    await edit(root, "b.js");
+    expect(await stop(root, 2)).not.toBeNull();
+    const late = await submitGoalReport(root, blocked);
+    expect(late.accepted).toBe(true);
+    expect(late.message).toContain("<goal_blocked>");
+    expect(late.message).toContain('Blocked: "needs the API key"');
+    expect(await stop(root, 3)).toBeNull();
     expect(await ends(root)).toMatchObject([{ outcome: "blocked", reason: "needs the API key" }]);
+  });
+
+  it("in the turn the user's own message opened, DeepSeek's tool accepts blocked at once", async () => {
+    const root = await ws();
+    await recordUserPrompt(root, "add the export", "c1", "agent");
+    await edit(root, "a.js");
+    expect((await submitGoalReport(root, { status: "blocked", proofs: [], changes: [], reason: "needs the API key" })).accepted).toBe(true);
+    expect(await stop(root)).toBeNull();
+    expect(await ends(root)).toMatchObject([{ outcome: "blocked" }]);
   });
 
   it("blocked needs a reason", async () => {
@@ -287,8 +303,8 @@ describe("the goal loop: how a run ends", () => {
   it("a blocked claim from an earlier turn doesn't end a later one", async () => {
     const root = await ws();
     await edit(root, "a.js");
-    await submitGoalReport(root, { status: "blocked", proofs: [], changes: [], reason: "x" });
     expect(await stop(root)).not.toBeNull();
+    expect((await submitGoalReport(root, { status: "blocked", proofs: [], changes: [], reason: "x" })).accepted).toBe(false);
     await edit(root, "a.js");
     expect(await stop(root, 1)).not.toBeNull();
     await edit(root, "a.js");
@@ -438,8 +454,9 @@ describe("the goal loop: how a run ends", () => {
     await edit(root, "a.js");
     const msg = await stop(root);
     expect(msg).toContain("If the objective is missing or truncated, retrieve the full objective with get_goal.");
-    expect(msg).not.toContain("x".repeat(4001));
-    expect(msg!.length).toBeLessThan(16000);
+    // DeepSeek's round driver builds the round prompt, and it carries the objective whole.
+    expect(msg).toContain("x".repeat(5000));
+    expect(msg!.length).toBeLessThan(22000);
   });
 
   it("cancelling mid-run closes it", async () => {

@@ -54,7 +54,8 @@ export function engineEvents(records: readonly AuditRecord[]): EngineEvent[] {
  */
 export function engineView(records: readonly AuditRecord[]): EngineGoal | null | undefined {
   const events = engineEvents(records);
-  if (!events.length || !fold) return undefined;
+  // Turns alone (the user's messages) say nothing about a goal: only their goal/change events do.
+  if (!fold || !events.some((e) => e.type === "goal/change")) return undefined;
   try {
     const folded = fold(events as never[]);
     return folded.goal ? { ...folded.goal, roundsStarted: folded.roundsStarted } : null;

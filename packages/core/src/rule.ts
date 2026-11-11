@@ -1,4 +1,5 @@
 import path from "node:path";
+import { DEEPSEEK_GOAL_POLICY } from "./goal/originals.js";
 
 /**
  * The session-start anchor. The hook can only reach the agent after it acts;
@@ -41,6 +42,10 @@ export function guardianRuleContent(): string {
     "8. When the user asks about progress or 'where were we', answer from `get_goal`, not memory. Stay",
     "   within any boundaries the user set.",
     "",
+    "The goal tools are DeepSeek Harness's own (`get_goal`, `create_goal`, `update_goal`). Its goal policy, word for word:",
+    "",
+    DEEPSEEK_GOAL_POLICY,
+    "",
   ].join("\n");
 }
 
@@ -77,13 +82,13 @@ export const GUARDIAN_SKILLS: Array<{ relativeDir: string; content: string }> = 
       "---",
       "# Guardian goal",
       "",
-      "Accept `/guardian-goal <goal>`.",
+      "Accept `/guardian-goal [<objective>|clear|edit <objective>|pause|resume]`. This is DeepSeek Harness's",
+      "own `/goal` command.",
       "",
-      "- Empty: show the current goal and 'done when' list from `get_goal`,",
-      "  then `Usage: /guardian-goal <goal>`.",
-      "- With a goal: call `guardian_change_goal` with the user's words in `user_words`. If they listed",
-      "  no 'done when' items, propose 2–4 and add the ones they confirm (add_criteria). Confirm the",
-      "  record in one line and continue with the work.",
+      "Call the `goal-guardian` MCP tool `goal_command` with everything the user typed after",
+      "`/guardian-goal`, exactly as typed (empty to show the goal), and show them its answer as it is.",
+      "After a new or edited objective that lists no 'done when' items, propose 2–4 and add the ones",
+      "they confirm with `guardian_change_goal` (add_criteria), then continue with the work.",
       "",
     ].join("\n"),
   },

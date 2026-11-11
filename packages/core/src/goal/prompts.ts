@@ -62,6 +62,8 @@ export interface RoundFacts {
   latestMessage?: string | undefined;
   round: number;
   maxRounds: number;
+  /** The round prompt as DeepSeek's round driver built it for this round. */
+  goalRoundPrompt?: string | undefined;
   /** The goal's own round count and cap, as DeepSeek's service holds them, for its `<goal_round>` prompt. */
   goalRound?: number;
   goalMaxRounds?: number;
@@ -90,7 +92,7 @@ export function goalRoundMessage(goal: string, criteria: Criteria, f: RoundFacts
     ...(f.latestMessage ? ["The user's latest message:", `<user>${esc(f.latestMessage.slice(0, MAX_LATEST_CHARS))}</user>`, ""] : []),
     `Decide from their words first. If they limited the work to part of this goal, or asked for something separate from it, that is all they want this time: don't touch the rest of the goal, call ${REPORT} with status set_aside quoting them, say what's left, and stop. Keep working only if they asked for this goal, or to continue or finish.`,
     "",
-    deepseekGoalRound(shown(goal), f.goalRound ?? f.round, f.goalMaxRounds ?? f.maxRounds),
+    f.goalRoundPrompt ?? deepseekGoalRound(shown(goal), f.goalRound ?? f.round, f.goalMaxRounds ?? f.maxRounds),
     ...(criteria.length ? ["", ...doneWhen(criteria)] : []),
     "",
     ...(facts.length ? ["What Guardian's record shows:", ...facts, ""] : []),

@@ -11,6 +11,7 @@ import { appendAudit } from "../audit/log.js";
 import { appendLine, writeJsonAtomic } from "../fsutil.js";
 import { nowIso } from "../clock.js";
 import { getGuardianPaths } from "../paths.js";
+import { engineRun } from "./engine.js";
 
 const HEAD = 600;
 const TAIL = 3400;
@@ -197,6 +198,9 @@ export async function recordUserPrompt(root: string, prompt: string, conversatio
   await keepOutOfGit(root);
   const prompts = await readUserPrompts(root);
   await writeJsonAtomic(getGuardianPaths(root).prompts, [...(prompts ?? []), prompt.slice(0, MAX_PROMPT)].slice(-KEEP_PROMPTS));
+  // DeepSeek's goal tools decide for themselves whether a call comes from "a direct human turn": their session is
+  // told that the user spoke. The words stay in Guardian's own record above.
+  await engineRun(root, undefined, "none", { type: "user-message" }).catch(() => undefined);
 }
 
 /** The user's latest messages, or null where Cursor's hooks never reported any (nothing to check against). */

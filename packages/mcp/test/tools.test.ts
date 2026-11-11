@@ -39,7 +39,7 @@ describe("tool surface", () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     // Codex's get_goal and update_goal by their own names, and Guardian's own tool for a redirected goal.
-    expect(names).toEqual(["get_goal", "guardian_change_goal", "update_goal"]);
+    expect(names).toEqual(["create_goal", "get_goal", "goal_command", "guardian_change_goal", "update_goal"]);
     expect(names).not.toContain("guardian_issue_permit");
     expect(names).not.toContain("guardian_check_step");
     expect(names).not.toContain("guardian_commit_result");
@@ -146,5 +146,36 @@ describe("robustness", () => {
     expect(outcome.isError).toBe(true);
     const alive = (await callJson("get_goal")).goal as { objective: string };
     expect(alive.objective).toContain("CSV export");
+  });
+});
+
+describe("DeepSeek Harness's own tools and command behind the MCP tools", () => {
+  it("update_goal carries their description and parameters next to Codex's, and get_goal returns their answer too", async () => {
+    const tools = (await client.listTools()).tools;
+    const update = tools.find((t) => t.name === "update_goal")!;
+    expect(update.description).toContain("DeepSeek Harness: Update the current goal.");
+    const props = update.inputSchema.properties as Record<string, { enum?: string[]; description?: string }>;
+    expect(props.action!.enum).toEqual(["edit", "pause", "resume", "complete", "blocked"]);
+    expect(props.goal_id!.description).toBe("DeepSeek Harness: Exact id returned by get_goal.");
+    expect(props.blocked_reason!.description).toContain("Required only with action blocked");
+    const got = await callJson("get_goal");
+    expect(got.their).toMatchObject({ goal: { objective: "Ship the CSV export feature", phase: "active", maxGoalRounds: 256 } });
+    expect(tools.find((t) => t.name === "create_goal")!.description!.startsWith("Create a persisted goal that keeps this session working across automatic continuation rounds.")).toBe(true);
+  });
+
+  it("a call in their shape reaches their tool, which answers by its own rules", async () => {
+    // An unfinished goal exists: their create_goal refuses a second one.
+    const second = (await client.callTool({ name: "create_goal", arguments: { objective: "Another goal entirely" } })) as { isError?: boolean; content: Array<{ text: string }> };
+    expect(second.isError).toBe(true);
+    expect(second.content[0]!.text).toContain("already exists");
+    // Their resume of an active goal in this process's view: answered by their tool, not by Guardian.
+    const resumed = (await client.callTool({ name: "update_goal", arguments: { action: "resume" } })) as { content: Array<{ text: string }> };
+    expect(resumed.content[0]!.text).toMatch(/"phase":"active"|already active and armed|goal/);
+  });
+
+  it("goal_command is their /goal command, in its own words", async () => {
+    const shown = (await client.callTool({ name: "goal_command", arguments: { input: "" } })) as { content: Array<{ text: string }> };
+    expect(shown.content[0]!.text).toContain("Status: active\nObjective: Ship the CSV export feature\nRounds: 0/256");
+    expect(shown.content[0]!.text).toContain("Commands: /goal edit <objective>");
   });
 });

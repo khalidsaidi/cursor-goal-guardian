@@ -40,7 +40,7 @@ describe("13 [deterministic] the packaged extension binaries actually run", () =
         }),
       );
       const tools = await client.listTools();
-      expect(tools.tools.map((t) => t.name).sort()).toEqual(["get_goal", "guardian_change_goal", "update_goal"]);
+      expect(tools.tools.map((t) => t.name).sort()).toEqual(["create_goal", "get_goal", "goal_command", "guardian_change_goal", "update_goal"]);
       const res = (await client.callTool({ name: "get_goal", arguments: {} })) as {
         content: Array<{ text: string }>;
       };

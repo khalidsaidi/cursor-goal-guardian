@@ -129,6 +129,7 @@ const wrapupFile = [DSH, "tool-goal", "src", "wrapup.ts"];
 const toolFile = [DSH, "tool-goal", "src", "index.ts"];
 const toolTs = read(...toolFile);
 
+const guidanceFn = must(/function guidance\(blockedAfter: number\): string \{[\s\S]*?\n\}\n/.exec(toolTs), "tool-goal guidance()")[0];
 const threshold = must(
   /throw new HarnessError\(\s*(`blocked requires at least \$\{resolved\.blockedAfterConsecutiveRounds\}[^`]*`)\s*\+\s*(`current round is \$\{authority\.goal\.roundsStarted\}`),\s*'(GOAL_TOOL_BLOCK_THRESHOLD)'/.exec(toolTs),
   "tool-goal block-threshold message",
@@ -153,6 +154,7 @@ const out = [
   strip(read(...wrapupFile), "wrapup.ts"),
   "",
   `// ---- DeepSeek Harness (MIT), ${rel(...toolFile)}: the block-threshold message and defaults ----`,
+  strip(`export ${guidanceFn}`, "index.ts"),
   `export function deepseekBlockThresholdMessage(resolved, authority) {\n  return ${threshold[1]}\n    + ${threshold[2]};\n}`,
   `export const DEEPSEEK_BLOCK_THRESHOLD_CODE = ${JSON.stringify(threshold[3])};`,
   `export const DEEPSEEK_BLOCKED_AFTER_CONSECUTIVE_ROUNDS = ${blockedAfterDefault};`,
