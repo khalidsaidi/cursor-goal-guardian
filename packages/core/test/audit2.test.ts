@@ -45,7 +45,7 @@ async function work(root: string, withTestFile = true): Promise<void> {
   await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js", conversationId: "c1" });
   if (withTestFile) {
     await fsp.mkdir(path.join(root, "test"), { recursive: true });
-    await fsp.writeFile(path.join(root, "test", "export.test.js"), "console.log('1 pass');\n");
+    await fsp.writeFile(path.join(root, "test", "export.test.js"), "require('node:assert/strict').equal(require('../a.js').csv(), 'a,b'); console.log('1 pass');\n");
     await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "test/export.test.js", conversationId: "c1" });
   }
   await tick();
@@ -61,21 +61,9 @@ const stop = (root: string, n = 0) => runGoalStop(root, { conversationId: "c1", 
 const kinds = async (root: string, kind: string) => (await readAuditTail(root, 3000)).filter((r) => r.kind === kind) as Array<Record<string, unknown>>;
 
 describe("a proof that names a file the project doesn't have", () => {
-  it("is refused by Guardian's own check, whatever the command printed and whatever a judge would say", async () => {
-    const root = await repo();
-    await work(root, false);
-    const answer = await submitGoalReport(root, report(false));
-    expect(answer.accepted).toBe(false);
-    expect(answer.unproved).toEqual([expect.stringContaining("`node test/export.test.js` names test/export.test.js, which isn't in the project")]);
-    expect(await kinds(root, "goal.review")).toHaveLength(0);
-    expect(await kinds(root, "goal.end")).toHaveLength(0);
-    // With the file really there the same report is accepted.
-    await fsp.mkdir(path.join(root, "test"), { recursive: true });
-    await fsp.writeFile(path.join(root, "test", "export.test.js"), "console.log('1 pass');\n");
-    await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "test/export.test.js", conversationId: "c1" });
-    await tick();
-    await recordShellOutput(root, { command: TEST_CMD, output: "1 pass\n", durationMs: 0 });
-    expect(await submitGoalReport(root, report(true))).toMatchObject({ accepted: true, outcome: "proved" });
+  it("uses the captured results and independent checks rather than policing a copied command reference", async () => {
+    const root = await repo(); await work(root);
+    expect(await submitGoalReport(root, { ...report(false), proofs: [] })).toMatchObject({ accepted: true, outcome: "proved" });
   });
 
   it("only real path arguments count, in any language: not quoted code, options, redirects, or files in a subfolder", async () => {

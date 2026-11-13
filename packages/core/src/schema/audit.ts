@@ -98,7 +98,10 @@ export const goalProofSchema = z
   .object({
     criterion: z.string(),
     command: z.string().optional(),
+    /** Legacy caller quote; command evidence comes from the recorded run instead. */
     quote: z.string().optional(),
+    /** Filled by Guardian, identifying the recorded command result used. */
+    recordedAt: z.string().optional(),
     file: z.string().optional(),
     contains: z.string().optional(),
   })
@@ -223,6 +226,16 @@ export const goalRoundRecordSchema = z
 
 /** How a run on the goal ended. Only "proved" means Guardian's record backs every item. */
 /** One adversarial review of a "complete" report: whether it ran, and what it objected to. */
+export const goalRecoveryRecordSchema = z.object({
+  ...base,
+  kind: z.literal("goal.recovery"),
+  conversationId: z.string().optional(),
+  goalHash: z.string(),
+  reportTs: z.string(),
+  reviewId: z.string().optional(),
+  skipped: z.array(z.string()),
+}).strict();
+
 export const goalReviewRecordSchema = z
   .object({
     ...base,
@@ -243,6 +256,12 @@ export const goalReviewRecordSchema = z
     extra: z.array(z.object({ file: z.string(), what: z.string() }).strict()),
     /** Done-when ids the reviewer gave no clear verdict on. */
     unanswered: z.array(z.string()).optional(),
+    /** Version of the fixed completion checks; old cached verdicts cannot satisfy a newer policy. */
+    policy: z.string().optional(),
+    /** Effective reviewer template, so feedback-driven improvements are not bypassed by old cached checks. */
+    reviewerKey: z.string().optional(),
+    verdicts: z.array(z.object({ id: z.string(), verdict: z.enum(["holds", "fails", "unclear"]), evidence: z.string() }).strict()).optional(),
+    checks: z.array(z.object({ id: z.enum(["build", "public_api", "behavior"]), verdict: z.enum(["holds", "fails", "unclear", "not_applicable"]), evidence: z.string() }).strict()).optional(),
     /** The project state and report this review judged: the same state is never reviewed twice. */
     stateKey: z.string().optional(),
     /** The project's state when it was reviewed, so a later change can be told from an objection ignored. */
@@ -374,6 +393,8 @@ export const goalEndRecordSchema = z
     tokens: z.number().int().nonnegative().optional(),
     reason: z.string().optional(),
     proved: z.array(goalProofSchema).optional(),
+    /** Requested items established by the finished-work checks; separate from captured command references. */
+    verifiedItems: z.array(z.string()).optional(),
     unproved: z.array(z.string()).optional(),
     extras: z.array(z.string()).optional(),
     /** Every changed file and the done-when item the agent says it serves, for the user to look over. */
@@ -450,6 +471,7 @@ export const auditRecordSchema = z.discriminatedUnion("kind", [
   goalRoundRecordSchema,
   goalEndRecordSchema,
   goalReviewRecordSchema,
+  goalRecoveryRecordSchema,
   reviewFeedbackRecordSchema,
   improveStartRecordSchema,
   improveRunRecordSchema,

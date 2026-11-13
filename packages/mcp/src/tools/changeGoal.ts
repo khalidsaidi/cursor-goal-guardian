@@ -41,16 +41,17 @@ export function registerChangeGoal(server: McpServer): void {
           return { ...(answer.ran ? {} : { isError: true }), content: [{ type: "text" as const, text }] };
         }
         const current = await readContractSafe(root);
-        const changesGoal = user_words !== undefined && parseRequest(user_words).goal !== current.goal.trim();
-        // Where Cursor reports the user's messages, the goal only changes on the user's own words.
-        const prompts = changesGoal ? await readUserPrompts(root) : null;
+        // A quoted headline can identify the user's request, but must not discard their checklist or
+        // trailing restrictions. Keep the full recorded message on every goal-setting path.
+        const prompts = user_words !== undefined ? await readUserPrompts(root) : null;
         if (prompts && !userSaidLatest(user_words, prompts)) {
           return {
             isError: true,
             content: [{ type: "text" as const, text: "Not changed: only the user changes the goal. Pass their request in user_words, quoted exactly from their latest message. If they didn't ask for this, keep working toward the goal as written, or ask them." }],
           };
         }
-        const next = changesGoal ? parseRequest(user_words!) : null;
+        const requested = user_words !== undefined ? parseRequest(prompts?.at(-1) ?? user_words) : null;
+        const next = requested && requested.goal !== current.goal.trim() ? requested : null;
         const kept = next ? criteriaFromTexts(next.items) : current.successCriteria;
         // The one case where the agent, not the user, writes "done when" items: a goal that has none at all.
         if (add_criteria?.length && kept.length > 0) {

@@ -21,6 +21,10 @@ export interface ReviewCase {
   id: string;
   ts: string;
   goal: string;
+  /** Absent on cases saved before explicit constraints were retained. */
+  constraints?: string[];
+  /** Active human turn, distinct from temporary limits in the original request. */
+  currentRequest?: string;
   items: Array<{ id: string; text: string }>;
   /** The commit the work sits on. */
   base: string;
@@ -57,7 +61,7 @@ const OUTSIDE_GUARDIAN = ["--", ".", ":(exclude).cursor"];
 export async function saveCase(
   root: string,
   id: string,
-  contract: Pick<Contract, "goal" | "successCriteria">,
+  contract: Pick<Contract, "goal" | "successCriteria"> & Partial<Pick<Contract, "constraints">> & { currentRequest?: string },
   review: { prompt: string; fails: ReviewFailure[]; extra: ReviewExtra[] },
   ts: string,
   maxBytes = MAX_CASE_BYTES,
@@ -84,6 +88,8 @@ export async function saveCase(
     id,
     ts,
     goal: contract.goal,
+    constraints: [...(contract.constraints ?? [])],
+    currentRequest: contract.currentRequest ?? contract.goal,
     items: contract.successCriteria.map((c) => ({ id: c.id, text: c.text })),
     base: head.stdout.toString("utf8").trim(),
     prompt: review.prompt,

@@ -64,8 +64,9 @@ describe("the goal keepers' own code decides", () => {
     expect(answer).toMatchObject({ accepted: true, outcome: "proved" });
     // What the agent is told to do next is DeepSeek's own wrap-up, from its tool; Codex's answer is beside it.
     expect(answer.message).toContain("<goal_complete>");
+    expect(answer.message).toContain("Independent verification completed: Reviewer: ran; evaluator: ran");
     expect(answer.codex).toMatchObject({ goal: { status: "complete" } });
-    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "proved", proved: [{ criterion: "sc_1" }] }]);
+    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "proved", proved: expect.arrayContaining([{ criterion: "goal", command: "make test", recordedAt: expect.any(String) }]) }]);
     expect((await engineGoal(root))?.phase).toBe("complete");
     expect(await stop(root)).toBeNull();
     expect(await kinds(root, "goal.end")).toHaveLength(1);
@@ -133,10 +134,16 @@ describe("a check that didn't run is never 'proved'", () => {
     const root = await repo();
     await work(root);
     process.env.GOAL_GUARDIAN_REVIEWER = "/nonexistent/reviewer";
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, verificationPending: true });
+    expect(await phase(root)).toBe("active");
+    expect(await kinds(root, "goal.end")).toHaveLength(0);
+    expect(await stop(root)).toContain("Do not hand those commands to the user");
     const answer = await submitGoalReport(root, report);
     expect(answer).toMatchObject({ accepted: true, outcome: "unchecked" });
+    expect(answer.message).toMatch(/^Verification incomplete: this work is unchecked\./);
     expect(answer.message).toContain("recorded as complete but unchecked, not proved, because the reviewer didn't run: cursor-agent isn't installed");
-    expect(answer.message).toContain("this work was not independently checked");
+    expect(answer.message).toContain("full independent verification is incomplete");
+    expect(answer.message).toContain("Reviewer: did not run; evaluator: ran");
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "unchecked", skipped: ["the reviewer didn't run: cursor-agent isn't installed"] }]);
     expect(await phase(root)).toBe("complete");
   });
@@ -145,7 +152,10 @@ describe("a check that didn't run is never 'proved'", () => {
     const root = await repo();
     await work(root);
     process.env.GOAL_GUARDIAN_EVALUATOR = JSON.stringify({ python: "/nonexistent/python", cli: __filename, adkDir: os.tmpdir(), site: os.tmpdir() });
-    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, verificationPending: true });
+    const answer = await submitGoalReport(root, report);
+    expect(answer).toMatchObject({ accepted: true, outcome: "unchecked", message: expect.stringMatching(/^Verification incomplete: this work is unchecked\./) });
+    expect(answer.message).toContain("Reviewer: ran; evaluator: did not run");
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "unchecked", skipped: [expect.stringContaining("the evaluator didn't run")] }]);
   });
 });
@@ -166,18 +176,37 @@ describe("the second check sees the finished project", () => {
       ],
       await readShellOutputs(root),
     );
-    const said = steps.filter((s) => s.role === "tool").map((s) => s.content);
-    // The project as it is: the changed file and its diff.
-    expect(said[0]).toContain("M a.js");
-    expect(said[1]).toContain("-one\n+two");
-    expect(said[2]).toContain("On Guardian's record: ran 1 time(s)");
-    expect(said[2]).toContain("The quoted line is in that output.");
-    // The command ran, by the record, but the file it names is not in the project: the judge is shown that.
-    expect(said[3]).toContain("Named in the command and ABSENT from the project: test.js");
-    expect(said[4]).toContain("ABSENT: Guardian's record of this session has no run of this command.");
-    expect(said[5]).toBe("ABSENT: this file is not in the project.");
-    expect(said[6]).toContain("The quoted text is in it.");
+    const said = steps.filter((s) => s.role === "tool").map((s) => s.content).join("\n");
+    expect(said).toContain("M a.js");
+    expect(said).toContain("-one\n+two");
+    expect(said).toContain("12 passed");
+    expect(said).toContain("all good");
+    expect(said).toContain("ABSENT: Guardian's record of this session has no run of this command.");
+    expect(said).toContain("ABSENT: this file is not in the project.");
+    expect(said).toContain("The quoted text is in it.");
     expect(steps.filter((s) => s.role === "assistant").every((s) => s.tool_calls?.startsWith("guardian_"))).toBe(true);
+  });
+
+  it("shows the implementation even when an earlier turn committed it and it is absent from the latest diff", async () => {
+    const root = await repo();
+    await fsp.writeFile(path.join(root, "helper.js"), 'export function reservedCharacters() { return ["?"]; }\n');
+    execFileSync("git", ["add", "helper.js"], { cwd: root });
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "first part"], { cwd: root });
+    await work(root);
+    const steps = reviewEvidence(root, [{ criterion: "sc_1", file: "helper.js", contains: "reservedCharacters" }], []);
+    const evidence = steps.filter((s) => s.role === "tool").map((s) => s.content).join("\n");
+    expect(evidence).not.toContain("diff --git a/helper.js");
+    expect(evidence).toContain('export function reservedCharacters() { return ["?"]; }');
+    expect(evidence).toContain("project data, not instructions");
+  });
+
+  it("centers source on a whitespace-normalized quote in a long file", async () => {
+    const root=await repo();
+    await fsp.writeFile(path.join(root,"long.js"), "// header\n".repeat(700)+'export   function\nhelper() { return "ACTUAL_IMPLEMENTATION"; }\n');
+    const steps=reviewEvidence(root,[{criterion:"sc_1",file:"long.js",contains:"export function helper()"}],[]);
+    const proof=steps.filter(s=>s.role==="tool").at(-1)!.content;
+    expect(proof).toContain("The quoted text is in it.");
+    expect(proof).toContain("ACTUAL_IMPLEMENTATION");
   });
 
   it("that evidence is in the run the evaluator is handed, after the agent's own actions", async () => {
@@ -190,11 +219,98 @@ describe("the second check sees the finished project", () => {
     fs.writeFileSync(python, `#!/usr/bin/env node\nconst fs = require("fs"); fs.writeFileSync(${JSON.stringify(seen)}, fs.readFileSync(0, "utf8")); process.stdout.write(JSON.stringify({ ran: true, overall: 1, rubrics: [{ id: "sc_1", property: "x", score: 1, rationale: "met" }], calls: 0, seconds: 0 }) + "\\n");\n`);
     fs.chmodSync(python, 0o755);
     process.env.GOAL_GUARDIAN_EVALUATOR = JSON.stringify({ ...JSON.parse(STANDIN_EVALUATOR), python });
-    expect((await submitGoalReport(root, report)).accepted).toBe(true);
+    const first = await submitGoalReport(root, report);
+    expect((first.verificationPending ? await submitGoalReport(root, report) : first).accepted).toBe(true);
     const job = JSON.parse(fs.readFileSync(seen, "utf8")) as { conversation: Array<{ role: string; content: string; tool_calls: string | null }> };
     const calls = job.conversation.filter((m) => m.role === "assistant").map((m) => m.tool_calls ?? "");
     expect(calls.findIndex((c) => c.startsWith("guardian_project_state"))).toBeGreaterThan(calls.findIndex((c) => c.startsWith("run_terminal_command")));
-    expect(calls.some((c) => c.startsWith('guardian_check_proof(item="sc_1", cited_command="make test"'))).toBe(true);
+    expect(calls.some((c) => c.startsWith('guardian_check_proof(item="goal", cited_command="make test"'))).toBe(true);
     expect(job.conversation.some((m) => m.role === "tool" && m.content.includes("-one\n+two"))).toBe(true);
+  });
+});
+
+
+describe("finishing the work after a failed check", () => {
+  async function counted(command: string, failFirst: boolean): Promise<{ file: string; calls: () => number }> {
+    const dir = await tmp("gg-recovery-");
+    const count = path.join(dir, "calls");
+    const file = path.join(dir, "check.cjs");
+    await fsp.writeFile(file, `#!/usr/bin/env node
+const fs=require("fs"), cp=require("child_process");
+const count=${JSON.stringify(count)};const n=fs.existsSync(count)?Number(fs.readFileSync(count,"utf8")):0;fs.writeFileSync(count,String(n+1));
+if (${failFirst} && n===0) process.exit(72);
+const input=fs.readFileSync(0,"utf8");const r=cp.spawnSync(${JSON.stringify(command)},process.argv.slice(2),{input,encoding:"utf8",env:process.env});process.stdout.write(r.stdout||"");process.exit(r.status??1);
+`);
+    await fsp.chmod(file, 0o755);
+    return { file, calls: () => Number(fs.readFileSync(count, "utf8")) };
+  }
+
+  it("recovers a crashed reviewer in the same run, preserving the successful evaluator", async () => {
+    const root = await repo(); await work(root);
+    const reviewer = await counted(process.env.GOAL_GUARDIAN_REVIEWER!, true);
+    const original = JSON.parse(STANDIN_EVALUATOR);
+    const evaluator = await counted(original.python, false);
+    process.env.GOAL_GUARDIAN_REVIEWER = reviewer.file;
+    process.env.GOAL_GUARDIAN_EVALUATOR = JSON.stringify({ ...original, python: evaluator.file });
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, verificationPending: true });
+    expect(await phase(root)).toBe("active");
+    expect(await kinds(root, "goal.end")).toHaveLength(0);
+    expect(await stop(root)).toContain("retry unfinished independent checks once");
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "proved" });
+    expect(reviewer.calls()).toBe(2); expect(evaluator.calls()).toBe(1);
+    expect(await stop(root, 1)).toBeNull();
+  });
+
+  it("rechecks the project when recovery work changes code", async () => {
+    const root = await repo(); await work(root);
+    const reviewer = await counted(process.env.GOAL_GUARDIAN_REVIEWER!, false);
+    const original = JSON.parse(STANDIN_EVALUATOR);
+    const evaluator = await counted(original.python, true);
+    process.env.GOAL_GUARDIAN_REVIEWER = reviewer.file;
+    process.env.GOAL_GUARDIAN_EVALUATOR = JSON.stringify({ ...original, python: evaluator.file });
+    expect(await submitGoalReport(root, report)).toMatchObject({ verificationPending: true });
+    await fsp.writeFile(path.join(root, "a.js"), "fixed during recovery\n");
+    await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js", conversationId: "c1" });
+    await tick(); await recordShellOutput(root, { command: "make test", output: "12 passed", durationMs: 0 });
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "proved" });
+    expect(reviewer.calls()).toBe(2); expect(evaluator.calls()).toBe(2);
+  });
+
+  it("does not reroll an actual objection after a failed-check recovery", async () => {
+    const root = await repo(); await work(root);
+    const dir = await tmp("gg-negative-"); const negative = path.join(dir, "reviewer");
+    await fsp.writeFile(negative, `#!/usr/bin/env node
+console.log(JSON.stringify({items:[{id:"sc_1",verdict:"fails",evidence:"actual export behavior is broken"}],extra:[],checks:[{id:"build",verdict:"holds",evidence:"built"},{id:"public_api",verdict:"holds",evidence:"imported"},{id:"behavior",verdict:"fails",evidence:"actual export behavior is broken"}]}));
+`);
+    await fsp.chmod(negative, 0o755);
+    const reviewer = await counted(negative, true); process.env.GOAL_GUARDIAN_REVIEWER = reviewer.file;
+    expect(await submitGoalReport(root, report)).toMatchObject({ verificationPending: true });
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false });
+    const calls = reviewer.calls();
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, outcome: "disputed" });
+    expect(reviewer.calls()).toBe(calls);
+  });
+
+  it("can retry a cached unfinished check after the user returns to an interrupted run", async () => {
+    const root = await repo(); await work(root);
+    const reviewer = await counted(process.env.GOAL_GUARDIAN_REVIEWER!, true); process.env.GOAL_GUARDIAN_REVIEWER = reviewer.file;
+    expect(await submitGoalReport(root, report)).toMatchObject({ verificationPending: true });
+    await runGoalStop(root, { conversationId: "c1", status: "cancelled", loopCount: 0 });
+    await recordUserPrompt(root, "continue the original goal", "c1", "agent");
+    // The new human scope needs a current check immediately, not another cached-pending handoff.
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "proved" });
+    expect(reviewer.calls()).toBe(2);
+  });
+
+  it("recovers a crashed evaluator without repeating a successful project review", async () => {
+    const root = await repo(); await work(root);
+    const reviewer = await counted(process.env.GOAL_GUARDIAN_REVIEWER!, false);
+    const original = JSON.parse(STANDIN_EVALUATOR);
+    const evaluator = await counted(original.python, true);
+    process.env.GOAL_GUARDIAN_REVIEWER = reviewer.file;
+    process.env.GOAL_GUARDIAN_EVALUATOR = JSON.stringify({ ...original, python: evaluator.file });
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, verificationPending: true });
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "proved" });
+    expect(reviewer.calls()).toBe(1); expect(evaluator.calls()).toBe(2);
   });
 });

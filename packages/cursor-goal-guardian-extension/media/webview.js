@@ -69,7 +69,7 @@
       ...g.changes.filter((c) => c.serves !== "extra").map((c) => `Changed for ${c.serves}: ${c.files.join(", ")}`),
       ...g.extras.map((f) => `Not for any done-when item, your call: ${f}`),
       ...vm.reviews.length ? [] : g.reviewer.map((l) => `Reviewer's opinion: ${l.replace(/^Reviewer: /, "")}`),
-      ...g.skipped.map((s) => `Not independently checked: ${s}`),
+      ...g.outcome === "unchecked" ? [] : g.skipped.map((s) => `Not independently checked: ${s}`),
       ...g.changedSinceReview ? ["The last review objected, and the agent changed the project after it. That final state wasn't reviewed again."] : [],
       ...g.goalFileEdited ? ["The agent edited Guardian's goal files during this run."] : []
     ];
@@ -82,7 +82,7 @@
     const blocks = vm.reviews.map((r) => {
       const lines = r.lines.map((line, i) => {
         const said = r.feedback[i];
-        const buttons = said ? `<span class="review-said">${said === "right" ? "you said: right call" : "you said: reviewer was wrong"}</span>` : `<button class="link" data-cmd="review.right:${escapeHtml(r.id)}:${i}">Right call</button> <button class="link" data-cmd="review.wrong:${escapeHtml(r.id)}:${i}">Reviewer was wrong</button>`;
+        const buttons = said ? `<span class="review-said">${said === "right" ? "you said: right call" : "you said: reviewer was wrong"}</span>` : `<button class="link" data-cmd="review.right:${escapeHtml(r.id)}:${r.indexes?.[i] ?? i}">Right call</button> <button class="link" data-cmd="review.wrong:${escapeHtml(r.id)}:${r.indexes?.[i] ?? i}">Reviewer was wrong</button>`;
         return `<p class="review-line">${escapeHtml(`Reviewer's opinion: ${line.replace(/^Reviewer: /, "")}`)} ${buttons}</p>`;
       });
       const label = r.label && r.label.source !== "user" ? `<p class="review-line">Counted as ${r.label.label === "right" ? "a right call" : "a wrong call"}: ${SOURCE_WORD[r.label.source]}.</p>` : "";
@@ -123,6 +123,12 @@
     }
     return `<div class="goal-controls"><button class="link" data-cmd="goal.pause">Pause goal</button> <button class="link" data-cmd="goal.done">Mark goal done</button></div>`;
   }
+  function renderVerificationWarning(vm) {
+    const run = vm.goalRun;
+    if (run?.outcome !== "unchecked") return "";
+    const reasons = run.skipped.map((s) => `<li>Not independently checked: ${escapeHtml(s)}</li>`).join("");
+    return `<div class="verification-warning" role="status" aria-live="polite"><strong>Verification incomplete</strong><p>This work has not been fully independently checked.</p>${reasons ? `<ul>${reasons}</ul>` : ""}</div>`;
+  }
   function renderGoal(vm) {
     if (!vm.setUp) return "";
     const goal = vm.goal.trim();
@@ -136,6 +142,7 @@
         <span class="lamp ${vm.status.lamp}"></span>
         <span class="status-word">${escapeHtml(vm.status.word)}</span>
       </div>
+      ${renderVerificationWarning(vm)}
       ${renderGoalRun(vm)}
       ${renderReviews(vm)}
       ${renderImprove(vm)}

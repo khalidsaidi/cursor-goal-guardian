@@ -1,7 +1,7 @@
 /**
  * The goal loop. When the agent stops after working on a goal, Guardian compares its report with Guardian's own
  * record and sends it back with the facts, until the goal is proved, the agent is truly blocked, the user set it
- * aside, the work stalls, or the rounds run out. It never runs the project's commands, never calls a model, never blocks a tool.
+ * aside, the work stalls, or the rounds run out. It coordinates the goal keepers and independent checks; it never blocks a user tool.
  */
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -10,10 +10,11 @@ import { newId, nowIso } from "../clock.js";
 import { readContractSafe } from "../safeReaders.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalEndRecord, GoalReportRecord, GoalControlRecord, GoalReviewRecord, GoalRoundRecord, UserMessageRecord } from "../schema/audit.js";
-import { evaluateReport, projectPath, userAsked, userSaidLatest, type GoalEvaluation } from "./evaluate.js";
+import { capturedEvidence, projectPath, userAsked, userSaidLatest, type GoalEvaluation } from "./evaluate.js";
 import { CLOSING, goalBlock, goalBudgetLimitMessage, goalChangedMessage, goalClosingMessage, goalRoundMessage } from "./prompts.js";
 import { budgetOf, codexGoals, codexTool, codexTurn, resolveCodexGoals, type CodexGoal, type CodexGoalAnswer, type CodexToolAnswer, type CodexUsage } from "./codexGoals.js";
 import { reviewEvidence } from "./evidence.js";
+import { verificationState } from "./verificationState.js";
 import { codexAgentTool, codexContinuationTurn, codexNotice, codexSaid, codexUserFragment, codexUserSet, codexUserStatus, recordRefusal } from "./partners.js";
 import { BLOCKED_AFTER_CONSECUTIVE_ROUNDS, CODEX_TOOLS, ROUND_LIMIT_CODE, deepseekBlockThreshold } from "./originals.js";
 import { captureGoal, parseRequest } from "./capture.js";
@@ -21,7 +22,7 @@ import { writeContract } from "../contractStore.js";
 import { criteriaFromTexts } from "../schema/contract.js";
 import { EngineRefused, engineRun, type EngineOp, type EngineResult, type EngineToolResult } from "./engine.js";
 import { engineView, type EngineGoal } from "./engineFold.js";
-import { MAX_REVIEWS, REVIEW_BUDGET_MS, REVIEW_HARD_LIMIT, adjudicate, claimsToAdjudicate, objectionLines, runReview } from "./review.js";
+import { MAX_REVIEWS, REVIEW_POLICY, REVIEW_BUDGET_MS, REVIEW_HARD_LIMIT, completionScope, adjudicate, claimsToAdjudicate, objectionLines, runReview, reviewTemplate } from "./review.js";
 import { GOAL_RESTORED, guardContract } from "./guard.js";
 import { EVALUATOR_BUDGET_MS, runEvaluator } from "./evaluator.js";
 import { readTrajectory } from "./trajectory.js";
@@ -51,8 +52,8 @@ const TAPE_WINDOW = 20_000;
 
 const GUARDIAN_FILES = /^\.cursor\/goal-guardian\/(contract|state|actions)/;
 
-export function goalHash(contract: Pick<Contract, "goal" | "successCriteria">): string {
-  return createHash("sha256").update(JSON.stringify({ goal: contract.goal.trim(), criteria: contract.successCriteria.map((c) => c.text) })).digest("hex").slice(0, 16);
+export function goalHash(contract: Pick<Contract, "goal" | "successCriteria"> & Partial<Pick<Contract, "constraints">>): string {
+  return createHash("sha256").update(JSON.stringify({ goal: contract.goal.trim(), criteria: contract.successCriteria.map((c) => c.text), constraints: contract.constraints ?? [] })).digest("hex").slice(0, 16);
 }
 
 const isEdit = (r: AuditRecord): r is Extract<AuditRecord, { kind: "action.observed" }> => r.kind === "action.observed" && r.actionType === "edit";
@@ -250,7 +251,10 @@ async function contractFollowsEngine(root: string, items: string[] = []): Promis
   const objective = view?.objective ?? "";
   if (objective === contract.goal.trim()) return;
   const saved = await writeContract(root, { ...contract, goal: objective, successCriteria: criteriaFromTexts(items) });
-  if (objective) await appendAudit(root, { ts: nowIso(), kind: "goal.set", goalHash: goalHash(saved) });
+  if (objective) {
+    const conversationId = reportingChat(await readAuditTail(root, TAPE_WINDOW));
+    await appendAudit(root, { ts: nowIso(), kind: "goal.set", goalHash: goalHash(saved), ...(conversationId ? { conversationId } : {}) });
+  }
   await tellCodexStore(root, objective, { type: "sync" });
 }
 
@@ -278,7 +282,7 @@ export async function createGoalByTool(root: string, objective: string, maxGoalR
   await guardContract(root).catch(() => false);
   const prompts = await readUserPrompts(root);
   if (prompts && !userSaidLatest(objective, prompts)) return { isError: true, text: `Not created: ${NOT_THE_USERS}`, contexts: [] };
-  const { goal, items } = parseRequest(objective);
+  const { goal, items } = parseRequest(prompts?.at(-1) ?? objective);
   const hash = goalHash(await readContractSafe(root));
   // Codex's own create_goal handler is asked first: like DeepSeek's, it refuses while an unfinished goal exists. The
   // goal is created only if both accept; if DeepSeek's then refuses, Codex's new goal is taken back.
@@ -307,7 +311,7 @@ export async function updateGoalByTool(root: string, args: { goal_id?: string; r
   if (args.action === "edit" && args.objective?.trim()) {
     const prompts = await readUserPrompts(root);
     if (prompts && !userSaidLatest(args.objective, prompts)) return { isError: true, text: `Not changed: ${NOT_THE_USERS}`, contexts: [] };
-    const parsed = parseRequest(args.objective);
+    const parsed = parseRequest(prompts?.at(-1) ?? args.objective);
     items = parsed.items;
     pass.objective = parsed.goal;
   }
@@ -531,10 +535,8 @@ function stillChanged(seq: Sequence): string[] {
   return seq.editedFiles.filter((f) => changed.has(f));
 }
 
-async function evaluate(root: string, contract: Contract, report: Pick<GoalReportRecord, "proofs" | "changes" | "removed">, seq: Sequence): Promise<GoalEvaluation> {
-  // Files already emptied before this run began are the user's own business.
-  const shrunk = readShrunkFiles(root).filter((f) => !seq.dirtyAtStart.has(f.file));
-  return evaluateReport(root, contract, report, { outputs: await readShellOutputs(root), lastEditTs: seq.lastEditTs, editedFiles: stillChanged(seq), tree: seq.tree?.fingerprint ?? null, shrunk });
+async function evaluate(root: string, _contract: Contract, report: Pick<GoalReportRecord, "proofs" | "changes" | "removed">, seq: Sequence): Promise<GoalEvaluation> {
+  return { unproved: [], unclaimed: [], extras: [], proved: await capturedEvidence(root, await readShellOutputs(root), stillChanged(seq), report.proofs) };
 }
 
 /**
@@ -554,6 +556,8 @@ export type GoalReportInput = Omit<GoalReportRecord, "ts" | "kind">;
 
 export interface GoalReportAnswer {
   accepted: boolean;
+  /** Verification could not finish; the goal stays active for one recovery pass. */
+  verificationPending?: true;
   message: string;
   unproved: string[];
   unclaimed: string[];
@@ -618,51 +622,64 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
     const firstTurn = userOpenedTurn(seq);
     return { accepted: true, ...none, message: firstTurn ? `${closing}\n\n${BLOCKED_AT_WORD}` : closing, ...(blocked.result.tool ? { their: blocked.result.tool.text } : {}), ...(blocked.codex !== undefined ? { codex: blocked.codex } : {}) };
   }
-  // Guardian's own precondition: the report has to hold against its record of what ran and changed.
+  // Use captured results and files directly. Independent checks decide whether the requested work is done.
   const result = await evaluate(root, contract, input, seq);
-  if (result.unproved.length || result.unclaimed.length) {
-    return { accepted: false, message: "Not accepted yet: fix what's listed and report again.", unproved: result.unproved, unclaimed: result.unclaimed };
-  }
-  // Work the agent itself calls extra is sent back once to be undone; kept after that, it is the user's call and
-  // goes on the record with the run.
-  const warned = new Set(seq.rounds.flatMap((r) => r.extras));
-  const newExtras = result.extras.filter((f) => !warned.has(f));
-  if (newExtras.length) {
-    return { accepted: false, message: "Not accepted yet: undo what you called extra unless the user asked for it, then report again.", unproved: newExtras.map((f) => `${f}: you called this extra`), unclaimed: [] };
-  }
+  // File labels are hints, not authority to undo working code. Scope is checked against the actual diff.
   const chat = reportingChat(all);
   const who = chat ?? UNKNOWN_CHAT;
-  const receipt = { proved: result.proved, extras: result.extras, changes: input.changes.map((c) => ({ file: projectPath(root, c.file), serves: c.serves })), ...(input.removed?.length ? { removed: input.removed } : {}) };
-  // Second precondition: the two independent checks. The reviewer checks each item in a copy of the project; Google
+  const labels = new Map(input.changes.map((c) => [projectPath(root, c.file), c.serves]));
+  const receipt = { proved: result.proved, extras: [], changes: [...new Set([...stillChanged(seq), ...labels.keys()])].map((file) => ({ file, serves: labels.get(file) && labels.get(file) !== "extra" ? labels.get(file)! : "observed" })), ...(input.removed?.length ? { removed: input.removed } : {}) };
+  // The two independent checks assess the actual work. The reviewer checks each item in a copy of the project; Google
   // ADK's evaluator judges the recorded run and the finished project against the user's own items. A check that
   // didn't run is named, and its goal can't be recorded as proved.
   const skipped: string[] = [];
+  let independentChecks = "No independent check result is available for this report";
+  let reviewedId: string | undefined;
+  const checkSummary = (r: Pick<GoalReviewRecord, "ran" | "evaluator">): string => `Reviewer: ${r.ran ? "ran" : "did not run"}; evaluator: ${r.evaluator ? (r.evaluator.ran ? "ran" : "did not run") : "no result recorded"}`;
   let changedSinceReview = false;
   const reviews = reviewsOf(seq, hash);
   const last = reviews[reviews.length - 1];
-  const sameState = !last || !last.tree || !seq.tree || last.tree === seq.tree.fingerprint;
+  let checkAttempts = reviews.length;
+  const workState = verificationState(root);
+  const scopedIds = new Set(all.filter((r) => r.kind === "goal.review" && r.goalHash === hash && r.policy === REVIEW_POLICY).map((r) => r.kind === "goal.review" ? r.id : undefined));
+  const correction = [...all].reverse().find((r) => r.kind === "review.feedback" && scopedIds.has(r.reviewId) && (r.label === "wrong" || r.label === "missed"));
+  const correctionKey = correction?.ts ?? "";
+  const currentRequest = (await readUserPrompts(root))?.at(-1) ?? contract.goal;
+  const reviewContract = { ...contract, currentRequest };
+  const reviewerKey = (() => { try { return createHash("sha256").update(JSON.stringify([reviewTemplate(root), correctionKey, currentRequest])).digest("hex"); } catch { return undefined; } })();
+  const corrected = new Set(all.filter((r) => r.kind === "review.feedback" && (r.label === "wrong" || r.label === "missed")).map((r) => r.kind === "review.feedback" ? r.reviewId : ""));
+  const sameState = !last || (workState !== null && last.tree === workState);
   const standing = last ? objectionLines(last) : [];
-  // A review's verdict on a state stands: the same project and the same report are never reviewed twice, in this
-  // run or a later one, so reporting again can't draw a different verdict.
-  const stateKey = createHash("sha256").update(JSON.stringify([seq.tree?.fingerprint ?? seq.lastEditTs ?? "", input.proofs, input.changes, input.removed ?? []])).digest("hex").slice(0, 16);
-  const prior = [...all].reverse().find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.goalHash === hash && r.stateKey === stateKey);
+  // A definite verdict on a state stands across runs. Only unfinished checks get the bounded recovery retry;
+  // a repeated completion report cannot reroll an objection.
+  const outputs = await readShellOutputs(root);
+  const commandResults = new Map<string, { failed: boolean; output: string }>();
+  for (const o of outputs) commandResults.set(o.command.replace(/\s+/g, " ").trim(), { failed: o.failed === true, output: o.output });
+  const stateKey = createHash("sha256").update(JSON.stringify([REVIEW_POLICY, correctionKey, currentRequest, workState ?? reportTs, [...commandResults].sort(([a], [b]) => a.localeCompare(b))])).digest("hex").slice(0, 16);
+  const recovery = [...seq.records].reverse().find((r) => r.kind === "goal.recovery" && r.goalHash === hash);
+  const recoveryUntried = recovery && !seq.records.slice(seq.records.indexOf(recovery) + 1).some((r) => r.kind === "goal.review" && r.goalHash === hash && r.policy === REVIEW_POLICY);
+  const retryBase = recoveryUntried && recovery.kind === "goal.recovery" && recovery.reviewId
+    ? [...all].reverse().find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.id === recovery.reviewId && r.policy === REVIEW_POLICY)
+    : undefined;
+  const prior = [...all].reverse().find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.policy === REVIEW_POLICY && r.reviewerKey === reviewerKey && !corrected.has(r.id ?? "") && r.goalHash === hash && r.stateKey === stateKey);
   /** What a review left unchecked: a check that didn't run, or an item it gave no verdict on. */
-  const unchecked = (r: Pick<GoalReviewRecord, "ran" | "reason" | "unanswered" | "evaluator">): string[] => [
+  const unchecked = (r: Pick<GoalReviewRecord, "ran" | "reason" | "unanswered" | "evaluator" | "extra" | "adjudication">): string[] => [
     ...(r.ran ? [] : [`the reviewer didn't run: ${r.reason ?? "no reason given"}`]),
     ...(r.ran && r.unanswered?.length ? [`the reviewer gave no clear verdict on ${r.unanswered.join(", ")}`] : []),
     ...(r.evaluator && !r.evaluator.ran ? [`the evaluator didn't run: ${r.evaluator.reason ?? "no reason given"}`] : []),
     ...(r.evaluator?.ran && r.evaluator.unanswered?.length ? [`the evaluator gave no score for ${r.evaluator.unanswered.join(", ")}`] : []),
+    ...([...r.extra.map((_, i) => `reviewer_extra_${i + 1}`), ...(r.evaluator?.ran && r.evaluator.failed.some((f) => f.id === "extra") ? ["extra"] : [])].some((id) => !r.adjudication?.ran || (!r.adjudication.confirmed.some((c) => c.id === id) && !r.adjudication.dismissed.some((c) => c.id === id))) ? [`the check of claimed unrelated changes did not finish: ${r.adjudication?.reason ?? "inconclusive findings"}`] : []),
   ];
-  // The usual number of reviews per run, and one more for each state the agent changed after an objection, up to a
-  // hard bound: an objection can't be escaped by an unrelated edit, and a run's cost stays bounded.
-  const fresh = reviews.length < MAX_REVIEWS || (standing.length > 0 && !sameState && reviews.length < REVIEW_HARD_LIMIT);
+  // New project work, recorded evidence, reviewer instructions or feedback can require a fresh check,
+  // within the hard bound. Repeated reports alone do not buy another review.
+  const fresh = reviews.length < MAX_REVIEWS || ((!sameState || last?.stateKey !== stateKey || last?.reviewerKey !== reviewerKey || corrected.has(last?.id ?? "")) && reviews.length < REVIEW_HARD_LIMIT);
   // A run that ended disputed over this very state (reviewed, or left unreviewed when the reviews ran out) stays
   // disputed however often it is reported: only a changed project is looked at again.
   const lastEnd = [...all].reverse().find((r): r is GoalEndRecord => r.kind === "goal.end" && r.goalHash === hash);
   if (lastEnd?.outcome === "disputed" && lastEnd.stateKey === stateKey) {
     return { accepted: false, outcome: "disputed", message: DISPUTED_SAME, unproved: lastEnd.reviewer ?? [], unclaimed: [] };
   }
-  if (prior) {
+  if (prior && (!retryBase || objectionLines(prior).length)) {
     const lines = objectionLines(prior);
     if (lines.length) {
       // It objected to this very state and nothing has changed: disputed, and it stays so until the project changes.
@@ -670,32 +687,36 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
       if (!already) await end(root, seq, who, hash, "disputed", { stateKey, reviewer: lines, reason: "the review objected to this very state and report, and nothing has changed since: its verdict stands until the project changes", ...receipt });
       return { accepted: false, outcome: "disputed", message: DISPUTED_SAME, unproved: lines, unclaimed: [] };
     }
+    reviewedId = prior.id;
+    independentChecks = checkSummary(prior);
     skipped.push(...unchecked(prior));
-  } else if (fresh) {
-    const asked = [contract.goal, ...(contract.successCriteria.length ? ["Done when:", ...contract.successCriteria.map((c) => `- ${c.text}`)] : [])].join("\n");
-    const claimed = `I report the goal complete. Proofs: ${JSON.stringify(input.proofs)}. Changed files: ${JSON.stringify(input.changes)}.`;
+  } else if (fresh || (retryBase && reviews.length < REVIEW_HARD_LIMIT)) {
+    const reuseReview = workState ? [...all].reverse().find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.policy === REVIEW_POLICY && r.reviewerKey === reviewerKey && !corrected.has(r.id ?? "") && r.goalHash === hash && r.tree === workState && r.ran && !r.unanswered?.length) : undefined;
+    const reuseEvaluator = workState ? [...all].reverse().find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.policy === REVIEW_POLICY && !corrected.has(r.id ?? "") && r.goalHash === hash && r.tree === workState && r.stateKey === stateKey && r.evaluator?.ran === true && !r.evaluator.unanswered?.length)?.evaluator : undefined;
+    const asked = [contract.goal, ...(contract.successCriteria.length ? ["Done when:", ...contract.successCriteria.map((c) => `- ${c.text}`)] : []), ...(contract.constraints.length ? ["User constraints:", ...contract.constraints] : []), completionScope(currentRequest)].join("\n");
+    const claimed = `Check the requested work against the current project and recorded evidence. Captured evidence: ${JSON.stringify(result.proved)}. Observed changed files: ${JSON.stringify(stillChanged(seq))}. Agent file labels are hints, not scope verdicts.`;
     const checksStarted = Date.now();
     const [outcome, evaluator] = await Promise.all([
-      runReview(root, contract),
-      Promise.all([readTrajectory(root, seq.records[0]?.ts ?? null), readShellOutputs(root)]).then(([conversation, outputs]) =>
+      reuseReview ? Promise.resolve({ ...reuseReview, unanswered: reuseReview.unanswered ?? [], prompt: undefined }) : runReview(root, reviewContract),
+      reuseEvaluator ? Promise.resolve({ ...reuseEvaluator, unanswered: reuseEvaluator.unanswered ?? [] }) : Promise.all([readTrajectory(root, seq.records[0]?.ts ?? null), readShellOutputs(root)]).then(([conversation, outputs]) =>
         // The finished project goes in after the run: its real changes, and each cited proof against the record.
-        runEvaluator({ userQuery: asked, items: contract.successCriteria.map((c) => ({ id: c.id, text: c.text })), conversation: [...conversation, ...reviewEvidence(root, input.proofs, outputs)], report: claimed }, opts.evaluatorBudgetMs ?? EVALUATOR_BUDGET_MS),
+        runEvaluator({ userQuery: asked, items: contract.successCriteria.map((c) => ({ id: c.id, text: c.text })), conversation: [...conversation, ...reviewEvidence(root, result.proved, outputs)], report: claimed }, opts.evaluatorBudgetMs ?? EVALUATOR_BUDGET_MS),
       ),
     ]);
-    // The evaluator judges from the record of the run, which can show an edit that was later replaced. What it alone
-    // objects to, the reviewer checks against the project itself before it counts: confirmed stands, dismissed is
-    // kept on the record and not sent back, and a claim with no clear answer stands, not adjudicated.
+    // Settle disagreements in either direction against a fresh project copy. A supporting declaration must not
+    // become a permanent false veto just because the reviewer, rather than the evaluator, objected to it.
+    // Confirmed and unclear objections stand; evidence-backed dismissals remain on the record, not in send-backs.
     const claims = claimsToAdjudicate(outcome, evaluator);
     // Without progress notices Cursor ends a silent tool call at 120 s, so the extra call gets what is left of that.
     const adjudicateBudget = opts.evaluatorBudgetMs ? REVIEW_BUDGET_MS : Math.max(15_000, SILENT_CALL_MS - (Date.now() - checksStarted));
-    const adjudication = claims.length ? await adjudicate(root, contract, claims, adjudicateBudget) : undefined;
+    const adjudication = claims.length ? await adjudicate(root, reviewContract, claims, adjudicateBudget) : undefined;
     const id = newId("rev");
     const ts = nowIso();
     // What it looked at is kept, so the review can be replayed later when Guardian tries to improve it.
-    const skippedCase = outcome.ran && outcome.prompt ? await saveCase(root, id, contract, { prompt: outcome.prompt, fails: outcome.fails, extra: outcome.extra }, ts).catch(() => "the case couldn't be saved") : null;
+    const skippedCase = reuseReview ? `reused the check from ${reuseReview.id}; no new reviewer case` : outcome.ran && outcome.prompt ? await saveCase(root, id, reviewContract, { prompt: outcome.prompt, fails: outcome.fails, extra: outcome.extra }, ts).catch(() => "the case couldn't be saved") : null;
     const record = {
-      ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra,
-      ...(outcome.unanswered.length ? { unanswered: outcome.unanswered } : {}), stateKey, ...(seq.tree ? { tree: seq.tree.fingerprint } : {}), evaluator,
+      policy: REVIEW_POLICY, reviewerKey, ...(outcome.checks ? { checks: outcome.checks } : {}), ...(outcome.verdicts ? { verdicts: outcome.verdicts } : {}), ran: outcome.ran, ...(outcome.reason ? { reason: outcome.reason } : {}), seconds: outcome.seconds, fails: outcome.fails, extra: outcome.extra,
+      ...(outcome.unanswered.length ? { unanswered: outcome.unanswered } : {}), stateKey, ...(workState ? { tree: workState } : {}), evaluator,
       ...(adjudication ? { adjudication } : {}),
     };
     await appendAudit(root, {
@@ -703,10 +724,13 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
       ...(outcome.ran ? (skippedCase ? { caseSaved: false, caseSkipped: skippedCase } : { caseSaved: true }) : {}),
       ...record,
     });
+    checkAttempts += 1;
     const lines = objectionLines(record);
     if (lines.length) {
       return { accepted: false, message: REVIEW_OBJECTS, unproved: lines, unclaimed: [] };
     }
+    reviewedId = id;
+    independentChecks = checkSummary(record);
     skipped.push(...unchecked(record));
   } else if (standing.length) {
     // The reviews are used up and the last one objected. Whether or not the agent changed something since, that
@@ -719,7 +743,21 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
       changedSinceReview = true;
       skipped.push(`the project changed after the last of this run's ${reviews.length} reviews and wasn't reviewed again`);
     }
-    if (last) skipped.push(...unchecked(last));
+    // This branch has no valid cached verdict and no review budget. A clean older result does not
+    // establish completion for changed evidence, reviewer instructions, feedback or verification policy.
+    skipped.push("no current independent verification is available and this run's review budget is exhausted");
+    if (last) {
+      reviewedId = last.id;
+      independentChecks = checkSummary(last);
+      skipped.push(...unchecked(last));
+    }
+  }
+  if (skipped.length && !recovery && checkAttempts < REVIEW_HARD_LIMIT) {
+    await appendAudit(root, { ts: nowIso(), kind: "goal.recovery", ...(chat ? { conversationId: chat } : {}), goalHash: hash, reportTs, ...(reviewedId ? { reviewId: reviewedId } : {}), skipped });
+    return { accepted: false, verificationPending: true, ...none, message: verificationRecoveryMessage(skipped) };
+  }
+  if (workState && verificationState(root) !== workState) {
+    return { accepted: false, ...none, message: "The project changed while verification was running. Report the current work again so only checks for the changed state are repeated." };
   }
   // The goal becomes complete only here, by Codex's own handler and DeepSeek's own tool each accepting this report.
   // What either refuses is the answer; if either one's code didn't run, nothing is accepted and the run ends unverified.
@@ -730,11 +768,11 @@ export async function submitGoalReport(root: string, input: GoalReportInput, opt
     return { accepted: false, outcome: "unverified", ...none, message: unverifiedMessage(completed.message), refusedBy: completed.by };
   }
   const outcome = skipped.length ? "unchecked" : "proved";
-  await end(root, seq, who, hash, outcome, { ...(skipped.length ? { skipped } : {}), ...(changedSinceReview ? { changedSinceReview: true } : {}), ...receipt });
+  await end(root, seq, who, hash, outcome, { ...(outcome === "proved" ? { verifiedItems: contract.successCriteria.map((c) => c.id) } : {}), ...(skipped.length ? { skipped } : {}), ...(changedSinceReview ? { changedSinceReview: true } : {}), ...receipt });
   const closing = completed.result.tool?.contexts[0] ?? CLOSING.proved(contract.goal);
   return {
     accepted: true, outcome, ...none,
-    message: skipped.length ? `${closing}\n\n${uncheckedMessage(skipped)}` : closing,
+    message: skipped.length ? `${uncheckedMessage(skipped, independentChecks)}\n\n${closing}` : `Independent verification completed: ${independentChecks}. These are the final check results; include them in your closing reply.\n\n${closing}`,
     ...(completed.result.tool ? { their: completed.result.tool.text } : {}),
     ...(completed.codex !== undefined ? { codex: completed.codex } : {}),
   };
@@ -744,7 +782,9 @@ const BLOCKED_AT_WORD = "Guardian: recorded as blocked on the first turn, at you
 const DISPUTED_SAME = "Recorded as disputed, not proved: the independent review already objected to this very state, and nothing has changed since. Reporting again doesn't get another review. Either fix what it objects to and report again, or tell the user plainly what the review says is wrong and why you disagree, and stop.";
 const DISPUTED = "Recorded as disputed, not proved: the independent review objected and its reviews for this run are used up. Don't report again. Tell the user plainly what the review says is wrong and what you did about it, and stop.";
 const unverifiedMessage = (why: string): string => `Recorded as unverified, not proved: ${why}. The goal can only be completed by both goal keepers' own code accepting it. Don't report again. Tell the user this, and what you finished, and stop.`;
-const uncheckedMessage = (skipped: string[]): string => `Guardian: recorded as complete but unchecked, not proved, because ${skipped.join("; ")}. Say in your closing message that this work was not independently checked.`;
+const verificationRecoveryMessage = (skipped: string[]): string => `Completion is still pending: ${skipped.join("; ")}. A check that could not finish is not proof that your work is wrong. Keep working in this run: use the existing local tools to run the relevant tests and build, exercise the affected public entry points, and fix any actual failures within the user's goal. Do not hand those commands to the user when you can run them. If those checks already passed on the current work, use their recorded results; do not repeat them or change correct code just to create activity. Then call ${CODEX_TOOLS.update.name} again with the current proofs. Guardian will retry unfinished independent checks once, retaining usable results on unchanged work. If a check still cannot finish, Guardian will end unchecked rather than loop forever. Do not claim the goal is proved or ask the user to repair Guardian before doing the useful work you can do.`;
+
+const uncheckedMessage = (skipped: string[], checks: string): string => `Verification incomplete: this work is unchecked.\n\nStart your final reply with that exact sentence, before any completion summary or local test results. Immediately explain which independent checks did not finish and which ran. Independent check results on the last reviewed state: ${checks}. Then describe the work and local tests. Guardian: recorded as complete but unchecked, not proved, because ${skipped.join("; ")}. Tell the user that full independent verification is incomplete. Distinguish checks that ran from checks that did not. Do not claim that no independent check ran unless both the reviewer and evaluator failed to run.`;
 
 /** How long a report's checks may take in all when nothing keeps Cursor's tool call alive (it ends a silent call at 120 s). */
 const SILENT_CALL_MS = 110_000;
@@ -752,7 +792,10 @@ const REVIEW_OBJECTS = "Not accepted yet: an independent reviewer checked the pr
 
 /** Reviews of this goal in this run, oldest first. */
 function reviewsOf(seq: Sequence, hash: string): GoalReviewRecord[] {
-  return seq.records.filter((r): r is GoalReviewRecord => r.kind === "goal.review" && r.goalHash === hash);
+  const reviews = seq.records.filter((r): r is GoalReviewRecord => r.kind === "goal.review" && r.policy === REVIEW_POLICY && r.goalHash === hash);
+  const ids = new Set(reviews.map((r) => r.id));
+  const correction = [...seq.records].reverse().find((r) => r.kind === "review.feedback" && ids.has(r.reviewId) && (r.label === "wrong" || r.label === "missed"));
+  return correction ? reviews.filter((r) => Date.parse(r.ts) > Date.parse(correction.ts)) : reviews;
 }
 
 /** Nothing moved since the round before: no edit in this chat, the same files, the same open items. */
@@ -811,7 +854,10 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     return null;
   }
   // Answering a question or asking one isn't goal work; a run already closed stays closed.
-  if (loopCount === 0 && !seq.changedThisTurn && !seq.report) return null;
+  const latestUser = [...seq.records].reverse().find((r) => r.kind === "user.message");
+  const startedThisTurn = latestUser?.kind === "user.message" && latestUser.conversationId === conversationId && seq.records.some((r) =>
+    r.kind === "goal.set" && r.goalHash === hash && (!r.conversationId || r.conversationId === conversationId) && Date.parse(r.ts) >= Date.parse(latestUser.ts));
+  if (loopCount === 0 && !seq.changedThisTurn && !seq.report && !startedThisTurn) return null;
   if (loopCount > 0 && seq.rounds.length === 0) return null;
 
   // Goal work happened this turn: its tokens and time go to Codex's store, whatever the turn's outcome.
@@ -848,10 +894,10 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     }
     const result = await evaluate(root, contract, seq.report, seq);
     unproved = result.unproved;
-    unclaimed = result.unclaimed;
+    unclaimed = [];
     // An extra the agent was already told about and still keeps is the user's call: reported, not re-argued.
     const warned = new Set(seq.rounds.flatMap((r) => r.extras));
-    extras = result.extras.filter((f) => !warned.has(f));
+    extras = [];
     const reviews = reviewsOf(seq, hash);
     const objected = [...reviews].reverse().find((r) => objectionLines(r).length > 0);
     const latest = reviews[reviews.length - 1];
@@ -860,7 +906,10 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     // A report that holds now but wasn't accepted when it was made (the project moved in between) is asked for
     // again: only a report both goal keepers accept, at the moment it is made, completes the goal.
     if (seq.report.status === "complete" && !unproved.length && !unclaimed.length && !extras.length && !reviewer.length) {
-      notes.push(`- Your last report holds against Guardian's record now. Call ${CODEX_TOOLS.update.name} again so it can be accepted.`);
+      const pending = [...seq.records].reverse().find((r) => r.kind === "goal.recovery" && r.goalHash === hash);
+      notes.push(pending?.kind === "goal.recovery" && latest?.id === pending.reviewId
+        ? `- ${verificationRecoveryMessage(pending.skipped)}`
+        : `- Your last report holds against Guardian's record now. Call ${CODEX_TOOLS.update.name} again so it can be accepted.`);
     }
   } else {
     notes.push("- No report yet.");
@@ -1009,7 +1058,7 @@ export async function goalTurnContext(root: string): Promise<string | null> {
     await engine(root, contract, { type: "resume" }).catch(() => null);
   }
   const phase = goalPhaseOf(records, contract);
-  if (phase === "none") return "No goal is on record. Guardian records the user's request as the goal, word for word, when you first change something. If this message asks to continue earlier work, look in past chats and recent commits to find out what it was.";
+  if (phase === "none") return "No goal is on record. If this message asks for new implementation, repair or other project changes, call create_goal with the user's request before beginning work. Guardian preserves their full recorded message and can then continue unfinished work even before the first edit. A question alone needs no goal. If this message asks to continue earlier work, look in past chats and recent commits to find out what it was.";
   if (phase !== "active") return null;
   return [
     `This workspace has an open goal the user set. Work on it only if this message asks for it, or asks to continue or finish: that means the whole goal, and report with ${CODEX_TOOLS.update.name} when it's done. If this message limits the work or asks for something separate, do only that, leave the rest of the goal alone, and call ${CODEX_TOOLS.update.name} with status set_aside and the message's own words in user_words before you stop. A limit in an earlier message ended with that message.`,

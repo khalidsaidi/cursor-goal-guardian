@@ -18,15 +18,23 @@ nobody can cheaply reconstruct what the session was for.
 ## What it does
 
 1. **Keeps the goal.** Your message is saved in your own words in Guardian's own goal
-   file: the text before a list is the goal, the list is the "done when" items, and
-   anything after the list is left out. It goes back to the agent with every message. The
+   file: the full request is kept as the goal, and a detected list also supplies
+   the "done when" items. Instructions after the list are retained. It goes back to the agent with every message. The
    goal's words and items live in that file, and only your words change them, with one
    exception: when your goal has no "done when" items at all, the agent may write them.
-2. **Sends the agent back.** When the agent stops with work changed and the goal not
+2. **Sends the agent back.** When the agent stops with a newly started task or changed work and the goal not
    accepted, Cursor's stop hook returns a message that puts it back to work.
-3. **Checks "done".** The agent's proof is compared with Guardian's own record of what ran
-   and changed. Then a second Cursor agent reviews the real project and Google ADK's
-   evaluator judges the recorded run. Their objections go back to the agent.
+3. **Checks "done".** Guardian uses its recorded command results and actual project changes;
+   the agent does not need to copy output quotes or label every changed file. A second
+   Cursor agent reviews the finished project, and Google ADK evaluates it against your
+   request. Missing work, demonstrated bugs, broken builds/tests and meaningful unrelated
+   changes go back to the agent. Harmless formatting and supporting types/docs are left
+   alone unless you explicitly required otherwise. The reviewer must
+   report build, public API and focused behavior checks; missing or inconclusive checks leave
+   the goal open for a recovery pass. The agent is sent back to finish local verification;
+   unfinished independent checks get one retry, with usable results retained on unchanged
+   work. Check reuse depends on the actual project and recorded results, not report wording. A check that still cannot finish leaves completion unchecked. Disagreements between the two checks get a fresh project check
+   before an objection goes back to the agent.
 4. **Retunes the reviewer.** Your verdicts on its objections are used to adjust the
    reviewer's prompt.
 
@@ -53,9 +61,9 @@ what runs and what is adapted.
 
 | Shown as | Meaning |
 |---|---|
-| proved | The proof holds against the record, the reviewer and the evaluator both answered for every item and neither objects, and Codex's and DeepSeek Harness's code both accepted |
+| proved | The reviewer and the evaluator both checked every requested item and neither objects, and Codex's and DeepSeek Harness's code both accepted |
 | unchecked | Accepted, but the reviewer or the evaluator didn't run or didn't answer for an item |
-| disputed | A review objected and it wasn't resolved. The same state is never reviewed twice |
+| disputed | A concrete review objection remains unresolved |
 | unverified | Codex's or DeepSeek Harness's code didn't run, or their copies of the goal disagree |
 | blocked | The agent reported an obstacle. On the first turn this is at the agent's word and shown as "blocked (unverified)" |
 | stalled, limit, stopped | Three rounds with nothing changed; Cursor's 20 follow-ups per message or DeepSeek Harness's 256 rounds per goal; a cancelled or failed turn |
@@ -64,9 +72,28 @@ what runs and what is adapted.
 
 ## What's been measured
 
-Everything below is from a private rig that runs Cursor's own agent loop with Claude Haiku
-standing in for the model. No real Cursor model has been measured, and only Linux. One run
-per cell, one judge per result. Plans and raw data are outside this repository.
+The historical studies in this section use a private rig running Cursor's agent loop
+with Claude Haiku standing in for the model, on Linux only. They do not measure real
+Cursor models. One run per cell, one judge per result. Plans and raw data are outside
+this repository.
+
+**Full lab check at `3fbb3de`, before the new verification checks.** 48 new runs, compared
+with 48 historical baseline results, all independently judged again. Items met out of 48:
+interrupted 46 vs 37; compaction stand-in 47 vs 14; normal use 44 vs 42. Both arms completed
+12 of 12 separate requests without known continuation of the old goal (one historical
+checkpoint was unavailable). Six runs marked proved still had unmet items; one run judged complete
+stalled over a false objection to a supporting type declaration. These are repeated
+cases across three task families, not six distinct defects. The build/API/behavior checks
+and two-way dispute check described above were added after this test; these figures do
+not validate that newer policy. The same Linux and stand-in-model limitations apply.
+
+**Verification-policy regression checks.** Six previously missed cases and two seeded
+negative controls were detected on replay; seven other controls passed. A case previously
+labelled good exposed an additional Date-leaf omission; a hand-corrected copy then passed.
+The original objection to its supporting type declaration was separately dismissed. These
+are development cases used to shape the checks, not a fresh held-out study. The earlier
+"completed" label for that case was too strong; its type objection was still false.
+
 
 **The goal loop, with Guardian vs without.** Measured before Codex's and DeepSeek
 Harness's code and ADK were wired in (the interrupted scenario at `a6b88c3` plus one rule
@@ -84,7 +111,7 @@ Only the compaction difference is statistically clear on its own (11 better, 0 w
 1 tied; p = 0.001). The interrupted one is 4 better, 0 worse, 8 tied (p = 0.125). In normal
 use Guardian finished nothing more and cost about a quarter more turns.
 
-**The current build, live.** Eight runs at `9fcafb5`, read from Guardian's own records
+**Earlier live smoke check.** Eight runs at `9fcafb5`, read from Guardian's own records
 and not judged: 6 ended proved in one to three turns; one was the separate-request scenario,
 which isn't meant to; one ended blocked because that project's tests couldn't run on the
 rig. This is a smoke check, not the judged test above.
@@ -103,13 +130,16 @@ On 33 natural runs the judges found fully done, the reviewer objected to 2. A re
 median of 18 s for the reviewer and 24 s and 5 model calls for the evaluator; the extra
 check of the evaluator's objections ran on 5 of the 45 replayed runs and took 7 to 14 s.
 
-**The reviewer's prompt.** The shipped prompt came from an RRSI run on the rig. On that
+**The reviewer's base prompt.** Before the new fixed verification requirements, the
+base template came from an RRSI run on the rig. On that
 run's held-out cases it flagged good work 0 of 11 times, down from 8, but caught 1 of 2 real
 failures, down from 2. Replayed on the 33 constructed runs above, it got 33 right against
 28 for the prompt before it, with no catch lost.
 
 **What this doesn't show.**
-- No natural run reached the review with a real gap, so every catch is on a constructed case.
+- In the earlier judged studies, no natural run reached the review with a real gap, so
+  catches there were on constructed cases. The later `3fbb3de` study above found natural
+  gaps the checks missed.
 - The agents were Claude models, which rarely wander by themselves, so the effect on
   unrequested work in ordinary use is unmeasured.
 - The self-improvement has never run on a user's real feedback.
@@ -120,11 +150,22 @@ failures, down from 2. Replayed on the 33 constructed runs above, it got 33 righ
 - **It doesn't defend its own files.** An agent that tampers with Guardian's log or
   reviewer prompt under `.cursor/goal-guardian` can reach "proved". A rewritten goal file
   is put back.
-- **It does nothing when a turn changes nothing**, and it doesn't see changes made only by
-  commands in gitignored paths.
-- **Outside a git repository** the reviewer doesn't run, so nothing ends proved, and a
-  cited command that names a file which doesn't exist isn't noticed. (A proof that cites a
-  missing file directly is still refused.)
+- **Questions alone do not start a goal.** A newly started implementation or repair can
+  be continued before its first edit. Shell-only changes in gitignored paths are not seen.
+- **Outside a git repository** the reviewer doesn't run, so the
+  result is recorded unchecked rather than proved.
+
+## Desktop validation
+
+A Linux x64 build was exercised in desktop Cursor with a WSL Ubuntu workspace and
+Grok 4.7 Medium on 2026-11-12. It honored a request to stop after the first item,
+retained the full goal for a fresh chat, completed the remaining package work, and
+ended proved after the reviewer and ADK both accepted every item. Separate checks
+of the built ESM and CommonJS entry points also passed. The reviewer was instructed
+to finish its own check without delegating to another helper layer.
+
+This is a desktop smoke test of that workflow, not a broad benchmark, native Windows
+validation, or validation of learning from real user feedback.
 
 ## What it costs
 
@@ -135,14 +176,14 @@ failures, down from 2. Replayed on the 33 constructed runs above, it got 33 righ
   on your first message, 370 ms on the first edit (when the goal is recorded), 163 ms on a
   later message with a goal open, and 554 ms when the agent stops and is sent back.
 - **Model calls:** a review is one reviewer call, about five evaluator calls, and one more
-  reviewer call when the evaluator alone objects, all on your Cursor plan. Each send-back is
+  reviewer call when the reviewer and evaluator disagree, all on your Cursor plan. Each send-back is
   an agent turn.
 
 ## Repo layout (pnpm monorepo)
 
 ```
 packages/
-  core/         @goal-guardian/core: goal file and record, goal loop, proof check, reviewer,
+  core/         @goal-guardian/core: goal file and record, goal loop, recorded evidence, reviewer,
                 adapters for the code below
   mcp/          MCP server: get_goal, create_goal, update_goal, goal_command,
                 guardian_change_goal

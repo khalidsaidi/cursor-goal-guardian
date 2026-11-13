@@ -1,3 +1,4 @@
+import { VERIFIED_CHECKS } from "./review.js";
 /**
  * Stand-ins every test file starts with, so a goal can be completed without the user's Cursor plan, a Rust build or
  * a Python: a Codex goal program that keeps a small goal state and answers as the real one does, a reviewer that
@@ -67,7 +68,7 @@ process.stdout.write(JSON.stringify(out) + "\\n");
 export const STANDIN_REVIEWER = exe("reviewer", `
 const a = process.argv.slice(2); const prompt = a[a.indexOf("-p") + 1] || "";
 const ids = [...prompt.matchAll(/^- ([A-Za-z0-9_]+): /gm)].map((m) => m[1]);
-process.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify({ items: ids.map((id) => ({ id, verdict: "holds", evidence: "checked" })), extra: [] }) }) + "\\n");`);
+process.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify({ items: ids.map((id) => ({ id, verdict: "holds", evidence: "checked" })), extra: [], checks: ${JSON.stringify(VERIFIED_CHECKS)} }) }) + "\\n");`);
 
 /** An evaluator "Python" that judges every rubric it is given met: one per item (or "goal"), and the one about extra work. */
 const evaluatorPython = exe("evaluator-python", `

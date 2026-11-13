@@ -1,3 +1,4 @@
+import { finishReport } from "./helpers/recovery.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
@@ -7,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { foldGoal } from "@deepseek-ai/dsh-goal";
 import {
   EngineRefused, appendAudit, controlGoal, criteriaFromTexts, defaultContract, engineApply, engineRun, engineGoalPolicy, DEEPSEEK_GOAL_POLICY, guardianRuleContent, runGoalTool, runGoalCommand, engineEvents, engineView, getGuardianPaths, goalPhaseOf, goalTurnContext, legacyGoalPhase,
-  nowIso, readAuditTail, readContractSafe, readGoalRecords, recordShellOutput, recordUserPrompt, runGoalStop, submitGoalReport, captureGoal, goalHash,
+  nowIso, readAuditTail, readContractSafe, readGoalRecords, recordShellOutput, recordUserPrompt, runGoalStop, captureGoal, goalHash,
 } from "../src/index.js";
 
 const made: string[] = [];
@@ -172,7 +173,7 @@ describe("Guardian's flows go through the service", () => {
     const root = await ws("", []);
     await recordUserPrompt(root, "Add CSV export\n- the export test passes\n- the readme says so", "c1", "agent");
     expect(await captureGoal(root, "c1")).toBe(true);
-    expect(await view(root)).toMatchObject({ objective: "Add CSV export", phase: "active", roundsStarted: 0 });
+    expect(await view(root)).toMatchObject({ objective: "Add CSV export\n- the export test passes\n- the readme says so", phase: "active", roundsStarted: 0 });
     await edit(root);
     expect(await stop(root)).toContain("Round: 1/256");
     await edit(root);
@@ -181,7 +182,7 @@ describe("Guardian's flows go through the service", () => {
     await tick();
     await recordShellOutput(root, { command: "make test", output: "12 passed", durationMs: 0 });
     process.env.GOAL_GUARDIAN_REVIEWER = "/nonexistent/reviewer";
-    const answer = await submitGoalReport(root, { status: "complete", proofs: [{ criterion: "sc_1", command: "make test", quote: "12 passed" }, { criterion: "sc_2", command: "make test", quote: "12 passed" }], changes: [{ file: "a.js", serves: "sc_1" }] });
+    const answer = await finishReport(root, { status: "complete", proofs: [{ criterion: "sc_1", command: "make test", quote: "12 passed" }, { criterion: "sc_2", command: "make test", quote: "12 passed" }], changes: [{ file: "a.js", serves: "sc_1" }] });
     delete process.env.GOAL_GUARDIAN_REVIEWER;
     expect(answer.accepted).toBe(true);
     // Their update_goal tool completed it in that same report, in the goal round their driver had admitted.
@@ -201,7 +202,7 @@ describe("Guardian's flows go through the service", () => {
     await controlGoal(root, "resume");
     expect(await phase(root)).toBe("active");
     await recordUserPrompt(root, "please pause this goal for now", "c1", "agent");
-    expect((await submitGoalReport(root, { status: "paused", proofs: [], changes: [], userWords: "pause this goal for now" })).accepted).toBe(true);
+    expect((await finishReport(root, { status: "paused", proofs: [], changes: [], userWords: "pause this goal for now" })).accepted).toBe(true);
     expect((await view(root))!.phase).toBe("paused");
     await controlGoal(root, "done");
     expect((await view(root))!.phase).toBe("complete");
@@ -217,7 +218,7 @@ describe("Guardian's flows go through the service", () => {
       expect(await stop(root, n)).not.toBeNull();
     }
     await edit(root);
-    expect((await submitGoalReport(root, blocked)).accepted).toBe(true);
+    expect((await finishReport(root, blocked)).accepted).toBe(true);
     expect(await stop(root, 3)).toBeNull();
     expect(await view(root)).toMatchObject({ phase: "blocked", blockedReason: { code: "model-reported", message: "the registry is down" } });
     expect((await readGoalRecords(root)).filter((r) => r.kind === "goal.end")).toMatchObject([{ outcome: "blocked" }]);

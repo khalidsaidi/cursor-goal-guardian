@@ -1,3 +1,4 @@
+import { checkedReview } from "./helpers/review.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
@@ -50,7 +51,7 @@ const say = (text) => process.stdout.write(JSON.stringify({ type: "result", resu
 if (p.includes("The claims:")) {
   fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(p) + "\\n");
   say(${JSON.stringify(typeof claims === "string" ? claims : JSON.stringify({ claims }))});
-} else say(${JSON.stringify(JSON.stringify(review))});`);
+} else say(${JSON.stringify(JSON.stringify({ ...checkedReview(review), ...review as object }))});`);
   return { file, log };
 }
 const HOLDS = { items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [] };
@@ -92,11 +93,11 @@ describe("what the evaluator alone objects to is checked against the project bef
     { id: "extra", property: "nothing extra", rationale: "edited the type declarations" },
   ];
 
-  it("only claims the reviewer didn't already make are checked", () => {
+  it("checks item disagreements and each individual scope claim", () => {
     const evaluator = { ran: true, failed: claims };
     expect(claimsToAdjudicate({ fails: [], extra: [] }, evaluator)).toEqual(claims);
     expect(claimsToAdjudicate({ fails: [{ id: "sc_1", evidence: "x" }], extra: [] }, evaluator)).toEqual([claims[1]]);
-    expect(claimsToAdjudicate({ fails: [], extra: [{ file: "a.d.ts", what: "types" }] }, evaluator)).toEqual([claims[0]]);
+    expect(claimsToAdjudicate({ fails: [], extra: [{ file: "a.d.ts", what: "types" }] }, evaluator)).toEqual([...claims, { id: "reviewer_extra_1", property: "unrequested change in a.d.ts", rationale: "types" }]);
     expect(claimsToAdjudicate({ fails: [], extra: [] }, { ran: false, failed: claims })).toEqual([]);
     expect(claimsToAdjudicate({ fails: [], extra: [] }, undefined)).toEqual([]);
   });
@@ -126,7 +127,7 @@ describe("what the evaluator alone objects to is checked against the project bef
     const review = { fails: [], extra: [], evaluator: { ran: true, failed: claims } };
     expect(objectionLines(review)).toHaveLength(2);
     const settled = { ...review, adjudication: { ran: true, confirmed: [{ id: "extra", evidence: "util.js renamed" }], dismissed: [{ ...claims[0]!, evidence: "index.js:12 compares the whole name" }] } };
-    expect(objectionLines(settled)).toEqual(["Evaluator: the run changed things the request doesn't need: edited the type declarations The reviewer checked the project and confirms it: util.js renamed"]);
+    expect(objectionLines(settled)).toEqual(["Evaluator: meaningful unrelated change: util.js renamed"]);
     expect(dismissedLines(settled)).toEqual(["The evaluator raised sc_1 (renames by substring); the reviewer checked the project and dismissed it: index.js:12 compares the whole name"]);
   });
 });
@@ -190,29 +191,79 @@ describe("the adjudication in the goal loop", () => {
     }
   }, 120_000);
 
-  it("the reviewer already objects to the same thing: nothing to settle, so no extra call", async () => {
+  it("shared item failures stand, while each scope opinion still gets checked", async () => {
     const root = await doneWork();
     const r = await reviewer({ items: [{ id: "sc_1", verdict: "fails", evidence: "the export is a comment" }], extra: [{ file: "a.d.ts", what: "types nobody asked for" }] }, [{ id: "sc_1", verdict: "dismissed", evidence: "x" }]);
     process.env.GOAL_GUARDIAN_REVIEWER = r.file;
     process.env.GOAL_GUARDIAN_EVALUATOR = await evaluatorObjects(SC1, EXTRA);
     const answer = await submitGoalReport(root, report);
     expect(answer.accepted).toBe(false);
-    expect(answer.unproved).toHaveLength(4);
-    expect(await asked(r.log)).toHaveLength(0);
-    expect((await reviews(root))[0]).not.toHaveProperty("adjudication");
+    expect(answer.unproved).toHaveLength(2);
+    expect(answer.unproved.join()).not.toContain("types nobody asked");
+    expect(await asked(r.log)).toHaveLength(1);
+    expect((await reviews(root))[0]).toHaveProperty("adjudication");
   }, 60_000);
 
-  it("only the claims the reviewer didn't make are sent: its own extras stand, the evaluator's item claim is checked", async () => {
+  it("unconfirmed scope opinions remain incomplete verification, not instructions to change correct work", async () => {
     const root = await doneWork();
     const r = await reviewer({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [{ file: "a.d.ts", what: "types nobody asked for" }] }, [{ id: "sc_1", verdict: "dismissed", evidence: "make test passes on the final a.js" }]);
     process.env.GOAL_GUARDIAN_REVIEWER = r.file;
     process.env.GOAL_GUARDIAN_EVALUATOR = await evaluatorObjects(SC1, EXTRA);
     const answer = await submitGoalReport(root, report);
     expect(answer.accepted).toBe(false);
-    expect(answer.unproved).toEqual(["Reviewer: a.d.ts isn't needed by any item: types nobody asked for", "Evaluator: the run changed things the request doesn't need: it edited the type declarations"]);
+    expect(answer.verificationPending).toBe(true);
+    expect(answer.unproved).toEqual([]);
     const sent = await asked(r.log);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("- sc_1 (the export test passes) is not met");
-    expect(sent[0]).not.toContain("- extra (");
+    expect(sent[0]).toContain("- extra (");
+    expect(sent[0]).toContain("reviewer_extra_1");
   }, 60_000);
+});
+
+
+describe("reviewer-only objections are checked too", () => {
+  it("a supporting type declaration can be dismissed without changing completed work", async () => {
+    const root = await doneWork();
+    const r = await reviewer({ ...HOLDS, extra: [{ file: "export.d.ts", what: "adds the requested export declaration" }] }, [{ id: "reviewer_extra_1", verdict: "dismissed", evidence: "the declaration belongs to the requested CSV export, with no unrelated change" }]);
+    process.env.GOAL_GUARDIAN_REVIEWER = r.file;
+    process.env.GOAL_GUARDIAN_EVALUATOR = await evaluatorObjects();
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "proved" });
+    const records = await reviews(root);
+    expect(records).toMatchObject([{ extra: [{ file: "export.d.ts" }], adjudication: { dismissed: [{ id: "reviewer_extra_1" }] } }]);
+    expect(objectionLines(records[0] as never)).toEqual([]);
+    expect(await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 0 })).toBeNull();
+  }, 60_000);
+
+  it("a dismissed behavior claim cannot survive as a duplicate aggregate veto", async () => {
+    const root = await doneWork();
+    const review = checkedReview({ items: [{ id: "sc_1", verdict: "fails", evidence: "requires an additional data model the user did not ask for" }], extra: [] });
+    review.checks = review.checks.map((c) => c.id === "behavior" ? { ...c, verdict: "fails", evidence: "same additional data model claim" } : c);
+    const r = await reviewer(review, [
+      { id: "reviewer_item_1", verdict: "dismissed", evidence: "the export works as requested; the extra requirement is not in the goal" },
+      { id: "reviewer_item_2", verdict: "dismissed", evidence: "the aggregate repeats the same unsupported requirement" },
+    ]);
+    process.env.GOAL_GUARDIAN_REVIEWER = r.file;
+    process.env.GOAL_GUARDIAN_EVALUATOR = await evaluatorObjects();
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "proved" });
+  }, 60_000);
+
+  it("a confirmed unrelated change asks for a fix; an unclear scope check does not", async () => {
+    for (const verdict of ["confirmed", "unclear"]) {
+      const root = await doneWork();
+      const r = await reviewer({ ...HOLDS, extra: [{ file: "util.js", what: "renames unrelated existing helpers" }] }, [{ id: "reviewer_extra_1", verdict, evidence: "util.js changes the old unrelated name" }]);
+      process.env.GOAL_GUARDIAN_REVIEWER = r.file;
+      process.env.GOAL_GUARDIAN_EVALUATOR = await evaluatorObjects();
+      const answer = await submitGoalReport(root, report);
+      expect(answer.accepted).toBe(false);
+      if (verdict === "confirmed") expect(answer.unproved).toContain("Reviewer: util.js needs attention: util.js changes the old unrelated name");
+      else { expect(answer.verificationPending).toBe(true); expect(answer.unproved).toEqual([]); }
+    }
+  }, 60_000);
+
+  it("an unanswered evaluator rubric cannot overrule the reviewer", () => {
+    const review = { fails: [{ id: "sc_1", evidence: "broken" }], extra: [{ file: "util.js", what: "unrelated" }] };
+    expect(claimsToAdjudicate(review, { ran: true, failed: [], unanswered: ["sc_1", "extra"] })).toEqual([{ id: "reviewer_extra_1", property: "unrequested change in util.js", rationale: "unrelated" }]);
+    expect(claimsToAdjudicate({ fails: [{ id: "build", evidence: "bundle absent" }], extra: [] }, { ran: true, failed: [] })).toEqual([]);
+  });
 });

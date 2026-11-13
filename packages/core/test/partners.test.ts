@@ -1,3 +1,4 @@
+import { finishReport } from "./helpers/recovery.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -5,8 +6,8 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  appendAudit, createGoalByTool, defaultContract, engineGoal, getGuardianPaths, goalMidTurnNotice, goalPhaseOf, nowIso, readAuditTail, readContractSafe, readGoalRecords, recordShellOutput,
-  recordUserPrompt, runGoalStop, setEngineGoal, submitGoalReport, writeContract,
+  appendAudit, createGoalByTool, updateGoalByTool, defaultContract, engineGoal, getGuardianPaths, goalMidTurnNotice, goalPhaseOf, nowIso, readAuditTail, readContractSafe, readGoalRecords, recordShellOutput,
+  recordUserPrompt, runGoalStop, setEngineGoal, writeContract,
 } from "../src/index.js";
 
 const made: string[] = [];
@@ -119,7 +120,7 @@ describe("two goal keepers side by side", () => {
     await doneWork(root);
     // The report itself is where both are asked: Codex's handler, then DeepSeek's tool. Both said yes, so the goal
     // is complete at once. The reviewer wasn't there to check it, so it is recorded as unchecked, not proved.
-    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
+    expect(await finishReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
     expect(codex.log().filter((r) => r.op === "tool")).toMatchObject([{ name: "update_goal", arguments: { status: "complete" } }]);
     expect((await engineGoal(root))?.phase).toBe("complete");
     expect(await kinds(root, "goal.refused")).toEqual([]);
@@ -135,7 +136,7 @@ describe("two goal keepers side by side", () => {
     const root = await workspace();
     await doneWork(root);
     // Codex's refusal is the answer the agent gets, and nothing is completed or recorded as ended.
-    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, refusedBy: "codex", message: "Not completed: Codex says no: the goal isn't complete" });
+    expect(await finishReport(root, report)).toMatchObject({ accepted: false, refusedBy: "codex", message: "Not completed: Codex says no: the goal isn't complete" });
     expect(await stop(root)).toContain("Call update_goal again");
     expect(await kinds(root, "goal.end")).toEqual([]);
     expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "complete", by: "codex", message: "Codex says no: the goal isn't complete" }]);
@@ -147,7 +148,7 @@ describe("two goal keepers side by side", () => {
     codex.set({ refuse: { "update_goal:blocked": "Codex says no to blocked" } });
     const other = await workspace();
     await doneWork(other);
-    const answer = await submitGoalReport(other, { status: "blocked", proofs: [], changes: [], reason: "no network" });
+    const answer = await finishReport(other, { status: "blocked", proofs: [], changes: [], reason: "no network" });
     expect(answer).toMatchObject({ accepted: false, refusedBy: "codex", message: "Codex says no to blocked" });
     expect((await engineGoal(other))?.phase).toBe("active");
     expect(await kinds(other, "goal.refused")).toMatchObject([{ change: "blocked", by: "codex" }]);
@@ -181,6 +182,26 @@ describe("two goal keepers side by side", () => {
     expect(notice).toContain('User set the goal: "Add JSON export instead"');
     expect(notice).toContain("CODEX NOTICE objective_updated");
   }, 30_000);
+
+  it("keeps the full request when ordinary goal tools quote only its headline", async () => {
+    const root = await workspace("");
+    const first = "Add the requested CSV export.\n- Export records\n- Keep headers\n\nDo not change a.js.";
+    await recordUserPrompt(root, first, "c1", "agent");
+    expect((await createGoalByTool(root, "Add the requested CSV export.")).isError).toBe(false);
+    expect((await readContractSafe(root)).goal).toBe(first);
+    const next = "Use JSON export instead.\n- Export records\n- Keep their keys\n\nKeep the existing README unchanged.";
+    await recordUserPrompt(root, next, "c1", "agent");
+    expect((await updateGoalByTool(root, { action: "edit", objective: "Use JSON export instead." })).isError).toBe(false);
+    expect((await readContractSafe(root)).goal).toBe(next);
+    expect((await readContractSafe(root)).successCriteria.map(c => c.text)).toEqual(["Export records", "Keep their keys"]);
+  });
+
+  it("continues a newly started task even when the agent stops after inspection, before its first edit", async () => {
+    const root = await workspace("");
+    await recordUserPrompt(root, "Add the requested CSV export.", "c1", "agent");
+    expect((await createGoalByTool(root, "Add the requested CSV export.")).isError).toBe(false);
+    expect(await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 0 })).toContain("<goal_round>");
+  });
 
   it("create_goal asks Codex's own handler first; its refusal means no goal is created", async () => {
     const codex = await fakeCodex();

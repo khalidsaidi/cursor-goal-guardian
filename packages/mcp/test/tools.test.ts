@@ -82,9 +82,9 @@ describe("guardian_change_goal", () => {
     expect(result.goal).toBe("Ship the CSV export feature, plus filters");
     expect((result.criteria as Array<{ id: string; text: string }>).map((c) => c.id)).toEqual(["sc_1"]);
     expect(((await callJson("get_goal")).goal as { objective: string }).objective).toBe("Ship the CSV export feature, plus filters");
-    await recordUserPrompt(ws.root, "Ship it.\n- one thing\n- another thing", "c1", "agent");
-    const listed = await callJson("guardian_change_goal", { user_words: "Ship it.\n- one thing\n- another thing" });
-    expect(listed.goal).toBe("Ship it.");
+    await recordUserPrompt(ws.root, "Ship the two requested helpers.\n- one thing\n- another thing\n\nKeep the README unchanged.", "c1", "agent");
+    const listed = await callJson("guardian_change_goal", { user_words: "Ship the two requested helpers." });
+    expect(listed.goal).toBe("Ship the two requested helpers.\n- one thing\n- another thing\n\nKeep the README unchanged.");
     expect((listed.criteria as Array<{ text: string }>).map((c) => c.text)).toEqual(["one thing", "another thing"]);
   });
 });
@@ -113,7 +113,7 @@ describe("only the user changes the goal", () => {
     expect(added.content[0]!.text).toContain("already has 'done when' items");
     expect(((await callJson("get_goal")).goal as { done_when: unknown[] }).done_when).toHaveLength(1);
     expect((await call({ user_words: "make it JSON export instead" })).isError).toBeFalsy();
-    expect(String(((await callJson("get_goal")).goal as { objective: string }).objective)).toBe("make it JSON export instead");
+    expect(String(((await callJson("get_goal")).goal as { objective: string }).objective)).toBe("please make it JSON export instead");
     // The new goal has no items at all: this is the one case where the agent may write them.
     const filled = await call({ add_criteria: ["exports valid JSON"] });
     expect(filled.isError).toBeFalsy();
@@ -158,10 +158,11 @@ describe("update_goal", () => {
     expect(status.description).toContain("Set to `complete` only when the objective is achieved and no required work remains.");
   });
 
-  it("answers at once with what doesn't hold, and records the claim", async () => {
+  it("uses recorded work rather than demanding copied proof text, and records the request", async () => {
     const answer = await callJson("update_goal", { status: "complete", proofs: [{ criterion: "sc_1", command: "make test", quote: "12 passed" }] });
     expect(answer.accepted).toBe(false);
-    expect(JSON.stringify(answer.unproved)).toContain("no record of `make test`");
+    expect(answer.verificationPending).toBe(true);
+    expect(answer.unproved).toEqual([]);
     expect(auditOfKind(await readAudit(ws.root), "goal.report").length).toBeGreaterThanOrEqual(1);
   });
 });

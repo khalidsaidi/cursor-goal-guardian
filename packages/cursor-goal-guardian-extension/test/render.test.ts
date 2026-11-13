@@ -70,6 +70,17 @@ describe("panel sections", () => {
     expect(sections.constraints).toContain("No new dependencies");
   });
 
+  it("puts incomplete verification above completion receipts in an explicit warning", () => {
+    const inp=inputs();
+    inp.goalRecords=[{ts:at(1),kind:"goal.end",goalHash:goalHash(inp.contract),outcome:"unchecked",skipped:["reviewer failed <details>"],proved:[{criterion:"sc_1",command:"npm test",quote:"passed"}]}];
+    const sections=renderSections(buildPanelViewModel(inp));
+    expect(sections.goal).toContain('class="verification-warning" role="status"');
+    expect(sections.goal).toContain("reviewer failed &lt;details&gt;");
+    expect(sections.goal.indexOf("Verification incomplete")).toBeLessThan(sections.goal.indexOf("npm test"));
+    inp.goalRecords[0]={ts:at(1),kind:"goal.end",goalHash:goalHash(inp.contract),outcome:"proved"};
+    expect(renderSections(buildPanelViewModel(inp)).goal).not.toContain('class="verification-warning"');
+  });
+
   it("escapeHtml covers the critical entities", () => {
     expect(escapeHtml(`<a href="x" onclick='y'>&`)).toBe("&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;");
   });

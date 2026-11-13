@@ -4,6 +4,24 @@
 
 Built and run on Linux x64 only so far.
 
+### Completion verification
+
+- Run the independent reviewer directly, without another helper layer that can delay its verdict past the tool-call budget.
+
+- Check finished work rather than copied proof text or file labels. Use recorded command results and actual source; do not send the agent back over harmless formatting, supporting docs/types or a line-count heuristic.
+- Keep objections for missing requirements, demonstrated failures and meaningful unrelated changes. Explicit user restrictions still apply to every checker.
+- Reuse checks by project content and recorded results, independently of report wording or commits. Respect changed reviewer templates and feedback corrections, and invalidate checks when relevant work changes.
+
+- Keep the goal active for a bounded recovery pass when independent verification cannot finish. Send the agent back to finish local checks and retry unfinished independent checks, preserving usable results on unchanged work. Persistent failures end unchecked; concrete objections still require a fix.
+
+- Require evidenced build, public API and focused behavior checks. Missing or inconclusive checks cannot produce proved; a failed check can reject completion even when source tests pass.
+- Check reviewer-only objections against the project when the evaluator disagrees, including false objections to declarations supporting the requested export. Evidence-backed dismissals are recorded without sending the agent back to change correct work.
+- Include actual cited source in evaluator evidence, even when an earlier turn committed it. Retain per-item review evidence and separate cached verdicts by policy version.
+- Incomplete review replays cannot score as clean passes during prompt improvement.
+
+The earlier study figures below predate this verification policy; they are not measurements of these changes.
+
+
 ### Other projects' goal code runs beside Guardian's own
 
 The goal's words and "done when" items stay in Guardian's own goal file, and Guardian's own checks still come first when the agent is sent back and when "done" is accepted. Two projects' goal code now runs beside it, unmodified, with credit in `NOTICE`; each is consulted on every round and can refuse a change, and the goal's phase is read from DeepSeek Harness's record:
@@ -19,12 +37,12 @@ The agent's tools are now `get_goal`, `create_goal` and `update_goal` (each call
 
 ### Two checks at "done", and honest outcomes
 
-When the agent reports the goal complete and Guardian's record backs every item, two checks run on your own Cursor model before it is accepted:
+When the agent reports the goal complete, two checks run on your own Cursor model before it is accepted:
 
-- **The reviewer**, Guardian's own: a separate headless agent (`cursor-agent`) in a throwaway copy of the project tries to prove each "done when" item isn't really done and lists changes no item needs. It must give a clear verdict on every item.
-- **The evaluator**, from Google's Agent Development Kit (Apache-2.0, bundled unmodified): it judges Guardian's record of the run, with the real diff and each cited proof added as evidence, against each "done when" item and for unrequested work. It doesn't see the project itself, so when it alone objects, the reviewer checks that claim against the project before it counts.
+- **The reviewer**, Guardian's own: a separate headless agent (`cursor-agent`) in a throwaway copy of the project checks each requested outcome and identifies unfinished work, demonstrated defects and meaningful unrelated changes. It must give a clear verdict on every item.
+- **The evaluator**, from Google's Agent Development Kit (Apache-2.0, bundled unmodified): it judges Guardian's record of the run, with the real diff and each cited proof added as evidence, against each "done when" item and for unrequested work. It doesn't see the project itself, so disagreements in either direction get a fresh project check before an objection counts.
 
-A goal now ends as one of: **proved** (the proof held and neither check objected), **unchecked** (a check didn't run or didn't answer for an item), **disputed** (an objection wasn't resolved; the same work isn't reviewed twice), **unverified** (part of Guardian couldn't run), **blocked**, **set aside**, **stalled**, out of rounds, or **over budget**. A proof that cites a file not in the project is refused, and a goal file rewritten without you is put back. A review costs one reviewer call, about five evaluator calls, and one more reviewer call when the evaluator alone objects. Guardian also records what each edit changed (`telemetry/edits.jsonl`, kept out of git).
+A goal now ends as one of: **proved** (both checks established every requested item and neither objected), **unchecked** (a check didn't run or didn't answer for an item), **disputed** (an objection wasn't resolved; the same work isn't reviewed twice), **unverified** (part of Guardian couldn't run), **blocked**, **set aside**, **stalled**, out of rounds, or **over budget**. Optional proof hints do not replace checking the actual work, and a goal file rewritten without you is put back. A review costs one reviewer call, about five evaluator calls, and one more reviewer call when the reviewer and evaluator disagree. Guardian also records what each edit changed (`telemetry/edits.jsonl`, kept out of git).
 
 ### The reviewer is retuned from your verdicts
 

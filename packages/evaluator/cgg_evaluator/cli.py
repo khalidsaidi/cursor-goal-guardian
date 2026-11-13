@@ -34,8 +34,16 @@ HERE = Path(__file__).resolve().parent
 
 # The one rubric that is Guardian's: the user's items say what must be done, this says nothing else should be.
 EXTRA_WORK_ID = "extra"
-EXTRA_WORK_RUBRIC = ("The agent changed nothing that the user's request does not need. Tests, type declarations, documentation "
-                     "and comments for the work the request asks for are part of that work, not extra.")
+EXTRA_WORK_RUBRIC = (
+    "The final project contains no meaningful unrequested behavior, feature, API change or loss of existing work. "
+    "Tests, type declarations, documentation, comments and minimal build fixes supporting the requested behavior "
+    "are part of that work. Harmless formatting, wording, Markdown styling and build/test instructions are allowed, "
+    "including edits to existing text. Enforce formatting, exact-text or supporting-file restrictions only when "
+    "the user explicitly required them; cite the requirement and the concrete violation. A changed filename, "
+    "reformatted declaration or added documentation heading alone is not a failure. Judge the current project, "
+    "not superseded edits that were fixed. Copied output quotes and completion-report formatting are not requirements; "
+    "use Guardian's recorded results and the actual project evidence."
+)
 # ADK's name for this evaluator's metric (evaluation/eval_metrics.py PrebuiltMetrics).
 METRIC = "rubric_based_multi_turn_trajectory_quality_v1"
 JUDGE_MODEL = "cursor-agent"

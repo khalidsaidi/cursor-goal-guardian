@@ -1,3 +1,4 @@
+import { VERIFIED_CHECKS } from "./helpers/review.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
@@ -63,6 +64,35 @@ describe("a review's case", () => {
     expect(sh(copy!.dir, "diff", "HEAD", "--stat")).toContain("a.js");
   });
 
+  it("retains explicit constraints when learning replays a saved project", async () => {
+    const root = await repo();
+    const constrained = { ...contract, constraints: ["Do not change a.js."], currentRequest: "Continue the original goal and finish the remaining work." };
+    const prompt = `${REVIEW_PROMPT}\n\nUser constraints:\n- Do not change a.js.`;
+    expect(await saveCase(root, "restricted", constrained, { prompt, fails: [], extra: [{ file: "a.js", what: "changed a file the user required unchanged" }] }, nowIso())).toBeNull();
+    const [saved] = await loadCases(root);
+    expect(saved?.constraints).toEqual(constrained.constraints);
+    expect(saved?.currentRequest).toBe(constrained.currentRequest);
+    const reviewer = path.join(await tmp("gg-constraint-reviewer-"), "agent");
+    await fs.writeFile(reviewer, `#!/usr/bin/env node
+const cp=require('child_process'),a=process.argv.slice(2),p=a[a.indexOf('-p')+1]||'',w=a[a.indexOf('--workspace')+1];
+if(!p.includes('Latest user request for this turn:'+String.fromCharCode(10)+'Continue the original goal and finish the remaining work.'))process.exit(2);
+const changed=cp.execFileSync('git',['diff','HEAD','--','a.js'],{cwd:w,encoding:'utf8'}).length>0;
+const extra=p.includes('Do not change a.js.')&&changed?[{file:'a.js',what:'Changed the file the user required unchanged'}]:[];
+console.log(JSON.stringify({items:[{id:'sc_1',verdict:'holds',evidence:'export present'}],extra,checks:${JSON.stringify(VERIFIED_CHECKS)}}));
+`);
+    await fs.chmod(reviewer, 0o755); process.env.GOAL_GUARDIAN_REVIEWER = reviewer;
+    expect(await replayCase(root, "restricted", REVIEW_PROMPT)).toMatchObject({ ran: true, flagged: true, extra: [{ file: "a.js", what: expect.stringContaining("required unchanged") }] });
+    // A legacy record with known restrictions but no saved constraint field cannot supply a fair replay.
+    delete saved!.constraints;
+    const file = path.join(getGuardianPaths(root).dir, "cases", "restricted", "case.json");
+    await fs.writeFile(file, JSON.stringify(saved));
+    expect(await replayCase(root, "restricted", REVIEW_PROMPT)).toMatchObject({ ran: false, flagged: null, reason: expect.stringContaining("did not retain") });
+    saved!.constraints = constrained.constraints;
+    delete saved!.currentRequest;
+    await fs.writeFile(file, JSON.stringify(saved));
+    expect(await replayCase(root, "restricted", REVIEW_PROMPT)).toMatchObject({ ran: false, flagged: null, reason: expect.stringContaining("user request active") });
+  });
+
   it("isn't saved when the work is too big, or there's no commit to replay it on", async () => {
     const root = await repo();
     expect(await saveCase(root, "rev_big", contract, { prompt: "p", ...OBJECTION }, nowIso(), 10)).toMatch(/over/);
@@ -73,8 +103,8 @@ describe("a review's case", () => {
   });
 });
 
-describe("labels come from what people did", () => {
-  it("the user's verdict wins; a fixed objection was right; marking done over one was wrong; arguing back is nothing", async () => {
+describe("labels come from explicit user feedback", () => {
+  it("explicit verdicts label reviews; compliance and agent arguments do not", async () => {
     const records: AuditRecord[] = [];
     records.push(review("fixed", "h1"));
     records.push({ ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js" } as AuditRecord);
@@ -90,16 +120,29 @@ describe("labels come from what people did", () => {
     records.push({ ts: nowIso(), kind: "review.feedback", reviewId: "user-wrong", index: 1, label: "wrong" });
     records.push(review("half-said", "h6"));
     records.push({ ts: nowIso(), kind: "review.feedback", reviewId: "half-said", index: 0, label: "wrong" });
-    // The user overrides an implicit label.
+    // An explicit verdict still labels a review after the goal was marked done.
     records.push({ ts: nowIso(), kind: "review.feedback", reviewId: "overruled", index: 0, label: "right" });
     const labels = reviewLabels(records);
-    expect(labels.get("fixed")).toEqual({ label: "right", source: "fixed" });
+    expect(labels.has("fixed")).toBe(false);
     expect(labels.get("overruled")).toEqual({ label: "right", source: "user" });
     expect(labels.get("user-right")).toEqual({ label: "right", source: "user" });
     expect(labels.get("user-wrong")).toEqual({ label: "wrong", source: "user" });
     expect(labels.has("argued")).toBe(false);
     expect(labels.has("half-said")).toBe(false);
     expect(labels.has("fixed-pass")).toBe(false);
+  });
+
+  it("does not turn obedience to a formatting complaint or closing a goal into training feedback", () => {
+    const complaint = review("style", "h", { fails: [], extra: [{ file: "index.d.ts", what: "reformat this already-working declaration" }] });
+    const records: AuditRecord[] = [complaint,
+      { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "index.d.ts" } as AuditRecord,
+      review("pass", "h", { fails: [], extra: [] }),
+      review("closed", "other"),
+      { ts: nowIso(), kind: "goal.control", goalHash: "other", operation: "done", actor: "user" } as AuditRecord,
+    ];
+    expect(reviewLabels(records).size).toBe(0);
+    records.push({ ts: nowIso(), kind: "review.feedback", reviewId: "style", index: 0, label: "wrong" });
+    expect(reviewLabels(records).get("style")).toEqual({ label: "wrong", source: "user" });
   });
 
   it("a passing review with no change in between labels nothing", () => {
@@ -175,8 +218,9 @@ if (prompt.includes("You are a harness engineer agent")) {
 } else if (prompt.includes("You are a strict reviewer of harness")) say({ verdict: "accept", reasons: [], risk_notes: [] });
 else if (prompt.includes("You are the batch analyst")) say({ action: "report", failure_modes: [{ mode: "false-flag", description: "objects to good work", n_tasks: 3 }], capability_gaps: [], success_habits: [] });
 else if (prompt.includes("You are a trajectory digester")) say({ action: "return", digest: { summary: "flagged good work" } });
-else if (prompt.includes("QUIET")) say({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [] });
-else say({ items: [{ id: "sc_1", verdict: "fails", evidence: "nope" }], extra: [] });
+else if (prompt.includes("NO_VERIFICATION")) say({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [] });
+else if (prompt.includes("QUIET")) say({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [], checks: ${JSON.stringify(VERIFIED_CHECKS)} });
+else say({ items: [{ id: "sc_1", verdict: "fails", evidence: "nope" }], extra: [], checks: ${JSON.stringify(VERIFIED_CHECKS)} });
 `,
   );
   await fs.chmod(file, 0o755);
@@ -231,6 +275,7 @@ describe.skipIf(posixOnly)("replaying one saved review, as RRSI does", () => {
     expect(first, JSON.stringify(first)).toMatchObject({ ran: true, flagged: true });
     expect(await replayCase(root, "rev_0", `${REVIEW_PROMPT}\nQUIET`)).toMatchObject({ ran: true, flagged: false });
     expect(await replayCase(root, "nope", REVIEW_PROMPT)).toMatchObject({ ran: false, flagged: null });
+    expect(await replayCase(root, "rev_0", `${REVIEW_PROMPT}\nNO_VERIFICATION`)).toMatchObject({ ran: true, flagged: null, unanswered: ["build", "public_api", "behavior"] });
   }, 60_000);
 });
 

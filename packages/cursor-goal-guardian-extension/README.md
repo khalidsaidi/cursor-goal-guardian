@@ -22,9 +22,8 @@ some of its words have changed.*
   has it.
 - **An agent that is sent back.** When it stops early, Guardian sends it back with your
   goal and what's still open.
-- **"Done" is checked.** The agent's proof is compared with Guardian's own record of what
-  ran. Then a second agent reviews the real project and an evaluator judges the recorded
-  run. The panel says whether the goal ended proved, unchecked or disputed.
+- **"Done" is checked.** CGG uses its captured command results and actual project changes.
+  A second agent reviews the finished work and an evaluator checks it against your goal. The panel says whether the goal ended proved, unchecked or disputed.
 - **A reviewer you can correct.** Mark each objection right or wrong, or say "this wasn't
   done" when it missed something. Once there are enough verdicts Guardian tries a better
   version of its reviewer by itself, keeps it only if it does better on your past cases it
@@ -60,16 +59,17 @@ session.
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s13-tour.png" alt="The panel and get-started checklist right after connecting" width="500" />
 
 **5. Ask your agent for something, like you always do.** If you connected empty, Guardian
-records your request in your own words as the goal when the agent first changes something:
-the text before a list is the goal, the list becomes the "done when" items, and anything
-after the list is left out. If you filled the form, that goal is
+records your request in your own words as the goal when the agent starts project work,
+with automatic capture on the first change as a fallback:
+the full request is kept as the goal, and a detected list also supplies the "done when"
+items. Instructions after the list are retained. If you filled the form, that goal is
 already on the record.
 
 <img src="https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s2-hub-tracking.png" alt="A plain request becomes a tracked goal" width="800" />
 
 **6. Glance at the panel** any time. Your goal is the title. The lamp and its word say
 where the goal stands: active, paused, blocked, stalled, proved, unchecked, disputed,
-unverified. The checklist ticks each "done when" line that a run's proof backed.
+unverified. The checklist ticks the requested items established by the completed checks.
 
 **7. Type `/guardian` in the chat** for a short briefing of where the goal stands.
 
@@ -105,23 +105,32 @@ the panel, open one of Guardian's files, or remove Guardian from the workspace:
 
 ### How a goal ends
 
-When the agent stops after changing something, it's sent back with your goal and what
-Guardian's record shows. For each "done when" line the agent names a command it ran after
-its last change and text that command printed, or a file and text in it. Guardian compares
-that with what it recorded itself: a command that never ran or failed, a result from before
-the latest change, output that doesn't match, or a file that isn't in the project is
-refused.
+When the agent stops after changing something, CGG keeps your goal in the loop. Completion
+is checked using the command results and project changes CGG already recorded. The agent
+does not have to copy output quotes, relabel every file or undo harmless formatting to
+satisfy bookkeeping. Missing requested work, real bugs, broken tests/builds and meaningful
+unrelated changes go back to the agent. Supporting types, tests and docs stay unless you
+explicitly required otherwise. Valid checks are reused while the relevant work and evidence
+remain unchanged.
 
-When the record backs every line, two checks run on your own Cursor model. A reviewer works
-in a throwaway copy of your project, tries to prove each line isn't really done, and lists
-changes no line needs. An evaluator judges Guardian's record of the run against each line
-and for work you didn't ask for; when it alone objects, the reviewer checks that claim
+The reviewer must report build, public API and focused behavior checks with evidence.
+An unresolved failed check prevents proved. An absent or inconclusive check first sends
+the agent back to finish local verification and retry unfinished checks once. If a check
+still cannot finish, the work ends unchecked.
+Supporting type declarations are part of the requested work. If the reviewer alone calls
+them extra while the evaluator disagrees, a fresh project check can dismiss that objection
+without forcing a change to completed work.
+
+When completion is requested, two checks run on your own Cursor model. A reviewer works
+in a throwaway copy of your project, checks the requested behavior, and identifies
+unfinished work, demonstrated defects and meaningful unrelated changes. An evaluator judges Guardian's record of the run against each line
+and for work you didn't ask for; when the two disagree, a fresh check verifies the disputed claim
 against the project first. Objections go back to the agent.
 
 The panel then shows one of:
 
-- **Proved.** The proof held and neither check objected.
-- **Unchecked.** The proof held, but a check didn't run or didn't answer for a line: for
+- **Proved.** Both checks established the requested work and neither objected.
+- **Unchecked.** A check didn't run or didn't answer for a requested item: for
   example `cursor-agent` isn't installed, the project isn't a git repository, or it took
   too long.
 - **Disputed.** A check objected and it wasn't resolved. Reporting the same work again
@@ -140,14 +149,14 @@ the agent can pause only by quoting your request to pause from your latest messa
 never lift a pause. You lift it from the panel, or by sending `/goal resume`. **Resume goal** and **Work on the goal** start the agent in a new chat.
 **Mark goal done** closes a goal you're happy with.
 
-Every file the agent changed has to be tied to a "done when" line or called extra. Only
+File labels are optional hints; the checks examine actual changes for meaningful unrelated work. Only
 your words change the goal: the agent has to quote your latest message to change it, and if
 it rewrites Guardian's goal file, the file is put back. One exception: when your goal has no
 "done when" lines at all, the agent may write them; once there are any, it can't add more.
 
 **What it costs.** Each send-back is an agent turn on your Cursor plan. A review is one
 more agent call for the reviewer, about five short ones for the evaluator, and one more
-when the evaluator alone objects. On Linux, the moment the agent stops and is sent back
+when the two checkers disagree. On Linux, the moment the agent stops and is sent back
 takes about 0.55 seconds of Guardian's own time, and a message of yours about 0.16. The
 download is 171 MB and unpacks to 440 MB.
 
@@ -157,14 +166,17 @@ download is 171 MB and unpacks to 440 MB.
   check on that.
 - It doesn't defend its own files: an agent that tampers with Guardian's records under
   `.cursor/goal-guardian` can end up "proved".
-- It does nothing when a turn changes nothing, and it doesn't see changes made only by
-  commands in ignored paths. Outside git, the reviewer doesn't run, so nothing ends proved.
-- It doesn't run in headless runs of the command-line agent, where Cursor fires no stop
-  hook, or in Cmd+K, Ask or Plan mode. Cursor only runs project hooks in a trusted
-  workspace.
-- It has been measured only on a test rig with a stand-in model, not on a real Cursor
-  model, and the current version has been built and run on Linux x64 only. The repository's
-  README has the numbers and their limits.
+- Questions alone do not start a goal. A newly started implementation or repair can be
+  continued before its first edit. Shell-only changes in ignored paths are not seen.
+  Outside git, the reviewer doesn't run, so nothing ends proved.
+- Automatic continuation needs Cursor's stop hook. The tested headless CLI delivered
+  goal-tool and file events but no stop hook; those checks do not validate desktop
+  continuation. Cmd+K, Ask and Plan modes do not continue the goal. Project hooks need a
+  trusted workspace.
+- Performance studies use a Linux test rig with a stand-in model. A desktop smoke test
+  with Grok 4.7 Medium and WSL Ubuntu also passed the stop, fresh-chat resume and completion
+  review workflow. Builds and runs remain limited to Linux x64. The repository's README
+  describes the evidence and its limits.
 
 ### Safety rails
 

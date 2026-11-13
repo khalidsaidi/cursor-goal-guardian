@@ -40,9 +40,10 @@ export function goalChangedMessage(goal: string, criteria: Criteria, tokensUsed:
  */
 const GUARDIAN_PART = [
   `Guardian checks ${REPORT} against its own record of this session's commands and files:`,
-  "- status complete: one proof per done-when item in proofs, either a command exactly as you ran it after your last change plus a line it printed, or a file plus a line in it.",
-  "- changes: every file you changed, with the done-when id it serves, or \"extra\". A change belongs only if a done-when item or the user asked for it: undo anything else and offer it as a suggestion in your closing message.",
-  "- removed: only files that lost most of their lines because the goal or the user asked for it. Anything else that lost lines, put back. Never remove finished work to make it fit the record: if they disagree, tell the user and ask.",
+  "- status complete: report when the requested work is done. Proofs and file labels are optional hints. Guardian uses its recorded command results and actual project changes; do not copy output quotes or rerun a passing command merely to repair a completion report.",
+  "- changes: optional hints about which goal items the changed files serve. Guardian observes the actual changes and checks for meaningful unrelated behavior; a label alone does not decide what must be removed.",
+  "- Supporting tests, type declarations, documentation and minimal build fixes for the requested behavior serve that behavior's done-when item, even when the user did not name those files. Do not label them extra merely because they are supporting work. Leave harmless formatting and wording alone unless the user explicitly required otherwise.",
+  "- removed: optional notes on intentional removals. Preserve existing work; line counts or report bookkeeping alone are not reasons to undo formatting or remove working code.",
   "- status blocked: the obstacle, what you tried and what you need, in reason.",
   "- status set_aside: when the user's latest message asked for only part of the goal or for something else, with their words in user_words. It covers that message only; the goal stays open. A request to continue or finish is never set_aside.",
   "- status paused: only with the user's request to pause, quoted in user_words.",
@@ -87,8 +88,8 @@ export function goalRoundMessage(goal: string, criteria: Criteria, f: RoundFacts
   const facts = [
     ...f.notes,
     ...f.unproved.map((u) => `- Not proved: ${esc(u)}`),
-    ...f.unclaimed.map((u) => `- Changed, not accounted for: ${u}`),
-    ...f.extras.map((u) => `- You called this extra, so undo it unless the user asked for it: ${u}`),
+    ...f.unclaimed.map((u) => `- Observed change: ${u}`),
+    ...f.extras.map((u) => `- Scope finding to verify against the request: ${u}`),
     ...(f.goalFileEdited ? ["- You edited Guardian's goal files. Only the user changes the goal: put them back."] : []),
   ];
   return [

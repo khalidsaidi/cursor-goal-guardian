@@ -11,7 +11,7 @@ export function registerCreateGoal(server: McpServer, def: EngineToolDefinition)
   server.registerTool(
     def.name,
     {
-      description: `${CODEX_TOOLS.create.description}\n\nDeepSeek Harness: ${def.description}\n\nGuardian: the call goes to Codex's own create_goal handler and to DeepSeek's own create_goal tool, and a goal is created only if both accept; their answers come back as "codex" and "their". Guardian records the user's request as the goal by itself when you first change something, so you rarely need this. The objective must be the user's own words, quoted from their message. No token budget is set through this tool.`,
+      description: `${CODEX_TOOLS.create.description}\n\nDeepSeek Harness: ${def.description}\n\nGuardian: the call goes to Codex's own create_goal handler and to DeepSeek's own create_goal tool, and a goal is created only if both accept; their answers come back as "codex" and "their". For requested project changes with no goal on record, call this before inspection or edits so unfinished work can be continued even before its first change. Guardian also captures the request on the first change as a fallback. Questions alone need no goal. Quote the user's request; Guardian preserves their full recorded message. No token budget is set through this tool.`,
       inputSchema: { objective: theirField(def, "objective"), max_goal_rounds: theirField(def, "max_goal_rounds") },
     },
     async ({ objective, max_goal_rounds }) => {

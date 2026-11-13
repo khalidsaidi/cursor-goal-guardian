@@ -4,8 +4,9 @@
  * malformed input, ends in permission:"allow" and exit code 0.
  */
 import fs from "node:fs";
+import { captureUserFromHook } from "./transcript.js";
 import path from "node:path";
-import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordFileEdit, recordShellFailure, recordShellOutput, recordUserPrompt, replayCase, goalStopFailed, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
+import { GUARDIAN_MESSAGE_PREFIX, advisoryAllow, agentMode, captureGoal, goalMidTurnNotice, goalTurnContext, recordFileEdit, recordShellFailure, recordShellOutput, replayCase, goalStopFailed, runGoalStop, runPipeline, type HookResponse } from "@goal-guardian/core";
 
 /** The stop and prompt hooks answer in their own shapes, not the permission shape. */
 type HookOutput = HookResponse | { followup_message?: string } | { continue: true; additional_context?: string } | { additional_context?: string };
@@ -82,6 +83,7 @@ async function handle(payload: Record<string, unknown>): Promise<HookOutput> {
   const root = workspaceRoot(payload);
   if (!root) return SILENT_EVENTS.has(event) ? {} : event === "beforeSubmitPrompt" ? { continue: true } : advisoryAllow();
 
+  await captureUserFromHook(root, event, ids(payload).conversationId, payload).catch(() => undefined);
   switch (event) {
     case "beforeShellExecution":
       return runPipeline(root, "beforeShellExecution", "shell", String(payload.command ?? ""), ids(payload));
@@ -124,7 +126,6 @@ async function handle(payload: Record<string, unknown>): Promise<HookOutput> {
     case "beforeSubmitPrompt": {
       const mode = typeof payload.composer_mode === "string" ? payload.composer_mode : undefined;
       const prompt = String(payload.prompt ?? "");
-      await recordUserPrompt(root, prompt, ids(payload).conversationId, mode).catch(() => undefined);
       const context = !prompt.startsWith(GUARDIAN_MESSAGE_PREFIX) && mode && agentMode(mode) ? await goalTurnContext(root).catch(() => null) : null;
       return context ? { continue: true, additional_context: context } : { continue: true };
     }

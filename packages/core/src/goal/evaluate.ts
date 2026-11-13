@@ -1,7 +1,7 @@
 /**
  * Checks an agent's goal report against Guardian's own record. No model, no knowledge of any language or tool:
  * the agent names the proof, Guardian confirms it happened. A command must be on the record, have started after
- * the last edit, and have printed the quoted text. A file must exist and contain the quoted text.
+ * the last relevant change. Its result is read from the record, never from a copied quote. A file must exist and contain the quoted text.
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -104,8 +104,6 @@ export function projectPath(root: string, file: string): string {
 async function checkProof(root: string, proof: GoalProof, outputs: ShellOutput[], lastEditTs: string | null, tree: string | null): Promise<string | null> {
   if (proof.command !== undefined) {
     const command = normalize(proof.command);
-    const quote = normalize(proof.quote ?? "");
-    if (quote.length < MIN_QUOTE) return "a command proof needs a whole line quoted from its output";
     if (onlyPrints(command)) return `\`${command}\` only prints text, so it proves nothing`;
     const all = outputs.filter((o) => normalize(o.command) === command);
     if (all.length === 0) return `Guardian has no record of \`${command}\` running`;
@@ -116,7 +114,6 @@ async function checkProof(root: string, proof: GoalProof, outputs: ShellOutput[]
     const fresh = lastEditTs ? runs.filter((o) => Date.parse(o.startedAt) >= Date.parse(lastEditTs)) : runs;
     if (fresh.length === 0) return `\`${command}\` last ran before your latest edit: run it again`;
     const latest = fresh[fresh.length - 1]!;
-    if (!normalize(latest.output).includes(quote)) return `the latest run of \`${command}\` did not print "${quote}"`;
     if (tree && latest.tree && latest.tree !== tree) return `files changed after \`${command}\` last ran: run it again`;
     // A command that names a file the project doesn't have proves nothing about the project, whatever it printed.
     const absent = absentPathsIn(root, command);
@@ -138,6 +135,29 @@ async function checkProof(root: string, proof: GoalProof, outputs: ShellOutput[]
   return "no command or file named, only your word";
 }
 
+/** Facts already captured by CGG. These are inputs to the independent checks, not an agent-written proof gate. */
+export async function capturedEvidence(
+  root: string,
+  outputs: ShellOutput[],
+  changedFiles: string[],
+  fileHints: GoalProof[] = [],
+): Promise<GoalProof[]> {
+  const latest = new Map<string, ShellOutput>();
+  for (const o of outputs) latest.set(normalize(o.command), o);
+  const evidence: GoalProof[] = [...latest.values()].filter((o) => !o.failed).slice(-6).map((o) => ({ criterion: "goal", command: o.command, recordedAt: o.ts }));
+  const files = [...new Set([...changedFiles, ...fileHints.flatMap((p) => p.file ? [projectPath(root, p.file)] : [])])];
+  for (const file of files.slice(0, 6)) {
+    const inside = projectPath(root, file);
+    if (inside.startsWith("..") || path.isAbsolute(inside) || inside.startsWith(".cursor/")) continue;
+    const text = await fsp.readFile(path.join(root, inside), "utf8").catch(() => "");
+    const hint = fileHints.find((p) => p.file && projectPath(root, p.file) === inside)?.contains;
+    const line = hint && normalize(hint) && normalize(text).includes(normalize(hint)) ? hint : text.split(/\r?\n/).find((l) => normalize(l).length >= MIN_QUOTE);
+    if (line) evidence.push({ criterion: "goal", file: inside, contains: line });
+  }
+  return evidence;
+}
+
+/** Legacy reference-validation API. Completion itself uses capturedEvidence and checks the actual project. */
 export async function evaluateReport(
   root: string,
   contract: Pick<Contract, "successCriteria">,
@@ -148,7 +168,20 @@ export async function evaluateReport(
   const unproved: string[] = [];
   const proved: GoalProof[] = [];
   for (const item of items) {
-    const proofs = report.proofs.filter((p) => p.criterion === item.id);
+    let proofs = report.proofs.filter((p) => p.criterion === item.id);
+    if (!proofs.length) {
+      const latest = new Map<string, ShellOutput>();
+      for (const o of seen.outputs) latest.set(normalize(o.command), o);
+      proofs = [...latest.values()].filter((o) => !o.failed && !onlyPrints(normalize(o.command)) && (!seen.lastEditTs || Date.parse(o.startedAt) >= Date.parse(seen.lastEditTs)) && (!seen.tree || !o.tree || seen.tree === o.tree)).slice(-6).map((o) => ({ criterion: item.id, command: o.command }));
+      if (!proofs.length) {
+        for (const file of seen.editedFiles) {
+          if (projectPath(root, file).startsWith(".cursor/")) continue;
+          const text = await fsp.readFile(path.join(root, file), "utf8").catch(() => "");
+          const line = text.split(/\r?\n/).find((l) => normalize(l).length >= MIN_QUOTE);
+          if (line) { proofs = [{ criterion: item.id, file, contains: line }]; break; }
+        }
+      }
+    }
     if (proofs.length === 0) {
       unproved.push(`${item.id} (${item.text}): no proof given`);
       continue;
@@ -156,14 +189,14 @@ export async function evaluateReport(
     for (const proof of proofs) {
       const problem = await checkProof(root, proof, seen.outputs, seen.lastEditTs, seen.tree ?? null);
       if (problem) unproved.push(`${item.id} (${item.text}): ${problem}`);
-      else proved.push(proof);
+      else if (proof.command !== undefined) {
+        const run = [...seen.outputs].reverse().find((o) => normalize(o.command) === normalize(proof.command!));
+        proved.push({ criterion: proof.criterion, command: run!.command, recordedAt: run!.ts });
+      } else proved.push(proof);
     }
   }
-  // Destroyed work can't be told from wanted removal by looking, so the agent must say which it is, on the record.
-  const onPurpose = new Set((report.removed ?? []).map((f) => projectPath(root, f)));
-  for (const f of seen.shrunk ?? []) {
-    if (!onPurpose.has(f.file)) unproved.push(`${f.file} lost ${f.lost} of its ${f.had} lines. Put them back. Only if the goal or the user asked for this removal, list the file in removed`);
-  }
+  // A line-count drop can be formatting or wanted removal. The independent checks inspect the actual diff
+  // for lost work; a line heuristic must not order the agent to restore correctly formatted code.
   // A change is only accounted for by a real item (or "extra"), not by any word the agent puts there.
   const valid = new Set([...items.map((i) => i.id), "goal", "extra"]);
   const changes = report.changes.map((c) => ({ ...c, file: projectPath(root, c.file) }));
@@ -189,7 +222,9 @@ export function userAsked(words: string | undefined, prompts: string[], goalText
   const plain = (text: string): string => normalize(text.replace(/[^\x00-\x7f]+/g, " ")).toLowerCase();
   // List markers don't make a piece of the goal into something else.
   const bare = (text: string): string => plain(text.replace(/^\s*(?:\d+[.)]|[-*•])\s+/gm, ""));
-  return !bare(goalText).includes(bare(words ?? ""));
+  // Auto-capture preserves the entire request, including temporary limits. Saving those words
+  // as the goal must not make the user's own first-turn instruction impossible to honor.
+  return bare(goalText).includes(bare(latest)) || !bare(goalText).includes(bare(words ?? ""));
 }
 
 /**

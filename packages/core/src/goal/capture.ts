@@ -56,14 +56,14 @@ function inlineNumbers(message: string): { goal: string; items: string[] } | nul
 }
 
 /**
- * What a message says the goal is, word for word. A list becomes the "done when" items, and only what comes before
- * it the goal: what follows a list tends to be about this one message ("only the first for now").
+ * Keep the full request as the goal. A detected list also supplies checklist items; extracting that
+ * convenience view must not discard instructions, examples or constraints elsewhere in the request.
  */
 export function parseRequest(message: string): { goal: string; items: string[] } {
   const text = message.trim();
   const parsed = listLines(text) ?? inlineNumbers(text);
   if (!parsed) return { goal: text, items: [] };
-  return { goal: parsed.goal || text, items: parsed.items };
+  return { goal: text, items: parsed.items };
 }
 
 /**

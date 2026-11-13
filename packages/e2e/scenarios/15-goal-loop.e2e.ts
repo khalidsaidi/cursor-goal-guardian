@@ -32,7 +32,7 @@ describe("15 [deterministic] shipped binaries: the goal loop", () => {
     hook({ hook_event_name: "afterShellExecution", command, output, duration: 5 });
   };
   const stop = (loop_count: number) => hook({ hook_event_name: "stop", status: "completed", loop_count });
-  const report = async (args: Record<string, unknown>): Promise<{ accepted: boolean; outcome?: string; unproved: string[]; unclaimed: string[] }> => {
+  const report = async (args: Record<string, unknown>): Promise<{ accepted: boolean; outcome?: string; verificationPending?: boolean; unproved: string[]; unclaimed: string[] }> => {
     hook({ hook_event_name: "beforeMCPExecution", mcp_server_name: "goal-guardian", tool_name: "update_goal" });
     const res = (await client.callTool({ name: "update_goal", arguments: args })) as { content: Array<{ text: string }> };
     return JSON.parse(res.content[0]!.text);
@@ -52,57 +52,30 @@ describe("15 [deterministic] shipped binaries: the goal loop", () => {
     await ws?.cleanup();
   });
 
-  it("sends the agent back until its claim holds on Guardian's record, then lets it stop", async () => {
+  it("keeps the goal moving, uses captured results, and stops without proof paperwork", async () => {
     expect(hook({ hook_event_name: "beforeSubmitPrompt", prompt: "add subtract", composer_mode: "agent" })).toMatchObject({ continue: true });
     expect(stop(0)).toEqual({});
-
-    edit("src/math.ts");
-    edit("README.md");
+    fs.appendFileSync(path.join(ws.root, "src/math.ts"), "\nexport function subtract(a: number, b: number) { return a - b; }\n");
+    fs.appendFileSync(path.join(ws.root, "README.md"), "\nsubtract returns the difference.\n");
+    edit("src/math.ts"); edit("README.md");
     const first = String(stop(0).followup_message);
     expect(first).toMatch(/^Goal Guardian: round 1 of 20/);
     expect(first).toContain("Add a subtract function");
-    expect(first).toContain("not accounted for: src/math.ts");
+    expect(first).toContain("Observed change: src/math.ts");
+    await pause(); ran("bun test", "1 pass\n0 fail");
 
-    // Claiming success without running anything: refused at once and at the stop.
-    const claim = { status: "complete", proofs: [{ criterion: "sc_1", command: "bun test", quote: "1 pass" }], changes: [{ file: "src/math.ts", serves: "sc_1" }] };
-    const refused = await report(claim);
-    expect(refused.accepted).toBe(false);
-    expect(refused.unproved[0]).toContain("no record of `bun test`");
-    expect(refused.unclaimed).toEqual(["README.md"]);
-    expect(String(stop(1).followup_message)).toContain("no record of `bun test`");
-
-    // Runs it, then edits again: the proof is stale.
-    await pause();
-    ran("bun test", "1 pass\n0 fail");
-    await pause();
-    edit("src/math.ts");
-    await pause();
-    const stale = await report({ ...claim, changes: [...claim.changes, { file: "README.md", serves: "extra" }] });
-    expect(stale.unproved[0]).toContain("before your latest edit");
-
-    // Runs it again, still keeping the extra: told once, then left for the user.
-    ran("bun test", "1 pass\n0 fail");
-    const withExtra = { ...claim, changes: [...claim.changes, { file: "README.md", serves: "extra" }] };
-    const told = await report(withExtra);
-    expect(told.accepted).toBe(false);
-    expect(told.unproved).toEqual(["README.md: you called this extra"]);
-    expect(String(stop(2).followup_message)).toContain("so undo it unless the user asked for it: README.md");
-
-    // Kept anyway and reported again: now it is for the user to decide. This report is where the goal is completed:
-    // Codex's own handler and DeepSeek Harness's own tool, both in the shipped binaries, each accept it. No reviewer
-    // or evaluator runs in this scenario, so the run is recorded as complete but unchecked, never as proved.
-    const held = await report(withExtra);
-    expect(held.accepted).toBe(true);
-    expect(held.outcome).toBe("unchecked");
-    expect(stop(3)).toEqual({});
-
-    const end = tape().filter((r) => r.kind === "goal.end");
-    expect(end).toMatchObject([{ outcome: "unchecked", skipped: expect.arrayContaining([expect.stringContaining("didn't run")]), extras: ["README.md"], proved: [{ criterion: "sc_1", command: "bun test", quote: "1 pass" }] }]);
+    // No independent model is installed in this offline scenario. The goal stays open for a
+    // recovery pass, and eventually ends unchecked through both real goal keepers' handlers.
+    const pending = await report({ status: "complete" });
+    expect(pending).toMatchObject({ accepted: false, verificationPending: true, unproved: [], unclaimed: [] });
+    expect(tape().filter((r) => r.kind === "goal.end")).toHaveLength(0);
+    expect(String(stop(1).followup_message)).toContain("Do not hand those commands to the user");
+    const held = await report({ status: "complete" });
+    expect(held).toMatchObject({ accepted: true, outcome: "unchecked" });
+    expect(stop(2)).toEqual({});
+    expect(tape().filter((r) => r.kind === "goal.end")).toMatchObject([{ outcome: "unchecked", extras: [], proved: expect.arrayContaining([{ criterion: "goal", command: "bun test", recordedAt: expect.any(String) }]) }]);
     expect(tape().filter((r) => r.kind === "goal.refused")).toEqual([]);
-
-    // Complete stays complete: later turns aren't sent back.
-    edit("src/other.ts");
-    expect(stop(0)).toEqual({});
+    edit("src/other.ts"); expect(stop(0)).toEqual({});
   });
 
   it("reports where the goal stands", async () => {

@@ -1,11 +1,12 @@
+import { finishReport } from "./helpers/recovery.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  appendAudit, captureGoal, criteriaFromTexts, defaultContract, evaluateReport, writeContract, parseRequest, runGoalStop, GOAL_MAX_ROUNDS, getGuardianPaths, nowIso, readShellOutputs, readShrunkFiles, readUserPrompts,
-  controlGoal, goalMidTurnNotice, goalPhaseOf, goalTurnContext, lastActiveConversation, recordShellFailure, projectPath, readAuditTail, readContractSafe, readTree, recordShellOutput, recordUserPrompt, runGoalStop, submitGoalReport, userSaid, userSaidLatest, type GoalReportInput,
+  appendAudit, submitGoalReport, goalHash, captureGoal, criteriaFromTexts, defaultContract, evaluateReport, writeContract, parseRequest, runGoalStop, GOAL_MAX_ROUNDS, getGuardianPaths, nowIso, readShellOutputs, readShrunkFiles, readUserPrompts,
+  controlGoal, goalMidTurnNotice, goalPhaseOf, goalTurnContext, lastActiveConversation, recordShellFailure, projectPath, readAuditTail, readContractSafe, readTree, recordShellOutput, recordUserPrompt, runGoalStop, userSaid, userSaidLatest, type GoalReportInput,
 } from "../src/index.js";
 
 const made: string[] = [];
@@ -100,7 +101,7 @@ describe("the goal loop: when it speaks", () => {
     expect(msg).toContain("Add CSV export");
     expect(msg).toContain("sc_1: the export test passes");
     expect(msg).toContain("- No report yet.");
-    expect(msg).toContain("Changed, not accounted for: a.js");
+    expect(msg).toContain("Observed change: a.js");
     expect(msg).not.toContain("other.js");
   });
 
@@ -112,154 +113,38 @@ describe("the goal loop: when it speaks", () => {
   });
 });
 
-describe("the goal loop: proof comes from Guardian's record, not the agent's word", () => {
-  it("a command really run after the last edit, printing the quote, proves the goal and ends the run", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await ran(root, "make test", "ok\n12 passed\n");
-    const answer = await submitGoalReport(root, complete());
+describe("recorded work, without report paperwork", () => {
+  it("uses recorded command results without copied output or item-by-item evidence labels", async () => {
+    const root = await ws(); await edit(root, "a.js"); await ran(root, "make test", "12 passed");
+    const answer = await finishReport(root, complete({ proofs: [], changes: [] }));
     expect(answer.accepted).toBe(true);
-    // Both goal keepers accepted it and the evaluator passed it, but this folder isn't a git repository, so the
-    // reviewer couldn't run: complete, and recorded as unchecked rather than proved.
-    expect(answer.outcome).toBe("unchecked");
-    expect(await stop(root)).toBeNull();
-    expect(await ends(root)).toMatchObject([{ outcome: "unchecked", skipped: [expect.stringContaining("the reviewer didn't run")], proved: [{ criterion: "sc_1", command: "make test" }] }]);
+    expect(await ends(root)).toMatchObject([{ proved: [{ criterion: "goal", command: "make test", recordedAt: expect.any(String) }] }]);
   });
-
-  it("works for any language: Guardian only compares text", async () => {
-    const root = await ws();
-    await edit(root, "src/Main.java");
-    await ran(root, "mvn -q verify", "BUILD SUCCESS");
-    const answer = await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", command: "mvn -q verify", quote: "BUILD SUCCESS" }], changes: [{ file: "src/Main.java", serves: "sc_1" }] }));
-    expect(answer.accepted).toBe(true);
+  it("does not make the agent repair a miscopied output quote", async () => {
+    const root = await ws(); await edit(root, "a.js"); await ran(root, "make test", "12 passed");
+    expect((await finishReport(root, complete({ proofs: [{ criterion: "sc_1", command: "make test", quote: "summary copied differently" }] }))).accepted).toBe(true);
+    const end = (await ends(root))[0]!;
+    expect(JSON.stringify(end)).not.toContain("summary copied differently");
   });
-
-  it("refuses a command that never ran", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    const answer = await submitGoalReport(root, complete());
-    expect(answer.accepted).toBe(false);
-    expect(answer.unproved[0]).toContain("no record of `make test`");
-    expect(await stop(root)).toContain("no record of `make test`");
-  });
-
-  it("refuses output the command never printed", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await ran(root, "make test", "3 failed");
-    expect((await submitGoalReport(root, complete())).unproved[0]).toContain('did not print "12 passed"');
-  });
-
-  it("refuses a proof older than the latest edit, including one that began before it", async () => {
-    const root = await ws();
-    await ran(root, "make test", "12 passed");
-    await edit(root, "a.js");
-    expect((await submitGoalReport(root, complete())).unproved[0]).toContain("before your latest edit");
-    await ran(root, "make test", "12 passed", 60_000);
-    expect((await submitGoalReport(root, complete())).accepted).toBe(false);
-  });
-
-  it("another chat's later edit makes the proof stale too", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await ran(root, "make test", "12 passed");
-    await edit(root, "b.js", "c2");
-    expect((await submitGoalReport(root, complete({ changes: [{ file: "a.js", serves: "sc_1" }, { file: "b.js", serves: "sc_1" }] }))).unproved[0]).toContain("before your latest edit");
-  });
-
-  it("refuses a command whose latest run failed, even though it printed the quote", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await ran(root, "make test", "12 passed");
-    await recordShellFailure(root, "make test");
-    expect((await submitGoalReport(root, complete())).unproved[0]).toContain("latest run of `make test` failed");
-    await tick();
-    await ran(root, "make test", "12 passed");
-    expect((await submitGoalReport(root, complete())).accepted).toBe(true);
-  });
-
-  it("a failure with no output record still counts as having run, and as failed", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await tick();
-    await recordShellFailure(root, "make test");
-    expect((await submitGoalReport(root, complete())).unproved[0]).toContain("failed");
-  });
-
-  it("refuses printing a sentence as proof", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await ran(root, "echo 12 passed", "12 passed");
-    const answer = await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", command: "echo 12 passed", quote: "12 passed" }] }));
-    expect(answer.unproved[0]).toContain("only prints text");
-  });
-
-  it("file proofs: must exist inside the project, hold the text, and not be Guardian's own", async () => {
-    const root = await ws();
-    await fs.writeFile(path.join(root, "doc.md"), "Use   --csv to export");
-    await edit(root, "doc.md");
-    const report = (file: string, contains: string) => complete({ proofs: [{ criterion: "sc_1", file, contains }], changes: [{ file: "doc.md", serves: "sc_1" }] });
-    expect((await submitGoalReport(root, report("doc.md", "nope"))).unproved[0]).toContain("does not contain");
-    expect((await submitGoalReport(root, report("missing.md", "Use --csv"))).unproved[0]).toContain("does not exist");
-    expect((await submitGoalReport(root, report("../secret", "Use --csv"))).unproved[0]).toContain("outside the project");
-    expect((await submitGoalReport(root, report(".cursor/goal-guardian/contract.json", "Use --csv"))).unproved[0]).toContain("Guardian's own");
-    expect((await submitGoalReport(root, report("doc.md", "Use --csv"))).accepted).toBe(true);
-  });
-
-  it("every done-when item needs its own proof, and every proof given must hold", async () => {
-    const root = await ws("g", ["one", "two"]);
-    await edit(root, "a.js");
-    await ran(root, "make test", "12 passed");
-    const answer = await submitGoalReport(root, complete());
-    expect(answer.unproved).toEqual(["sc_2 (two): no proof given"]);
-  });
-
-  it("a goal with no done-when list still needs proof of the goal", async () => {
-    const root = await ws("g", []);
-    await edit(root, "a.js");
-    expect((await submitGoalReport(root, complete({ proofs: [], changes: [{ file: "a.js", serves: "goal" }] }))).unproved[0]).toContain("goal (the goal): no proof given");
-  });
-
-  it("an edit after the proof ran makes the report fail, and the agent is sent back with why", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await ran(root, "make test", "12 passed");
-    await edit(root, "a.js");
-    expect((await submitGoalReport(root, complete())).unproved[0]).toContain("before your latest edit");
-    expect(await stop(root)).toContain("before your latest edit");
-    expect(await ends(root)).toEqual([]);
-  });
-
-  it("output longer than the record keeps still proves on its closing lines", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await ran(root, "make test", `${"x".repeat(20_000)}\n12 passed\n`);
-    expect((await submitGoalReport(root, complete())).accepted).toBe(true);
-    expect((await readShellOutputs(root))[0]!.output.length).toBeLessThan(4100);
+  it("uses actual changed-file content for a documentation task without asking for copied lines", async () => {
+    const root = await ws("Document CSV", ["document the export"]);
+    await fs.writeFile(path.join(root, "README.md"), "Use the CSV export.\n"); await edit(root, "README.md");
+    expect((await finishReport(root, complete({ proofs: [], changes: [] }))).accepted).toBe(true);
+    expect(await ends(root)).toMatchObject([{ proved: [{ file: "README.md", contains: "Use the CSV export." }] }]);
   });
 });
 
 describe("the goal loop: extra work", () => {
-  it("a changed file nobody accounts for, or tied to no real item, holds the goal open", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await edit(root, "README.md");
-    await ran(root, "make test", "12 passed");
-    expect((await submitGoalReport(root, complete())).unclaimed).toEqual(["README.md"]);
-    expect((await submitGoalReport(root, complete({ changes: [{ file: "a.js", serves: "sc_1" }, { file: "README.md", serves: "documentation" }] }))).unclaimed).toEqual(["README.md"]);
+  it("observes changed files without requiring the agent to relabel them", async () => {
+    const root = await ws(); await edit(root, "a.js"); await edit(root, "README.md"); await ran(root, "make test", "12 passed");
+    expect((await finishReport(root, complete())).accepted).toBe(true);
+    expect(await ends(root)).toMatchObject([{ changes: [{ file: "a.js" }, { file: "README.md", serves: "observed" }] }]);
   });
-
-  it("a self-declared extra is sent back once; kept anyway, it goes on the record for the user", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await edit(root, "README.md");
-    await ran(root, "make test", "12 passed");
-    const withExtra = complete({ changes: [{ file: "a.js", serves: "sc_1" }, { file: "README.md", serves: "extra" }] });
-    expect(await submitGoalReport(root, withExtra)).toMatchObject({ accepted: false, unproved: ["README.md: you called this extra"] });
-    expect(await stop(root)).toContain("You called this extra, so undo it unless the user asked for it: README.md");
-    expect((await submitGoalReport(root, withExtra)).accepted).toBe(true);
-    expect(await stop(root, 1)).toBeNull();
-    expect(await ends(root)).toMatchObject([{ outcome: "unchecked", extras: ["README.md"] }]);
+  it("does not order supporting work removed merely because the agent called it extra", async () => {
+    const root = await ws(); await edit(root, "a.js"); await edit(root, "README.md"); await ran(root, "make test", "12 passed");
+    expect((await finishReport(root, complete({ changes: [{ file: "a.js", serves: "sc_1" }, { file: "README.md", serves: "extra" }] }))).accepted).toBe(true);
+    expect(await stop(root)).toBeNull();
+    expect(await ends(root)).toMatchObject([{ extras: [], changes: [{ file: "a.js" }, { file: "README.md", serves: "observed" }] }]);
   });
 
   it("the agent editing Guardian's goal files is called out and recorded", async () => {
@@ -268,7 +153,7 @@ describe("the goal loop: extra work", () => {
     await edit(root, "a.js");
     expect(await stop(root)).toContain("Only the user changes the goal");
     await ran(root, "make test", "12 passed");
-    await submitGoalReport(root, complete());
+    await finishReport(root, complete());
     expect(await stop(root, 1)).toBeNull();
     expect(await ends(root)).toMatchObject([{ outcome: "unchecked", goalFileEdited: true }]);
   });
@@ -280,13 +165,13 @@ describe("the goal loop: how a run ends", () => {
     await edit(root, "a.js");
     const blocked: GoalReportInput = { status: "blocked", proofs: [], changes: [], reason: "needs the API key" };
     expect(await stop(root)).not.toBeNull();
-    const early = await submitGoalReport(root, blocked);
+    const early = await finishReport(root, blocked);
     expect(early).toMatchObject({ accepted: false, message: "blocked requires at least 3 consecutive goal rounds; current round is 1" });
     await edit(root, "a.js");
     expect(await stop(root, 1)).toContain("Blocked isn't accepted yet");
     await edit(root, "b.js");
     expect(await stop(root, 2)).not.toBeNull();
-    const late = await submitGoalReport(root, blocked);
+    const late = await finishReport(root, blocked);
     expect(late.accepted).toBe(true);
     expect(late.message).toContain("<goal_blocked>");
     expect(late.message).toContain('Blocked: "needs the API key"');
@@ -298,21 +183,21 @@ describe("the goal loop: how a run ends", () => {
     const root = await ws();
     await recordUserPrompt(root, "add the export", "c1", "agent");
     await edit(root, "a.js");
-    expect((await submitGoalReport(root, { status: "blocked", proofs: [], changes: [], reason: "needs the API key" })).accepted).toBe(true);
+    expect((await finishReport(root, { status: "blocked", proofs: [], changes: [], reason: "needs the API key" })).accepted).toBe(true);
     expect(await stop(root)).toBeNull();
     expect(await ends(root)).toMatchObject([{ outcome: "blocked" }]);
   });
 
   it("blocked needs a reason", async () => {
     const root = await ws();
-    expect((await submitGoalReport(root, { status: "blocked", proofs: [], changes: [] })).message).toContain("reason");
+    expect((await finishReport(root, { status: "blocked", proofs: [], changes: [] })).message).toContain("reason");
   });
 
   it("a blocked claim from an earlier turn doesn't end a later one", async () => {
     const root = await ws();
     await edit(root, "a.js");
     expect(await stop(root)).not.toBeNull();
-    expect((await submitGoalReport(root, { status: "blocked", proofs: [], changes: [], reason: "x" })).accepted).toBe(false);
+    expect((await finishReport(root, { status: "blocked", proofs: [], changes: [], reason: "x" })).accepted).toBe(false);
     await edit(root, "a.js");
     expect(await stop(root, 1)).not.toBeNull();
     await edit(root, "a.js");
@@ -327,16 +212,16 @@ describe("the goal loop: how a run ends", () => {
     await edit(root, "footer.html");
     expect(await stop(root)).toContain("<user>please fix the typo in the footer</user>");
     const aside = (userWords: string): GoalReportInput => ({ status: "set_aside", proofs: [], changes: [], userWords });
-    expect((await submitGoalReport(root, aside("the agent felt like it today"))).accepted).toBe(false);
+    expect((await finishReport(root, aside("the agent felt like it today"))).accepted).toBe(false);
     expect(await stop(root, 1)).not.toBeNull();
-    expect((await submitGoalReport(root, aside("fix the typo in the footer"))).accepted).toBe(true);
+    expect((await finishReport(root, aside("fix the typo in the footer"))).accepted).toBe(true);
     await tick();
     expect(await stop(root, 2)).toBeNull();
     expect(await ends(root)).toMatchObject([{ outcome: "set_aside", reason: "fix the typo in the footer" }]);
     await recordUserPrompt(root, "now do the export", "c1", "agent");
     await tick();
     await edit(root, "a.js");
-    expect(await stop(root)).toContain("Changed, not accounted for: a.js");
+    expect(await stop(root)).toContain("Observed change: a.js");
   });
 
   it("one chat's report doesn't end or burden another chat", async () => {
@@ -346,7 +231,7 @@ describe("the goal loop: how a run ends", () => {
     await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "mcp", actionValue: "goal-guardian/update_goal", conversationId: "c2" });
     await tick();
     await ran(root, "make test", "12 passed");
-    const answer = await submitGoalReport(root, complete({ changes: [{ file: "b.js", serves: "sc_1" }] }));
+    const answer = await finishReport(root, complete({ changes: [{ file: "b.js", serves: "sc_1" }] }));
     expect(answer.unclaimed).toEqual([]);
     // c2's report was about c2's own files only. Accepted by both goal keepers, it completes the workspace's goal,
     // so c1 isn't sent back after it.
@@ -358,7 +243,7 @@ describe("the goal loop: how a run ends", () => {
     const root = await ws();
     await edit(root, "a.js");
     await ran(root, "make test", "12 passed");
-    await submitGoalReport(root, complete());
+    await finishReport(root, complete());
     expect(await stop(root)).toBeNull();
     await edit(root, "later.js");
     expect(await stop(root)).toBeNull();
@@ -393,18 +278,6 @@ describe("the goal loop: how a run ends", () => {
     expect(await runGoalStop(root, { conversationId: "c2", status: "completed", loopCount: 0 })).not.toBeNull();
   });
 
-  it("an agent repeating the same failing report gets a closing message, then silence", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await submitGoalReport(root, complete());
-    for (let i = 0; i < 3; i += 1) expect(await stop(root, i)).toMatch(/^Goal Guardian: round/);
-    const closing = await stop(root, 3);
-    expect(closing).toContain("nothing has changed for 3 rounds");
-    expect(closing).toContain("Still not proved:");
-    expect(await stop(root, 4)).toBeNull();
-    expect(await ends(root)).toMatchObject([{ outcome: "stalled" }]);
-  });
-
   it("another chat's activity doesn't hide a stall; this chat's edit resets it", async () => {
     const root = await ws();
     await edit(root, "a.js");
@@ -419,16 +292,6 @@ describe("the goal loop: how a run ends", () => {
     await stop(root, 6);
     expect(await stop(root, 7)).toBeNull();
     expect(await ends(root)).toMatchObject([{ outcome: "stalled" }]);
-  });
-
-  it("new evidence counts as progress, even with no edit", async () => {
-    const root = await ws("g", ["one", "two"]);
-    await edit(root, "a.js");
-    await stop(root);
-    await stop(root, 1);
-    await stop(root, 2);
-    await submitGoalReport(root, complete());
-    expect(await stop(root, 3)).toMatch(/^Goal Guardian: round 4/);
   });
 
   it("the cap ends with a hand-off, then silence", async () => {
@@ -532,7 +395,7 @@ describe("what a run spent", () => {
     await edit(root, "a.js");
     await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 0, tokens: 1000 });
     await ran(root, "make test", "12 passed");
-    await submitGoalReport(root, complete());
+    await finishReport(root, complete());
     await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 1, tokens: 500 });
     // The run ends at the report both goal keepers accept, with what its rounds had spent by then.
     expect(await ends(root)).toMatchObject([{ outcome: "unchecked", rounds: 1, tokens: 1000 }]);
@@ -545,7 +408,7 @@ describe("the goal is the user's", () => {
     await edit(root, "a.js");
     await controlGoal(root, "pause");
     expect(await stop(root)).toBeNull();
-    expect((await submitGoalReport(root, complete())).message).toContain("Only the user resumes it");
+    expect((await finishReport(root, complete())).message).toContain("Only the user resumes it");
     await controlGoal(root, "resume");
     expect(await stop(root)).toContain("Add CSV export");
   });
@@ -554,7 +417,7 @@ describe("the goal is the user's", () => {
     const root = await ws();
     await controlGoal(root, "pause");
     await recordUserPrompt(root, "please resume the goal", "c1", "agent");
-    expect((await submitGoalReport(root, complete())).accepted).toBe(false);
+    expect((await finishReport(root, complete())).accepted).toBe(false);
     expect(goalPhaseOf(await readAuditTail(root), await readContractSafe(root))).toBe("paused");
   });
 
@@ -563,7 +426,7 @@ describe("the goal is the user's", () => {
     await edit(root, "a.js");
     await controlGoal(root, "done");
     expect(await stop(root)).toBeNull();
-    expect((await submitGoalReport(root, complete())).message).toContain("already closed");
+    expect((await finishReport(root, complete())).message).toContain("already closed");
     await setGoal(root, "Another goal", ["x"]);
     expect(goalPhaseOf(await readAuditTail(root), await readContractSafe(root))).toBe("active");
     await recordUserPrompt(root, "Another goal", "c1", "agent");
@@ -574,8 +437,7 @@ describe("the goal is the user's", () => {
   it("a report on a goal the user has since changed doesn't count", async () => {
     const root = await ws();
     await edit(root, "a.js");
-    // A report the record doesn't back: not accepted, so the goal is still open when the user changes it.
-    expect((await submitGoalReport(root, complete())).accepted).toBe(false);
+    await appendAudit(root, { ts: nowIso(), kind: "goal.report", goalHash: goalHash(await readContractSafe(root)), ...complete() });
     await setGoal(root, "A different goal", ["the export test passes"]);
     expect(await stop(root)).toContain("- No report yet.");
     expect(await ends(root)).toEqual([]);
@@ -583,37 +445,7 @@ describe("the goal is the user's", () => {
 
   it("no goal: a report is refused, not recorded", async () => {
     const root = await ws("  ", []);
-    expect((await submitGoalReport(root, complete())).message).toBe("No goal is set.");
-  });
-});
-
-describe("the goal loop: paths and weak proof", () => {
-  it("accepts a path however the agent writes it", async () => {
-    const root = await ws();
-    expect(projectPath(root, "./src/a.js")).toBe("src/a.js");
-    expect(projectPath(root, "src\\\\a.js")).toBe("src/a.js");
-    expect(projectPath(root, path.join(root, "src/a.js"))).toBe("src/a.js");
-    await edit(root, "src/a.js");
-    await ran(root, "make test", "12 passed");
-    expect((await submitGoalReport(root, complete({ changes: [{ file: "./src/a.js", serves: "sc_1" }] }))).accepted).toBe(true);
-  });
-
-  it("a proof that only prints is refused however it's chained; a real command after an echo isn't", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await ran(root, "cd . && echo 12 passed", "12 passed");
-    expect((await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", command: "cd . && echo 12 passed", quote: "12 passed" }] }))).unproved[0]).toContain("only prints text");
-    await ran(root, "echo start; make test", "start\n12 passed");
-    expect((await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", command: "echo start; make test", quote: "12 passed" }] }))).accepted).toBe(true);
-  });
-
-  it("a one-letter quote proves nothing", async () => {
-    const root = await ws();
-    await edit(root, "a.js");
-    await ran(root, "make test", "12 passed");
-    expect((await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", command: "make test", quote: "2" }] }))).unproved[0]).toContain("whole line");
-    await fs.writeFile(path.join(root, "a.js"), "export");
-    expect((await submitGoalReport(root, complete({ proofs: [{ criterion: "sc_1", file: "a.js", contains: "e" }] }))).unproved[0]).toContain("whole line");
+    expect((await finishReport(root, complete())).message).toBe("No goal is set.");
   });
 });
 
@@ -628,17 +460,12 @@ describe("the goal loop: what commands change, in a git repository", () => {
     return root;
   }
 
-  it("a change made by a command, after the proof ran, makes the proof stale", async () => {
-    const root = await repo();
-    await recordUserPrompt(root, "add the export", "c1", "agent");
-    await tick();
-    await fs.writeFile(path.join(root, "a.js"), "two\n");
-    await ran(root, "make test", "12 passed");
+  it("provides the current file content when a command changed the project after an earlier test", async () => {
+    const root = await repo(); await recordUserPrompt(root, "add the export", "c1", "agent");
+    await fs.writeFile(path.join(root, "a.js"), "two\n"); await ran(root, "make test", "12 passed");
     await fs.writeFile(path.join(root, "a.js"), "sed changed this\n");
-    expect((await submitGoalReport(root, complete())).unproved[0]).toContain("files changed after `make test`");
-    await ran(root, "make test", "12 passed");
-    // In a git repository the reviewer can run too: both checks clean, both goal keepers accept, and it is proved.
-    expect(await submitGoalReport(root, complete())).toMatchObject({ accepted: true, outcome: "proved" });
+    await finishReport(root, complete());
+    expect(await ends(root)).toMatchObject([{ proved: expect.arrayContaining([{ criterion: "goal", file: "a.js", contains: "sed changed this" }]) }]);
   });
 
   it("a file made by a command must be accounted for; what was already changed before the run needn't be", async () => {
@@ -648,7 +475,7 @@ describe("the goal loop: what commands change, in a git repository", () => {
     await tick();
     await fs.writeFile(path.join(root, "generated.js"), "by a script\n");
     await ran(root, "node generate.js", "made it");
-    expect(await stop(root)).toContain("not accounted for: generated.js");
+    expect(await stop(root)).toContain("Observed change: generated.js");
     expect(await stop(root, 1)).not.toContain("users-own-work.js");
   });
 
@@ -676,11 +503,12 @@ describe("the goal loop: what commands change, in a git repository", () => {
     await fs.writeFile(path.join(root, "reverted.txt"), "after\n");
     await edit(root, "reverted.txt");
     await fs.writeFile(path.join(root, "reverted.txt"), "before\n");
-    const answer = await submitGoalReport(root, { status: "complete", proofs: [], changes: [] });
-    expect(answer.unclaimed).toEqual(["kept.txt"]);
+    const answer = await finishReport(root, { status: "complete", proofs: [], changes: [] });
+    expect(answer.accepted).toBe(true);
+    expect(await ends(root)).toMatchObject([{ changes: [{ file: "kept.txt" }] }]);
   });
 
-  it("a file that lost most of its lines must go back, or be declared as wanted", async () => {
+  it("line counts identify changes but do not order formatting undone", async () => {
     const root = await ws();
     sh(root, "init", "-q");
     sh(root, "config", "user.email", "x@x");
@@ -709,7 +537,7 @@ describe("the goal loop: what commands change, in a git repository", () => {
     const contract = { successCriteria: [] };
     const proofs = [{ criterion: "goal", file: "suite.txt", contains: "check" }];
     const refused = await evaluateReport(root, contract, { proofs, changes: [] }, seen);
-    expect(refused.unproved.join()).toContain("suite.txt lost 95 of its 100 lines");
+    expect(refused.unproved).toEqual([]);
     const declared = await evaluateReport(root, contract, { proofs, changes: [], removed: ["./suite.txt"] }, seen);
     expect(declared.unproved).toEqual([]);
   });
@@ -749,12 +577,20 @@ describe("the user's words", () => {
 describe("the goal is the user's own words", () => {
   const empty = () => ws("  ", []);
 
-  it("a list becomes the done-when items, word for word; what follows it stays out", () => {
+  it("a list supplies checklist items without dropping any of the request", () => {
     const parsed = parseRequest("Add two helpers. Done when:\n1. The first works\n2. The second works\n3. Tests pass\n\nDo only item 1 for now, then stop.");
-    expect(parsed.goal).toBe("Add two helpers. Done when:");
+    expect(parsed.goal).toBe("Add two helpers. Done when:\n1. The first works\n2. The second works\n3. Tests pass\n\nDo only item 1 for now, then stop.");
     expect(parsed.items).toEqual(["The first works", "The second works", "Tests pass"]);
     expect(parseRequest("Fix it:\n- one\n  more of one\n- two").items).toEqual(["one more of one", "two"]);
     expect(parseRequest("Add it. Done when: 1. It runs 2. It has tests. Only the first today.").items).toEqual(["It runs", "It has tests."]);
+  });
+
+  it("preserves restrictions and examples after multiline and inline lists", () => {
+    for (const request of [
+      "Add tag helpers:\n- trim tags\n- deduplicate tags\n\nDo not change the existing README.\nExample: [' A ', 'a'] becomes ['a'].",
+      "Add it. Done when: 1. It runs 2. It has tests. Do not change the existing README.",
+      "Build it:\n- one works\n- two works\n\n```js\nconst example = 1;\n```\nKeep the public API unchanged.",
+    ]) expect(parseRequest(request).goal).toBe(request);
   });
 
   it("no list means the whole message, and one marker, versions or code aren't a list", () => {
@@ -771,11 +607,29 @@ describe("the goal is the user's own words", () => {
     await recordUserPrompt(root, "Build it. Done when:\n- a works\n- b works", "c1", "agent");
     expect(await captureGoal(root, "c1")).toBe(true);
     const saved = await readContractSafe(root);
-    expect(saved.goal).toBe("Build it. Done when:");
+    expect(saved.goal).toBe("Build it. Done when:\n- a works\n- b works");
     expect(saved.successCriteria.map((c) => c.text)).toEqual(["a works", "b works"]);
     await recordUserPrompt(root, "something else entirely", "c1", "agent");
     expect(await captureGoal(root, "c1")).toBe(false);
-    expect((await readContractSafe(root)).goal).toBe("Build it. Done when:");
+    expect((await readContractSafe(root)).goal).toBe("Build it. Done when:\n- a works\n- b works");
+  });
+
+  it("honors a first-part-only request even though that instruction is retained in the goal", async () => {
+    const root = await empty();
+    const limit = "Do only item 1 for now, then stop.";
+    const request = `Build it.\nDone when:\n- a works\n- b works\n\n${limit}`;
+    await recordUserPrompt(root, request, "c1", "agent");
+    await captureGoal(root, "c1");
+    await fs.writeFile(path.join(root, "a.js"), "first requested part\n");
+    await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js", conversationId: "c1" });
+    expect(await submitGoalReport(root, { status: "set_aside", proofs: [], changes: [], userWords: limit })).toMatchObject({ accepted: true });
+    expect(await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 0 })).toBeNull();
+    expect((await readContractSafe(root)).goal).toBe(request);
+    await tick();
+    await recordUserPrompt(root, "Continue the original goal and finish the remaining work.", "c1", "agent");
+    await fs.writeFile(path.join(root, "a.js"), "second requested part\n");
+    await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js", conversationId: "c1" });
+    expect(await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 0 })).not.toBeNull();
   });
 
   it("the agent hears the recorded goal once, in the chat that set it", async () => {

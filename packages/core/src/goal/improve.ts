@@ -1,7 +1,7 @@
 /**
  * Guardian improves its own reviewer from what happened in this workspace, with Google Research's RRSI (Regularized
  * Recursive Self-Improvement), bundled unmodified in third_party/rrsi. Guardian supplies what RRSI needs: labelled
- * cases (from what people did after each review), a domain (packages/rsi/cgg) that replays a review with a candidate
+ * cases (from the user's review feedback), a domain (packages/rsi/cgg) that replays a review with a candidate
  * prompt, and the user's own model for RRSI's search roles. The user applies a result, or doesn't.
  */
 import { execFileSync, spawn } from "node:child_process";
@@ -14,7 +14,7 @@ import { newId, nowIso } from "../clock.js";
 import type { AuditRecord, GoalReviewRecord, ImproveRunRecord, ReviewFeedbackRecord } from "../schema/audit.js";
 import { loadCases, materializeCase, type ReviewCase } from "./cases.js";
 import { harnessDir, harnessUsable, removeHarness, writeHarness } from "./harness.js";
-import { REVIEW_BUDGET_MS, reviewIn, reviewPrompt, reviewTemplate, type ReviewOutcome } from "./review.js";
+import { REVIEW_BUDGET_MS, reviewIn, reviewPrompt, reviewTemplate, objectionEntries, type ReviewOutcome } from "./review.js";
 
 /** Labelled cases needed, of both kinds, before an improvement is worth trying. */
 export const MIN_LABELLED = 8;
@@ -37,47 +37,29 @@ export async function recordReviewFeedback(root: string, reviewId: string, index
   await appendAudit(root, { ts: nowIso(), kind: "review.feedback", reviewId, index, label });
 }
 
-const isEditOf = (r: AuditRecord): boolean => r.kind === "action.observed" && r.actionType === "edit";
-
 /**
- * Labels from what people did. A review that passed the work can be labelled too: when the user says the goal
- * wasn't done after all, that review missed it, and it should have objected.
- *
- * For reviews that objected: The user's own word wins. Without it, an objection the
- * agent fixed (files changed, then the next review on that goal passed) was right, and the user marking the goal done
- * while it still stood was wrong. The agent arguing back is not a label.
+ * Learn from explicit review feedback. An agent complying with an objection does not establish
+ * that the objection was useful. Marking a goal done likewise does not judge its review findings.
+ * A passing review is labelled missed when the user says the work wasn't done.
  */
 export function reviewLabels(records: AuditRecord[]): Map<string, { label: ReviewLabel; source: LabelledCase["source"] }> {
   const out = new Map<string, { label: ReviewLabel; source: LabelledCase["source"] }>();
   const reviews = records.filter((r): r is GoalReviewRecord => r.kind === "goal.review" && r.ran && Boolean(r.id));
-  const objected = (r: GoalReviewRecord): boolean => r.fails.length + r.extra.length > 0;
-  for (const [i, r] of records.entries()) {
-    if (r.kind !== "goal.review" || !r.ran || !r.id || !objected(r)) continue;
-    const later = records.slice(i + 1);
-    const nextReview = later.find((x): x is GoalReviewRecord => x.kind === "goal.review" && x.ran && x.goalHash === r.goalHash);
-    if (nextReview && !objected(nextReview)) {
-      const between = later.slice(0, later.indexOf(nextReview));
-      if (between.some(isEditOf)) out.set(r.id, { label: "right", source: "fixed" });
-      continue;
-    }
-    const closedByUser = later.find((x) => x.kind === "goal.control" && x.operation === "done" && x.goalHash === r.goalHash);
-    if (closedByUser && (!nextReview || Date.parse(nextReview.ts) > Date.parse(closedByUser.ts))) out.set(r.id, { label: "wrong", source: "overruled" });
-  }
   const said = new Map<string, ReviewFeedbackRecord[]>();
   for (const r of records) if (r.kind === "review.feedback") said.set(r.reviewId, [...(said.get(r.reviewId) ?? []).filter((x) => x.index !== r.index), r]);
   for (let [id, feedback] of said) {
     const review = reviews.find((r) => r.id === id);
-    const total = review ? review.fails.length + review.extra.length : 0;
     // The user said the work this review passed wasn't done: it should have objected.
-    if (review && total === 0 && feedback.some((f) => f.label === "missed")) {
+    if (review && objectionEntries(review).length === 0 && feedback.some((f) => f.label === "missed")) {
       out.set(id, { label: "right", source: "missed" });
       continue;
     }
     // The evaluator's lines come after the reviewer's own and aren't what RRSI improves: a verdict on one isn't a label.
-    feedback = feedback.filter((f) => f.index < total && f.label !== "missed");
+    const visible = new Set(review ? objectionEntries(review).filter((e) => e.source === "reviewer").map((e) => e.index) : []);
+    feedback = feedback.filter((f) => visible.has(f.index) && f.label !== "missed");
     // One objection the user calls right makes the review right to object; it was wrong only if every one was.
     if (feedback.some((f) => f.label === "right")) out.set(id, { label: "right", source: "user" });
-    else if (total > 0 && feedback.length >= total) out.set(id, { label: "wrong", source: "user" });
+    else if (visible.size > 0 && feedback.length >= visible.size) out.set(id, { label: "wrong", source: "user" });
   }
   return out;
 }
@@ -105,7 +87,7 @@ export async function labelledCases(root: string, records?: AuditRecord[]): Prom
   const out: LabelledCase[] = [];
   for (const c of await loadCases(root)) {
     const l = labels.get(c.id);
-    if (l) out.push({ reviewCase: c, ...l });
+    if (l && typeof c.currentRequest === "string") out.push({ reviewCase: c, ...l });
   }
   return out;
 }
@@ -118,11 +100,13 @@ export function enoughToImprove(cases: Array<Pick<LabelledCase, "label">>): bool
 export async function replayCase(root: string, caseId: string, template: string, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome & { flagged: boolean | null }> {
   const c = (await loadCases(root)).find((x) => x.id === caseId);
   if (!c) return { ran: false, reason: "no such case", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
+  if (!c.constraints && c.prompt.includes("\n\nUser constraints:\n")) return { ran: false, reason: "this older case did not retain the user's constraints", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
+  if (typeof c.currentRequest !== "string") return { ran: false, reason: "this older case did not retain the user request active during review", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
   const copy = await materializeCase(root, c);
   if (!copy) return { ran: false, reason: "the case's work no longer applies to its commit", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
   try {
-    const outcome = await reviewIn(copy.dir, copy.scratch, reviewPrompt({ goal: c.goal, successCriteria: c.items }, undefined, template), budgetMs);
-    return { ...outcome, flagged: outcome.ran ? outcome.fails.length + outcome.extra.length > 0 : null };
+    const outcome = await reviewIn(copy.dir, copy.scratch, reviewPrompt({ goal: c.goal, successCriteria: c.items, constraints: c.constraints ?? [], currentRequest: c.currentRequest }, undefined, template), budgetMs, c.items.length ? c.items.map((i) => i.id) : ["goal"]);
+    return { ...outcome, flagged: outcome.ran && !outcome.unanswered.length ? outcome.fails.length + outcome.extra.length > 0 : null };
   } finally {
     await fsp.rm(copy.scratch, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -221,27 +205,47 @@ async function copyTree(from: string, to: string): Promise<void> {
   await fsp.cp(from, to, { recursive: true, filter: (src) => !/(^|[\\/])(__pycache__|runs|\.git)([\\/]|$)/.test(path.relative(from, src)) });
 }
 
-interface HeldOutScore extends ReplayScore {
-  run: number;
+/** Compare the same complete held-out set, retaining every individual catch the current reviewer made. */
+export function compareHeldOutVerdicts(labels: ReadonlyMap<string, ReviewLabel>, before: ReadonlyMap<string, unknown>, after: ReadonlyMap<string, unknown>): {
+  kept: boolean; reason: string; old: ReplayScore; new: ReplayScore; lostCatches: number;
+} {
+  const score = (verdicts: ReadonlyMap<string, unknown>): ReplayScore => {
+    let correct = 0;
+    let catches = 0;
+    for (const [id, label] of labels) {
+      const flagged = verdicts.get(id);
+      if (typeof flagged !== "boolean") continue;
+      if (flagged === (label === "right")) correct += 1;
+      if (label === "right" && flagged) catches += 1;
+    }
+    return { correct, catches };
+  };
+  const old = score(before);
+  const neu = score(after);
+  const beforeRun = [...labels.keys()].filter((id) => typeof before.get(id) === "boolean").length;
+  const afterRun = [...labels.keys()].filter((id) => typeof after.get(id) === "boolean").length;
+  const lostCatches = [...labels].filter(([id, label]) => label === "right" && before.get(id) === true && after.get(id) === false).length;
+  const scores = { old, new: neu, lostCatches };
+  if (!labels.size) return { kept: false, reason: "no held-out cases to compare", ...scores };
+  if (beforeRun !== labels.size || afterRun !== labels.size) {
+    return { kept: false, reason: `held-out replay coverage is incomplete: current ${beforeRun}/${labels.size}, candidate ${afterRun}/${labels.size}; no comparison accepted`, ...scores };
+  }
+  if (lostCatches) return { kept: false, reason: `RRSI's winner missed ${lostCatches} gap${lostCatches === 1 ? "" : "s"} the current reviewer caught`, ...scores };
+  if (neu.correct <= old.correct) return { kept: false, reason: `${neu.correct} right against ${old.correct} now on ${labels.size} cases RRSI never saw: no better`, ...scores };
+  return { kept: true, reason: `${neu.correct} right against ${old.correct} now on ${labels.size} cases RRSI never saw`, ...scores };
 }
 
-/** A held-out job's verdicts, from RRSI's own records: right answers, and catches of cases right to object to. */
-async function heldOutScore(runs: string, job: string, labels: Map<string, ReviewLabel>): Promise<HeldOutScore | null> {
+/** Read the expected held-out verdicts; missing, malformed and inconclusive results remain incomplete. */
+async function heldOutScore(runs: string, job: string, labels: Map<string, ReviewLabel>): Promise<Map<string, unknown> | null> {
   const jobDir = path.join(runs, "cgg", "jobs", job);
   const tasks = await fsp.readdir(jobDir).catch(() => null);
   if (!tasks) return null;
-  let correct = 0;
-  let catches = 0;
-  let run = 0;
-  for (const t of tasks) {
-    const rec = await fsp.readFile(path.join(jobDir, t, "trial0.json"), "utf8").then((x) => JSON.parse(x) as { flagged: boolean | null }).catch(() => null);
-    const label = labels.get(t);
-    if (!rec || rec.flagged === null || !label) continue;
-    run += 1;
-    if (rec.flagged === (label === "right")) correct += 1;
-    if (label === "right" && rec.flagged) catches += 1;
+  const verdicts = new Map<string, unknown>();
+  for (const id of labels.keys()) {
+    const rec = await fsp.readFile(path.join(jobDir, id, "trial0.json"), "utf8").then((x) => JSON.parse(x) as { flagged?: unknown }).catch(() => null);
+    if (rec) verdicts.set(id, rec.flagged);
   }
-  return { correct, catches, run };
+  return verdicts;
 }
 
 export function candidatePath(root: string, runId: string): string {
@@ -328,16 +332,15 @@ export async function improveReviewer(root: string, rsi: RsiPaths, opts: { auto?
   await progress("Scoring RRSI's winner on the same held-out cases");
   const after = await rrsi(["heldout", "--label", "after", "--ref", frontier.incumbent.commit]);
   if (after.code !== 0) return finish({ kept: false, reason: `RRSI couldn't score its winner (see ${path.relative(root, log)})`, hypotheses, diff });
-  const old = await heldOutScore(runs, "heldout_before", labels);
-  const neu = await heldOutScore(runs, "heldout_after", labels);
-  if (!old || !neu || !old.run || !neu.run) return finish({ kept: false, reason: "none of the held-out cases could be replayed", hypotheses, diff });
-  const lostCatches = Math.max(0, old.catches - neu.catches);
-  const scores = { old: { correct: old.correct, catches: old.catches }, new: { correct: neu.correct, catches: neu.catches }, lostCatches };
-  if (lostCatches) return finish({ kept: false, reason: `RRSI's winner missed ${lostCatches} gap${lostCatches === 1 ? "" : "s"} the current reviewer caught`, hypotheses, diff, ...scores });
-  if (neu.correct <= old.correct) return finish({ kept: false, reason: `${neu.correct} right against ${old.correct} now on ${old.run} cases RRSI never saw: no better`, hypotheses, diff, ...scores });
+  const heldOutLabels = new Map([...labels].filter(([id]) => isHeldOut(id)));
+  const old = await heldOutScore(runs, "heldout_before", heldOutLabels);
+  const neu = await heldOutScore(runs, "heldout_after", heldOutLabels);
+  if (!old || !neu) return finish({ kept: false, reason: "the held-out replay records could not be read", hypotheses, diff });
+  const comparison = compareHeldOutVerdicts(heldOutLabels, old, neu);
+  if (!comparison.kept) return finish({ hypotheses, diff, ...comparison });
   await fsp.mkdir(path.dirname(candidatePath(root, id)), { recursive: true });
   await fsp.writeFile(candidatePath(root, id), winner, "utf8");
-  return finish({ kept: true, reason: `${neu.correct} right against ${old.correct} now on ${old.run} cases RRSI never saw`, hypotheses, diff, ...scores });
+  return finish({ hypotheses, diff, ...comparison });
 }
 
 export function improveRunning(records: AuditRecord[]): boolean {

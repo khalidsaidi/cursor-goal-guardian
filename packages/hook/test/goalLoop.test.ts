@@ -29,7 +29,7 @@ describe("the goal loop through the built hook", () => {
     asked(w.root);
     run(w.root, { hook_event_name: "afterFileEdit", file_path: path.join(w.root, "src/csv.js") });
     const out = run(w.root, stop());
-    expect(String(out.followup_message)).toMatch(/^Goal Guardian: round 1 of 20[\s\S]*Fix the CSV parser[\s\S]*not accounted for: src\/csv\.js/);
+    expect(String(out.followup_message)).toMatch(/^Goal Guardian: round 1 of 20[\s\S]*Fix the CSV parser[\s\S]*Observed change: src\/csv\.js/);
     expect(auditOfKind(await readAudit(w.root), "goal.round")).toHaveLength(1);
   });
 

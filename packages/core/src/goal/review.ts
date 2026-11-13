@@ -1,5 +1,5 @@
 /**
- * One adversarial review when the agent says the goal is done and Guardian's own record agrees (Google ADK's
+ * One independent review when the agent says the goal is done and Guardian's own record agrees (Google ADK's
  * evaluator, in evaluator.ts, judges the same run alongside it). A separate agent,
  * on the user's own Cursor login and default model, works in a throwaway copy of the project and tries to prove
  * each "done when" item isn't really done, and lists work no item needs. It can't block anything: when it can't
@@ -22,6 +22,13 @@ export interface ReviewExtra {
   file: string;
   what: string;
 }
+export const REVIEW_POLICY = "outcome-completion-v5";
+export interface ReviewCheck {
+  id: "build" | "public_api" | "behavior";
+  verdict: "holds" | "fails" | "unclear" | "not_applicable";
+  evidence: string;
+}
+
 export interface ReviewOutcome {
   ran: boolean;
   /** Why it didn't run, or why its answer couldn't be used. */
@@ -31,6 +38,8 @@ export interface ReviewOutcome {
   /** Done-when ids the reviewer gave no clear verdict on: left out, or answered with something that is neither holds nor a no. */
   unanswered: string[];
   seconds: number;
+  checks?: ReviewCheck[];
+  verdicts?: Array<{ id: string; verdict: "holds" | "fails" | "unclear"; evidence: string }>;
 }
 
 /** How long a review may take before Guardian gives up on it. */
@@ -50,7 +59,8 @@ export const DEP_DIRS = ["node_modules", ".venv", "venv", "vendor"];
 const SECRET_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|AUTH/i;
 
 /**
- * The reviewer's instructions. `{goal}` and `{items}` are filled in.
+ * The reviewer's template. `{goal}` and `{items}` are filled in. The historical measurements below precede
+ * the fixed verification requirements appended by reviewPrompt; they do not measure the current policy.
  *
  * Where they come from, in full: Google's RRSI evolved them on the study rig from the Test 10 prompt, in 4 accepted
  * edits. On that run's held-out cases they flagged good work 0 of 11 times (the old prompt: 8 of 11) and caught 4
@@ -69,13 +79,29 @@ Done when:
 
 This folder is a throwaway copy of the project as the agent left it. See the recent work with \`git status\`, \`git diff HEAD\` and \`git log\`.
 
-Be an adversary. For each item, try to prove it is NOT really done: stubs, comments or text standing in for code, tests that assert nothing or don't exercise the change, output printed rather than produced, behaviour that breaks on ordinary inputs. Run the project's tests and small checks of your own. Judge each item on its literal wording and ordinary inputs. Mark 'fails' only when the user, reading the item, would agree it is not done: do not fail an item over edge cases, stricter semantics, or standards the item does not state. Judge 'tests pass' on behavioural results under a working runtime; style-linter complaints and environment quirks are not test failures.
+Check whether each requested item works on ordinary inputs and whether anything is still unfinished. Read the implementation, run the relevant tests and try focused checks of your own. Report a failure only with a concrete unmet requirement or demonstrated problem in the finished work. Do not hunt for dishonesty, invent additional requirements or treat report formatting as a defect. Judge tests on behavioral results under a working runtime; style complaints and environment quirks are not automatically defects.
 
-Then list extra work: changes to other behaviour, renames, refactors, rewrites or deletions of existing code or docs, or new features that no item needs. Everything that belongs to the new work is NOT extra: its tests, comments and docs, its type declarations or signatures for the new exported things, and minimal input guards or normalisation inside the new code. Only name a file when it is clearly beyond what any item needs. When unsure whether something is a failure or extra, say holds and leave it out. Still check every changed hunk against the goal, and name each unrelated change (renames, removed comments, deleted TODOs or doc sections, doc rewrites, whitespace-only edits to other files) individually, with the file and the concrete identifier or heading. Deleting or renaming something that already existed, in code or docs the new work does not need to touch, is normally extra; a change inside code the new work must modify is not. Before you flag anything from a diff, open the actual file and confirm it; do not flag placement or comment-ordering concerns from diff context alone. If an item's own wording asks for a check or test of the new behaviour, confirm one really exists and exercises it; if the item names it and it is missing or asserts nothing, that item fails, and it comes before any cosmetic hunk in your findings. Put the evidence for every item in its own verdict line, quoting what you ran or read; do not let a whitespace-only or other cosmetic hunk stand in for an item verdict.
+Then list only meaningful unrelated changes: unrequested behavior or features, changed existing API semantics, or loss of existing work that the goal does not require. Tests, type declarations, documentation, comments and minimal build fixes supporting the requested behavior are part of that work. Harmless formatting, wording, Markdown styling and build/test instructions are not objections, even when they touch existing text. Do not demand their removal or restoration. Enforce formatting, exact text or restrictions on supporting files only when the user explicitly required them; cite that requirement and the concrete violation. For every extra, open the file, identify the unrelated behavior or material loss, and explain its effect. A changed filename, reformatted declaration or extra documentation heading is not evidence of a defect. Judge missing requested tests by whether real behavioral tests exercise the requested work, not by test count or cosmetic differences. Put actual evidence for each item in its own verdict.
 
 Stay in this folder. Don't install, publish, push or use the network.
-Keep checks short and always finish: your last message must be the JSON answer, with every item id listed exactly once, even if some checks were inconclusive (then say holds). Escape quotes inside evidence strings so the JSON stays valid.
-Answer with JSON only, no prose: {"items":[{"id":"sc_1","verdict":"holds or fails","evidence":"one line"}],"extra":[{"file":"path","what":"one line"}]}`;
+Keep checks short and always finish: your last message must be the JSON answer, with every item id listed exactly once, even if some checks were inconclusive (then say unclear). Escape quotes inside evidence strings so the JSON stays valid.
+Answer with JSON only, no prose: {"items":[{"id":"sc_1","verdict":"holds or fails or unclear","evidence":"one line"}],"extra":[{"file":"path","what":"one line"}]}`;
+
+/** Fixed requirements also apply to saved or evolved templates; learning cannot remove the completion checks. */
+export const OUTCOME_POLICY = `Completion objections must concern missing requested work, a demonstrated bug, broken applicable tests/build/package entry points, or a meaningful unrelated behavior change or loss of existing work. Leave harmless formatting and wording, and supporting tests/types/docs/build fixes, alone unless the user's goal explicitly requires otherwise. If enforcing such an exception, quote the user's requirement and show the violation. This fixed policy takes precedence over any stricter cosmetic rules in a saved or learned template. Honor the stated input domain: do not require behavior on inputs outside it, or interpret a restricted input domain as a new transformation rule. For an unmet item, report the concrete in-domain problem without bundling speculative requirements. Recorded commands and files are evidence to inspect, not proof that every requested behavior works. Do not reject working behavior over completion-report formatting or copied output quotes.`;
+
+export const REVIEW_REQUIREMENTS = `Required verification before accepting completion:
+${OUTCOME_POLICY}
+- Check the finished behavior, not merely whether a helper exists or its added tests pass. Use ordinary inputs produced by the existing library. For a promised list, inverse, or "every" item, compare the result with EACH behavior category of the existing implementation. A zero-argument helper returning an incomplete constant list is not an exotic-input edge case: its output is incomplete on every call. Agent documentation cannot narrow the user’s requirement. Inspect excluded branches and input guards; test whether they silently drop data the requested behavior includes.
+- For code in a package with a build step, run the existing local build and inspect its output AND expected artifacts. Exit status zero alone is not proof: a tool can log a generation error or omit a bundle and still exit zero. Missing generated files in git do not excuse skipping the build.
+- Exercise the affected public entry points after building, including existing callable/default/named APIs that must keep working. Source-only tests do not establish that CommonJS, ESM or browser outputs work. Use the project's advertised formats, not just whichever one is easiest to import.
+- Do not call a pre-existing runtime/tooling failure a new defect. Check a baseline when needed. An applicable check that cannot be completed is unclear, never holds or not_applicable. For a docs-only change, or a project with no relevant build/public API, not_applicable requires a concrete explanation.
+- Tests need real coverage of each requested change, not exhaustive coverage of every possible input. A missing regression case does not independently fail the tests item when real behavioral tests cover both changes and pass; report the behavior defect under its own item.
+- New type declarations, tests and documentation for the requested behavior are not extra work. Harmless formatting or wording anywhere in the change is not a reason to send the agent back unless the user explicitly constrained it. For each claimed extra, name the actual unrelated behavior or identifier, not merely a changed file.
+- Verify the requested behavior with focused probes, not just the added tests. Inspect the existing implementation to choose the probes. For a list describing another operation, try examples from each existing transformation branch and compare them with the returned list. For a helper with blocked/skipped categories, test an existing own data value in those categories. Record actual inputs and outputs in each item’s evidence. Merely reciting the helper’s returned constant is not a verification that it is complete.
+- Inconclusive item verdicts are unclear. Never turn a check you could not perform into holds.
+The final JSON must include items, extra, and checks. Every required check must have nonempty evidence describing what was run and observed, or why it does not apply:
+{"items":[{"id":"sc_1","verdict":"holds or fails or unclear","evidence":"what you checked"}],"extra":[{"file":"path","what":"the unrelated change"}],"checks":[{"id":"build","verdict":"holds or fails or unclear or not_applicable","evidence":"command and result, or concrete reason"},{"id":"public_api","verdict":"holds or fails or unclear or not_applicable","evidence":"imports/calls and results, or concrete reason"},{"id":"behavior","verdict":"holds or fails or unclear or not_applicable","evidence":"focused probes against the user’s actual requirements, with observed results"}]}`;
 
 /** The reviewer template in use: a test override, else the workspace's own improved version, else the built-in one. */
 export function reviewTemplate(root?: string): string {
@@ -83,9 +109,17 @@ export function reviewTemplate(root?: string): string {
   return override ? fs.readFileSync(override, "utf8") : readHarness(root, "reviewer", REVIEW_PROMPT);
 }
 
-export function reviewPrompt(contract: Pick<Contract, "goal" | "successCriteria">, root?: string, template: string = reviewTemplate(root)): string {
+/** The recorded objective and the human request active during this completion check. */
+export type ReviewContract = Pick<Contract, "goal" | "successCriteria"> & Partial<Pick<Contract, "constraints">> & { currentRequest?: string };
+
+/** Shared by review, evaluation and claim adjudication so earlier turn limits cannot silently narrow completion. */
+export function completionScope(currentRequest?: string): string {
+  return `Completion scope:\nLatest user request for this turn:\n${currentRequest ?? "Not separately recorded; use the recorded goal and every checklist item."}\n\nThe recorded goal may include temporary instructions from an earlier turn. If the latest request asks to continue or finish, an earlier "only the first part for now" or "then stop" limit has expired. Persistent user constraints still apply. A completion review must assess the entire goal and return a verdict for every checklist item; do not omit later items because an earlier turn stopped partway. A temporary stop is handled separately by set_aside, not by dropping completion criteria. The latest request provides turn context; it does not replace the recorded goal or authorize silently removing requirements.`;
+}
+
+export function reviewPrompt(contract: ReviewContract, root?: string, template: string = reviewTemplate(root)): string {
   const items = contract.successCriteria.length ? contract.successCriteria.map((c) => `- ${c.id}: ${c.text}`).join("\n") : "- goal: the goal as stated";
-  return template.replace("{goal}", () => contract.goal).replace("{items}", () => items);
+  return `${template.replace("{goal}", () => contract.goal).replace("{items}", () => items)}${contract.constraints?.length ? `\n\nUser constraints:\n${contract.constraints.map((c) => `- ${c}`).join("\n")}` : ""}\n\n${completionScope(contract.currentRequest)}\n\n${REVIEW_REQUIREMENTS}`;
 }
 
 /** The first balanced JSON object in the text holding an array under `key`. Models add prose and fences around it. */
@@ -147,7 +181,7 @@ const SAYS_YES = /^(holds?|held|pass(es|ed)?|met|done|ok(ay)?|yes|true|satisfied
  * `expect` (the goal's done-when items) must come back with a clear verdict: a no is an objection, and an item left
  * out or answered unclearly is unanswered, which is never the same as holds.
  */
-export function parseReview(stdout: string, expect: string[] = []): { fails: ReviewFailure[]; extra: ReviewExtra[]; unanswered: string[] } | null {
+export function parseReview(stdout: string, expect: string[] = [], requireChecks = false): { fails: ReviewFailure[]; extra: ReviewExtra[]; unanswered: string[]; checks?: ReviewCheck[]; verdicts?: ReviewOutcome["verdicts"] } | null {
   const text = agentText(stdout);
   if (text === null) return null;
   const answer = firstObjectWith(text, "items");
@@ -161,14 +195,29 @@ export function parseReview(stdout: string, expect: string[] = []): { fails: Rev
     .filter((e) => verdictOf(e) === "no")
     .map((e) => ({ id: str(e.id) || "goal", evidence: str(e.evidence) }))
     .slice(0, MAX_ITEMS);
-  const answered = new Set(items.filter((e) => verdictOf(e) !== "unclear").map((e) => str(e.id) || "goal"));
+  const answered = new Set(items.filter((e) => verdictOf(e) !== "unclear" && (!requireChecks || Boolean(str(e.evidence)))).map((e) => str(e.id) || "goal"));
   const unanswered = [...new Set([...expect.filter((id) => !answered.has(id)), ...items.filter((e) => verdictOf(e) === "unclear").map((e) => str(e.id) || "goal")])].slice(0, MAX_ITEMS * 2);
   const extra = (Array.isArray(answer.extra) ? answer.extra : [])
     .map((e) => e as Record<string, unknown>)
     .map((e) => ({ file: str(e?.file), what: str(e?.what) }))
     .filter((e) => e.file || e.what)
     .slice(0, MAX_ITEMS);
-  return { fails, extra, unanswered };
+  if (!requireChecks) return { fails, extra, unanswered };
+  const checks: ReviewCheck[] = [];
+  const supplied = (Array.isArray(answer.checks) ? answer.checks : []) as Array<Record<string, unknown>>;
+  for (const id of ["build", "public_api", "behavior"] as const) {
+    const matches = supplied.filter((c) => c?.id === id);
+    const c = matches[0];
+    const evidence = str(c?.evidence);
+    const verdict = str(c?.verdict).toLowerCase();
+    const valid = matches.length === 1 && evidence && ["holds", "fails", "unclear", "not_applicable"].includes(verdict);
+    const check: ReviewCheck = { id, verdict: valid ? verdict as ReviewCheck["verdict"] : "unclear", evidence };
+    checks.push(check);
+    if (check.verdict === "fails") fails.push({ id, evidence });
+    else if (check.verdict === "unclear") unanswered.push(id);
+  }
+  const verdicts = items.map((e) => ({ id: str(e.id) || "goal", verdict: (verdictOf(e) === "yes" ? "holds" : verdictOf(e) === "no" ? "fails" : "unclear") as "holds" | "fails" | "unclear", evidence: str(e.evidence) }));
+  return { fails, extra, unanswered: [...new Set(unanswered)], checks, verdicts };
 }
 
 function isExecutable(p: string): boolean {
@@ -268,7 +317,10 @@ function runAgent(command: string, prompt: string, dir: string, scratch: string,
       clearTimeout(timer);
       resolve(v);
     };
-    const child = spawn(command, ["-p", prompt, "--output-format", "json", "--force", "--trust", "--workspace", dir], {
+    // A review is already a separate check. Another review/delegation layer adds latency and can consume
+    // the entire tool-call budget after the actual verification has finished.
+    const request = `Perform this task yourself. Do not delegate to subagents or helpers, and do not call goal-management tools. Use the project tools directly when the task requires checks, then return the requested answer without another review layer.\n\n${prompt}`;
+    const child = spawn(command, ["-p", request, "--output-format", "json", "--force", "--trust", "--workspace", dir], {
       cwd: dir,
       env: reviewerEnv(scratch),
       stdio: ["ignore", "pipe", "ignore"],
@@ -302,13 +354,13 @@ export async function reviewIn(dir: string, scratch: string, prompt: string, bud
   const seconds = (): number => Math.round((Date.now() - started) / 1000);
   const run = await askAgent(prompt, dir, scratch, budgetMs);
   if (!run.ok) return { ran: false, reason: run.reason, fails: [], extra: [], unanswered: [], seconds: seconds() };
-  const parsed = parseReview(run.stdout, expect);
+  const parsed = parseReview(run.stdout, expect, true);
   if (!parsed) return { ran: false, reason: "the reviewer's answer couldn't be read", fails: [], extra: [], unanswered: [], seconds: seconds() };
   return { ran: true, ...parsed, seconds: seconds() };
 }
 
 /** Run one review of the project against the goal. Never throws. */
-export async function runReview(root: string, contract: Pick<Contract, "goal" | "successCriteria">, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome & { prompt?: string }> {
+export async function runReview(root: string, contract: ReviewContract, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome & { prompt?: string }> {
   const started = Date.now();
   const seconds = (): number => Math.round((Date.now() - started) / 1000);
   const skipped = (reason: string): ReviewOutcome => ({ ran: false, reason, fails: [], extra: [], unanswered: [], seconds: seconds() });
@@ -340,8 +392,7 @@ export interface EvaluatorClaim {
 }
 
 /**
- * The reviewer's check of what the evaluator alone objected to. The evaluator judges from Guardian's record of the
- * run, so it can object to an edit that was later replaced; the reviewer looks at the project as it is.
+ * A fresh check of a disagreement between completion reviewers, against the project as it is now.
  */
 export interface Adjudication {
   ran: boolean;
@@ -360,7 +411,7 @@ export interface Adjudication {
  * Guardian's own instructions for that check. Not part of what the reviewer's self-improvement changes. `{goal}`,
  * `{items}` and `{claims}` are filled in.
  */
-export const ADJUDICATE_PROMPT = `Another checker read a log of an AI coding agent's work and claims parts of a goal are not met. It never saw the project, only the log, and the log can show an edit that was later replaced. You decide each claim against the project as it is now. The user's goal:
+export const ADJUDICATE_PROMPT = `A completion checker objects to an AI coding agent's work. A checker can mistake requested supporting work for an extra, or rely on a log of an edit that was later replaced. You decide each claim against the project as it is now. The user's goal:
 {goal}
 Done when:
 {items}
@@ -370,28 +421,41 @@ This folder is a throwaway copy of the project as the agent left it. See the wor
 The claims:
 {claims}
 
-Do not take a claim's word for anything. For each one, open the files it talks about, and run the project's own tests or a small check of your own where that settles it. Answer "confirmed" only if the claim is true of the project now and means the item it names is really not met, or, for the claim about work nobody asked for, that such a change is really in the project. Tests, type declarations, documentation and comments for the requested work are part of that work. Answer "dismissed" if the project shows the claim is untrue, already fixed, or about something the item does not ask for. If you cannot tell, answer "unclear".
+Do not take a claim's word for anything. For each one, open the files it talks about, and run the project's own tests or a small check of your own where that settles it. Answer "confirmed" only if the claim is true of the project now and means the item it names is really not met, or, for the claim about work nobody asked for, that such a change is really in the project. Tests, type declarations, documentation and comments for the requested work are part of that work. Do not promote one possible interpretation of an undefined term into an additional user requirement: a claim needs a concrete contradiction of the stated request or established behavior, not merely a stronger data model the checker would prefer. A changed file is not evidence of unrelated scope: identify an actual unrelated behavior or identifier before confirming an extra. Harmless formatting, wording and supporting build/test documentation are not grounds to reject completion, even when they touch existing text. Enforce an exact-text, formatting or file restriction only when the user explicitly stated it, citing that requirement. Answer "dismissed" if the project shows the claim is untrue, already fixed, or about something the item does not ask for. If you cannot tell, answer "unclear".
 
 Stay in this folder. Don't install, publish, push or use the network.
 Keep checks short and always finish: your last message must be the JSON answer, with every claim id listed exactly once. Escape quotes inside evidence strings so the JSON stays valid.
+${OUTCOME_POLICY}
+
 Answer with JSON only, no prose: {"claims":[{"id":"sc_1","verdict":"confirmed or dismissed or unclear","evidence":"one line quoting what you ran or read"}]}`;
 
 /**
- * What the evaluator objected to that the reviewer did not: an item the reviewer passed, or unrequested work when
- * the reviewer named none. Where the reviewer already objects to the same thing there is nothing to settle.
+ * Disagreements between the reviewer and evaluator, in either direction. Shared objections stand; a missing
+ * evaluator verdict is not agreement or grounds to dismiss the reviewer.
  */
-export function claimsToAdjudicate(review: Pick<ReviewOutcome, "fails" | "extra">, evaluator: Pick<EvaluatorOutcome, "ran" | "failed"> | undefined): EvaluatorClaim[] {
-  if (!evaluator?.ran) return [];
+export function claimsToAdjudicate(review: Pick<ReviewOutcome, "fails" | "extra">, evaluator: (Pick<EvaluatorOutcome, "ran" | "failed"> & Partial<Pick<EvaluatorOutcome, "unanswered">>) | undefined): EvaluatorClaim[] {
+  const judged = evaluator?.ran ? evaluator : undefined;
   const failed = new Set(review.fails.map((f) => f.id));
-  return evaluator.failed.filter((c) => (c.id === EXTRA_WORK_RUBRIC_ID ? review.extra.length === 0 : !failed.has(c.id)));
+  const claims = judged ? judged.failed.filter((c) => c.id === EXTRA_WORK_RUBRIC_ID || !failed.has(c.id)) : [];
+  const evaluatorFailed = new Set(judged?.failed.map((c) => c.id) ?? []);
+  if (judged) review.fails.forEach((f, i) => {
+    if (f.id === "behavior" && (judged.unanswered?.length || judged.failed.some((c) => c.id !== EXTRA_WORK_RUBRIC_ID))) return;
+    if (f.id !== "build" && f.id !== "public_api" && !evaluatorFailed.has(f.id) && !judged.unanswered?.includes(f.id)) {
+      claims.push({ id: `reviewer_item_${i + 1}`, property: `the reviewer's objection to ${f.id}`, rationale: f.evidence });
+    }
+  });
+  // Agreement that SOME unrelated work exists cannot confirm every individual finding.
+  // Check each scope claim against the project, including when the other checker is unavailable.
+  review.extra.forEach((e, i) => claims.push({ id: `reviewer_extra_${i + 1}`, property: `unrequested change in ${e.file}`, rationale: e.what }));
+  return claims;
 }
 
-export function adjudicatePrompt(contract: Pick<Contract, "goal" | "successCriteria">, claims: EvaluatorClaim[]): string {
+export function adjudicatePrompt(contract: ReviewContract, claims: EvaluatorClaim[]): string {
   const items = contract.successCriteria.length ? contract.successCriteria.map((c) => `- ${c.id}: ${c.text}`).join("\n") : "- goal: the goal as stated";
   const list = claims
-    .map((c) => (c.id === EXTRA_WORK_RUBRIC_ID ? `- ${c.id} (the run changed things the request doesn't need): ${c.rationale}` : `- ${c.id} (${c.property}) is not met: ${c.rationale}`))
+    .map((c) => c.id === EXTRA_WORK_RUBRIC_ID ? `- ${c.id} (the run changed things the request doesn't need): ${c.rationale}` : c.id.startsWith("reviewer_extra_") ? `- ${c.id} (${c.property}): ${c.rationale}` : `- ${c.id} (${c.property}) is not met: ${c.rationale}`)
     .join("\n");
-  return ADJUDICATE_PROMPT.replace("{goal}", () => contract.goal).replace("{items}", () => items).replace("{claims}", () => list);
+  return ADJUDICATE_PROMPT.replace("{goal}", () => contract.goal).replace("{items}", () => items).replace("{claims}", () => list) + (contract.constraints?.length ? `\n\nUser constraints:\n${contract.constraints.map((c) => `- ${c}`).join("\n")}` : "") + `\n\n${completionScope(contract.currentRequest)}`;
 }
 
 /** The reviewer's answer on each claim. A claim left out or answered unclearly is unclear: it is never dismissed by silence. */
@@ -401,13 +465,16 @@ export function parseAdjudication(stdout: string, claims: EvaluatorClaim[]): Pic
   const answer = firstObjectWith(text, "claims");
   if (!answer) return null;
   const said = new Map<string, { verdict: string; evidence: string }>();
+  const duplicates = new Set<string>();
   for (const e of answer.claims as unknown[]) {
     const c = (e ?? {}) as Record<string, unknown>;
-    if (str(c.id)) said.set(str(c.id), { verdict: str(c.verdict).toLowerCase(), evidence: str(c.evidence) });
+    const id = str(c.id);
+    if (said.has(id)) duplicates.add(id);
+    if (id) said.set(id, { verdict: str(c.verdict).toLowerCase(), evidence: str(c.evidence) });
   }
   const out: Pick<Adjudication, "confirmed" | "dismissed" | "unclear"> = { confirmed: [], dismissed: [], unclear: [] };
   for (const claim of claims) {
-    const a = said.get(claim.id);
+    const a = duplicates.has(claim.id) ? undefined : said.get(claim.id);
     // A dismissal has to say what was looked at: without evidence it is not a check of the project.
     if (a && /^dismiss/.test(a.verdict) && a.evidence) out.dismissed.push({ ...claim, evidence: a.evidence });
     else if (a && /^confirm/.test(a.verdict)) out.confirmed.push({ id: claim.id, evidence: a.evidence });
@@ -416,8 +483,8 @@ export function parseAdjudication(stdout: string, claims: EvaluatorClaim[]): Pic
   return out;
 }
 
-/** One more reviewer call, in a fresh copy of the project, on what the evaluator alone objected to. Never throws. */
-export async function adjudicate(root: string, contract: Pick<Contract, "goal" | "successCriteria">, claims: EvaluatorClaim[], budgetMs = REVIEW_BUDGET_MS): Promise<Adjudication> {
+/** One fresh call to settle checker disagreements against the project. Never throws. */
+export async function adjudicate(root: string, contract: ReviewContract, claims: EvaluatorClaim[], budgetMs = REVIEW_BUDGET_MS): Promise<Adjudication> {
   const started = Date.now();
   const seconds = (): number => Math.round((Date.now() - started) / 1000);
   const notRun = (reason: string): Adjudication => ({ ran: false, reason, seconds: seconds(), confirmed: [], dismissed: [], unclear: claims.map((c) => c.id) });
@@ -433,7 +500,7 @@ export async function adjudicate(root: string, contract: Pick<Contract, "goal" |
 }
 
 /** The same check in a prepared copy. Never throws. */
-export async function adjudicateIn(dir: string, scratch: string, contract: Pick<Contract, "goal" | "successCriteria">, claims: EvaluatorClaim[], budgetMs = REVIEW_BUDGET_MS): Promise<Adjudication> {
+export async function adjudicateIn(dir: string, scratch: string, contract: ReviewContract, claims: EvaluatorClaim[], budgetMs = REVIEW_BUDGET_MS): Promise<Adjudication> {
   const started = Date.now();
   const seconds = (): number => Math.round((Date.now() - started) / 1000);
   const notRun = (reason: string): Adjudication => ({ ran: false, reason, seconds: seconds(), confirmed: [], dismissed: [], unclear: claims.map((c) => c.id) });
@@ -445,6 +512,7 @@ export async function adjudicateIn(dir: string, scratch: string, contract: Pick<
 }
 
 type Reviewed = Pick<ReviewOutcome, "fails" | "extra"> & {
+  policy?: string;
   evaluator?: Pick<EvaluatorOutcome, "ran" | "failed"> | undefined;
   adjudication?: Pick<Adjudication, "ran" | "confirmed" | "dismissed"> | undefined;
 };
@@ -453,21 +521,36 @@ type Reviewed = Pick<ReviewOutcome, "fails" | "extra"> & {
  * Everything one review objects to: the reviewer's item verdicts and extras, then each rubric the evaluator judged
  * not met, except those the reviewer checked against the project and dismissed.
  */
-export function objectionLines(review: Reviewed): string[] {
-  if (!review.evaluator) return reviewLines(review);
-  const dismissed = new Set((review.adjudication?.dismissed ?? []).map((d) => d.id));
-  const confirmed = new Map((review.adjudication?.confirmed ?? []).map((c) => [c.id, c.evidence]));
-  const standing = { ran: review.evaluator.ran, failed: review.evaluator.failed.filter((f) => !dismissed.has(f.id)) };
-  const lines = evaluatorLines(standing).map((line, i) => {
-    const evidence = confirmed.get(standing.failed[i]!.id);
-    return evidence ? `${line} The reviewer checked the project and confirms it: ${evidence}` : line;
+/** Stable raw indexes survive dismissals, so panel feedback never changes which objection it names. */
+export function objectionEntries(review: Reviewed): Array<{ index: number; source: "reviewer" | "evaluator"; line: string }> {
+  const dismissed = new Set((review.adjudication?.ran ? review.adjudication.dismissed : []).map((d) => d.id));
+  const confirmed = new Map((review.adjudication?.ran ? review.adjudication.confirmed : []).map((c) => [c.id, c.evidence]));
+  const outcomePolicy = review.policy === REVIEW_POLICY || review.policy === "outcome-completion-v4";
+  const entries: Array<{ index: number; source: "reviewer" | "evaluator"; line: string }> = [];
+  review.fails.forEach((f, i) => {
+    if (!dismissed.has(`reviewer_item_${i + 1}`)) entries.push({ index: i, source: "reviewer", line: `Reviewer: ${f.id} isn't done: ${f.evidence}` });
   });
-  return [...reviewLines(review), ...lines];
+  review.extra.forEach((e, i) => {
+    const id = `reviewer_extra_${i + 1}`;
+    if (!dismissed.has(id) && (!outcomePolicy || confirmed.has(id))) entries.push({ index: review.fails.length + i, source: "reviewer", line: `Reviewer: ${e.file || "a change"} needs attention: ${confirmed.get(id) ?? e.what}` });
+  });
+  if (review.evaluator?.ran) review.evaluator.failed.forEach((f, i) => {
+    if (dismissed.has(f.id) || (outcomePolicy && f.id === EXTRA_WORK_RUBRIC_ID && !confirmed.has(f.id))) return;
+    const line = evaluatorLines({ ran: true, failed: [f] })[0]!;
+    const evidence = confirmed.get(f.id);
+    entries.push({ index: review.fails.length + review.extra.length + i, source: "evaluator", line: evidence ? (f.id === EXTRA_WORK_RUBRIC_ID ? `Evaluator: meaningful unrelated change: ${evidence}` : `${line} The reviewer checked the project and confirms it: ${evidence}`) : line });
+  });
+  return entries;
+}
+
+export function objectionLines(review: Reviewed): string[] {
+  return objectionEntries(review).map((e) => e.line);
 }
 
 /** What the evaluator raised and the reviewer dismissed after checking the project: shown to the user, never sent back. */
 export function dismissedLines(review: { adjudication?: Pick<Adjudication, "dismissed"> | undefined }): string[] {
   return (review.adjudication?.dismissed ?? []).map((d) =>
+    d.id.startsWith("reviewer_") ? `The reviewer raised ${d.property} (${d.rationale}); a separate check dismissed it: ${d.evidence}` :
     d.id === EXTRA_WORK_RUBRIC_ID
       ? `The evaluator raised unrequested work (${d.rationale}); the reviewer checked the project and dismissed it: ${d.evidence}`
       : `The evaluator raised ${d.id} (${d.rationale}); the reviewer checked the project and dismissed it: ${d.evidence}`,

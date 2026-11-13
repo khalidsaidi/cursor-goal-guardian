@@ -1,3 +1,5 @@
+import { finishReport } from "./helpers/recovery.js";
+import { VERIFIED_CHECKS } from "./helpers/review.js";
 /**
  * What a third independent audit found that an ordinary, honest agent or user can hit, as tests: verdicts read too
  * loosely, a goal never recorded when work went through commands, "the user's words" taken too easily, and a block
@@ -10,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendAudit, buildPanelViewModel, defaultContract, getGuardianPaths, goalCommandIn, goalHash, nowIso, parseEvaluator, readAuditTail, readContractSafe, readGoalRecords,
-  recordShellOutput, recordUserPrompt, runGoalStop, runUserGoalCommand, setEngineGoal, submitGoalReport, userAsked, writeContract, type AuditRecord,
+  recordShellOutput, recordUserPrompt, runGoalStop, runUserGoalCommand, setEngineGoal, userAsked, writeContract, type AuditRecord,
 } from "../src/index.js";
 
 const made: string[] = [];
@@ -77,7 +79,7 @@ describe("work done through commands still becomes the goal", () => {
     await ran(root, "echo new > b.js");
     const sent = await stop(root);
     expect((await readContractSafe(root)).goal).toBe("Add the export");
-    expect(sent).toContain("Changed, not accounted for: b.js");
+    expect(sent).toContain("Observed change: b.js");
   });
 
   it("outside git with nothing changed, nothing is recorded", async () => {
@@ -110,7 +112,7 @@ describe("the user's words are the user's latest words, and not the goal quoted 
     await tick();
     await fsp.writeFile(path.join(root, "a.js"), "two\n");
     await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js", conversationId: "c1" });
-    const aside = await submitGoalReport(root, { status: "set_aside", proofs: [], changes: [], userWords: "Add a subtract" });
+    const aside = await finishReport(root, { status: "set_aside", proofs: [], changes: [], userWords: "Add a subtract" });
     expect(aside).toMatchObject({ accepted: false, message: expect.stringContaining("a piece of the goal itself") });
     expect(await stop(root)).not.toBeNull();
     expect((await kinds(root, "goal.end")).filter((e) => e.outcome === "set_aside")).toHaveLength(0);
@@ -149,7 +151,7 @@ describe("a block accepted on the first turn says it was the agent's word", () =
     await tick();
     await fsp.writeFile(path.join(root, "a.js"), "two\n");
     await appendAudit(root, { ts: nowIso(), kind: "action.observed", actionType: "edit", actionValue: "a.js", conversationId: "c1" });
-    const answer = await submitGoalReport(root, { status: "blocked", proofs: [], changes: [], reason: "needs the API key" });
+    const answer = await finishReport(root, { status: "blocked", proofs: [], changes: [], reason: "needs the API key" });
     expect(answer.accepted).toBe(true);
     expect(answer.message).toContain("on the first turn, at your word alone");
     expect(await stop(root)).toBeNull();
@@ -172,7 +174,7 @@ describe("a block accepted on the first turn says it was the agent's word", () =
       expect(await stop(root, n)).not.toBeNull();
       await tick();
     }
-    const answer = await submitGoalReport(root, { status: "blocked", proofs: [], changes: [], reason: "needs the API key" });
+    const answer = await finishReport(root, { status: "blocked", proofs: [], changes: [], reason: "needs the API key" });
     expect(answer.accepted).toBe(true);
     expect(answer.message).not.toContain("at your word alone");
     expect(await stop(root, 3)).toBeNull();
@@ -200,13 +202,13 @@ describe("the evaluator's verdicts are read strictly too", () => {
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "gg-audit3-rev-"));
     made.push(dir);
     const reviewer = path.join(dir, "reviewer");
-    await fsp.writeFile(reviewer, `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [] }) }) + "\\n");\n`);
+    await fsp.writeFile(reviewer, `#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [], checks: ${JSON.stringify(VERIFIED_CHECKS)} }) }) + "\\n");\n`);
     await fsp.chmod(reviewer, 0o755);
     process.env.GOAL_GUARDIAN_REVIEWER = reviewer;
     const report = { status: "complete" as const, proofs: [{ criterion: "sc_1", command: "make test", quote: "12 passed" }, { criterion: "sc_2", command: "make test", quote: "12 passed" }], changes: [{ file: "a.js", serves: "sc_1" }] };
-    const answer = await submitGoalReport(root, report);
+    const answer = await finishReport(root, report);
     expect(answer).toMatchObject({ accepted: true, outcome: "unchecked" });
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "unchecked", skipped: [expect.stringContaining("the reviewer gave no clear verdict on sc_2")] }]);
-    expect(await kinds(root, "goal.review")).toMatchObject([{ ran: true, unanswered: ["sc_2"] }]);
+    expect(await kinds(root, "goal.review")).toMatchObject([{ ran: true, unanswered: ["sc_2"] }, { ran: true, unanswered: ["sc_2"] }]);
   });
 });

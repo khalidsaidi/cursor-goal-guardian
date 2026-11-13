@@ -53,6 +53,7 @@ describe("panel view model", () => {
     });
     const ticks = (goalRecords: AuditRecord[]) => buildPanelViewModel({ ...inputs, goalRecords }).successCriteria.map((c) => c.done);
     expect(ticks([proved(goalHash(inputs.contract))])).toEqual([true, false]);
+    expect(ticks([{ ...proved(goalHash(inputs.contract)), verifiedItems: inputs.contract.successCriteria.map((c) => c.id) } as AuditRecord])).toEqual([true, true]);
     // A proved run on an earlier goal, or the user closing the goal, ticks nothing.
     expect(ticks([proved("another-goal")])).toEqual([false, false]);
     expect(ticks([{ ts: at(5), kind: "goal.control", goalHash: goalHash(inputs.contract), operation: "complete", actor: "user" }])).toEqual([false, false]);

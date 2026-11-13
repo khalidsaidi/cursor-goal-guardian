@@ -2,7 +2,7 @@ import { goalHash, goalPhaseOf } from "../goal/loop.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalReviewRecord, ImproveRunRecord } from "../schema/audit.js";
 import { enoughToImprove, improveRunning, reviewLabels, type ReviewLabel } from "../goal/improve.js";
-import { dismissedLines, objectionLines } from "../goal/review.js";
+import { dismissedLines, objectionEntries, objectionLines } from "../goal/review.js";
 
 export interface TourStep {
   id: "connect" | "ask" | "steer" | "center";
@@ -54,7 +54,7 @@ export interface PanelViewModel {
   } | null;
   /** Recent reviews that objected, each objection open to the user's verdict. */
   /** `dismissed`: what the evaluator raised and the reviewer checked against the project and dismissed. */
-  reviews: Array<{ id: string; lines: string[]; dismissed: string[]; feedback: Array<ReviewLabel | null>; label: { label: ReviewLabel; source: "user" | "fixed" | "overruled" | "missed" } | null }>;
+  reviews: Array<{ id: string; lines: string[]; indexes?: number[]; dismissed: string[]; feedback: Array<ReviewLabel | null>; label: { label: ReviewLabel; source: "user" | "fixed" | "overruled" | "missed" } | null }>;
   /** Guardian improving its own reviewer from those verdicts. */
   improve: {
     labelled: number;
@@ -135,7 +135,7 @@ function buildTour(inputs: PanelInputs): PanelTour {
 }
 
 function proofLine(p: { criterion: string; command?: string | undefined; quote?: string | undefined; file?: string | undefined; contains?: string | undefined }): string {
-  return p.command !== undefined ? `${p.criterion}: ran ${p.command}, printed "${p.quote ?? ""}"` : `${p.criterion}: ${p.file ?? ""} contains "${p.contains ?? ""}"`;
+  return p.command !== undefined ? `${p.criterion === "goal" ? "Recorded" : p.criterion}: ran ${p.command}${p.quote ? `, printed "${p.quote}"` : ""}` : `${p.criterion}: ${p.file ?? ""} contains "${p.contains ?? ""}"`;
 }
 
 function groupChanges(changes: Array<{ file: string; serves: string }>): Array<{ serves: string; files: string[] }> {
@@ -155,7 +155,7 @@ function buildGoalRun(records: AuditRecord[]): PanelViewModel["goalRun"] {
       const detail = backed ? (r.proved ?? []).map(proofLine) : r.reason ? [r.reason] : (r.unproved ?? []);
       // The review that let this run through, when one ran and raised nothing: what "this wasn't done" would label.
       const before = records.slice(0, i).reverse().find((x) => x.kind === "goal.review" && x.goalHash === r.goalHash);
-      const passedReview = backed && before?.kind === "goal.review" && before.ran && before.id && before.fails.length + before.extra.length === 0 ? before.id : null;
+      const passedReview = backed && before?.kind === "goal.review" && before.ran && before.id && objectionEntries(before).length === 0 ? before.id : null;
       const saidMissed = passedReview !== null && records.some((x) => x.kind === "review.feedback" && x.reviewId === passedReview && x.label === "missed");
       return { ts: r.ts, outcome: r.outcome, skipped: r.skipped ?? [], passedReview, saidMissed, changedSinceReview: r.changedSinceReview === true, atAgentsWord: r.atAgentsWord === true, round: null, detail, extras: r.extras ?? [], changes: groupChanges(r.changes ?? []), reviewer: r.reviewer ?? [], goalFileEdited: r.goalFileEdited === true, rounds: r.rounds ?? null, seconds: r.seconds ?? null, tokens: r.tokens ?? null };
     }
@@ -185,7 +185,7 @@ function provedItems(records: AuditRecord[], contract: Contract): Set<string> {
   const hash = goalHash(contract);
   for (let i = records.length - 1; i >= 0; i -= 1) {
     const r = records[i]!;
-    if (r.kind === "goal.end" && r.outcome === "proved" && r.goalHash === hash) return new Set((r.proved ?? []).map((p) => p.criterion));
+    if (r.kind === "goal.end" && r.outcome === "proved" && r.goalHash === hash) return new Set(r.verifiedItems ?? (r.proved ?? []).map((p) => p.criterion));
   }
   return new Set();
 }
@@ -201,8 +201,8 @@ function buildReviews(records: AuditRecord[]): PanelViewModel["reviews"] {
     .slice(-REVIEWS_SHOWN)
     .reverse()
     .map((r) => {
-      const lines = objectionLines(r);
-      return { id: r.id, lines, dismissed: dismissedLines(r), feedback: lines.map((_, i) => feedback.get(r.id)?.get(i) ?? null), label: labels.get(r.id) ?? null };
+      const entries = objectionEntries(r);
+      return { id: r.id, lines: entries.map((e) => e.line), indexes: entries.map((e) => e.index), dismissed: dismissedLines(r), feedback: entries.map((e) => feedback.get(r.id)?.get(e.index) ?? null), label: labels.get(r.id) ?? null };
     });
 }
 
