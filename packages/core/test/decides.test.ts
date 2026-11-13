@@ -57,6 +57,34 @@ const kinds = async (root: string, kind: string) => (await readAuditTail(root, 2
 const phase = async (root: string) => goalPhaseOf(await readAuditTail(root, 2000), await readContractSafe(root));
 
 describe("the goal keepers' own code decides", () => {
+  it("overlapping completion reports run the independent checks only once", async () => {
+    const root = await repo();
+    await work(root);
+    const [first, overlap] = await Promise.all([submitGoalReport(root, report), submitGoalReport(root, report)]);
+    expect(first).toMatchObject({ accepted: true, outcome: "proved" });
+    expect(overlap).toMatchObject({ accepted: false, verificationPending: true });
+    expect(overlap.message).toContain("already running");
+    expect(await kinds(root, "goal.report")).toHaveLength(1);
+    expect(await kinds(root, "goal.review")).toHaveLength(1);
+    expect(await kinds(root, "goal.end")).toHaveLength(1);
+    expect(fs.existsSync(path.join(getGuardianPaths(root).telemetryDir, "completion.lock"))).toBe(false);
+  });
+
+  it("honors a report lock owned by another process and recovers it after that process exits", async () => {
+    const root = await repo();
+    await work(root);
+    const lock = path.join(getGuardianPaths(root).telemetryDir, "completion.lock");
+    // A short-lived independent process supplies a genuinely departed owner PID.
+    const deadPid = Number(execFileSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" }));
+    fs.writeFileSync(lock, String(process.ppid));
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, verificationPending: true });
+    expect(await kinds(root, "goal.review")).toHaveLength(0);
+    fs.writeFileSync(lock, String(deadPid));
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "proved" });
+    expect(await kinds(root, "goal.review")).toHaveLength(1);
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
   it("a goal is proved in the report both accept, and only there: both checks clean, Codex's handler and DeepSeek's tool each saying yes", async () => {
     const root = await repo();
     await work(root);

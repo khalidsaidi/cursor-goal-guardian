@@ -5,6 +5,8 @@
  */
 import { createHash } from "node:crypto";
 import path from "node:path";
+import fs from "node:fs";
+import { getGuardianPaths } from "../paths.js";
 import { appendAudit, readAuditTail, readGoalRecords } from "../audit/log.js";
 import { newId, nowIso } from "../clock.js";
 import { readContractSafe } from "../safeReaders.js";
@@ -573,6 +575,45 @@ export interface GoalReportAnswer {
 
 /** The agent's report, answered at once so it can fix what doesn't hold without waiting for a round. */
 export async function submitGoalReport(root: string, input: GoalReportInput, opts: { evaluatorBudgetMs?: number } = {}): Promise<GoalReportAnswer> {
+  // MCP calls can overlap, including across restarted servers after a client timeout.
+  // Claim the report before reading the audit so the same work cannot start two paid reviews.
+  const dir = getGuardianPaths(root).telemetryDir;
+  fs.mkdirSync(dir, { recursive: true });
+  const lock = path.join(dir, "completion.lock");
+  let fd: number | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      fd = fs.openSync(lock, "wx");
+      fs.writeFileSync(fd, String(process.pid));
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        const before = fs.statSync(lock);
+        const pid = Number(fs.readFileSync(lock, "utf8"));
+        let abandoned = false;
+        if (Number.isInteger(pid) && pid > 0) {
+          try { process.kill(pid, 0); } catch (e) { abandoned = (e as NodeJS.ErrnoException).code === "ESRCH"; }
+        } else abandoned = Date.now() - before.mtimeMs > 600_000;
+        if (abandoned && fs.statSync(lock).ino === before.ino) { fs.unlinkSync(lock); continue; }
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw e;
+      }
+      return { accepted: false, verificationPending: true, unproved: [], unclaimed: [], message: "Independent checks for this workspace are already running. Do not submit another completion report while they run; wait for the pending result. Do not repeat tests or change finished work just to keep busy." };
+    }
+  }
+  if (fd === undefined) return { accepted: false, verificationPending: true, unproved: [], unclaimed: [], message: "Another completion report is being processed. Wait for its result before reporting again." };
+  try {
+    return await submitGoalReportLocked(root, input, opts);
+  } finally {
+    const inode = fs.fstatSync(fd).ino;
+    fs.closeSync(fd);
+    try { if (fs.statSync(lock).ino === inode) fs.unlinkSync(lock); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
+  }
+}
+
+async function submitGoalReportLocked(root: string, input: GoalReportInput, opts: { evaluatorBudgetMs?: number }): Promise<GoalReportAnswer> {
   // The goal is the user's: a contract file changed by anything else is put back before the report is judged.
   if (await guardContract(root)) {
     const restored = await readContractSafe(root);
