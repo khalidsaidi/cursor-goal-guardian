@@ -621,12 +621,29 @@ async function submitGoalReportLocked(root: string, input: GoalReportInput, opts
   }
   const contract = await readContractSafe(root);
   const hash = goalHash(contract);
-  const all = await readAuditTail(root, TAPE_WINDOW);
+  let all = await readAuditTail(root, TAPE_WINDOW);
   const none = { unproved: [], unclaimed: [] };
   const phase = goalPhaseOf(all, contract);
   if (phase === "none") return { accepted: false, ...none, message: "No goal is set." };
   if (phase === "paused") return { accepted: false, ...none, message: CLOSING.paused };
-  if (phase === "complete") return { accepted: false, ...none, message: "This goal is already closed. There's nothing to report." };
+  if (phase === "complete") {
+    const ended = [...all].reverse().find((r) => r.kind === "goal.end" && r.goalHash === hash);
+    const reviewed = ended?.kind === "goal.end" && ended.outcome === "unchecked"
+      ? [...all].reverse().find((r) => r.kind === "goal.review" && r.goalHash === hash && Date.parse(r.ts) <= Date.parse(ended.ts))
+      : undefined;
+    const previous = ended?.kind === "goal.end" && ended.outcome === "unchecked"
+      ? ended.tree ?? (!ended.changedSinceReview && reviewed?.kind === "goal.review" ? reviewed.tree : undefined)
+      : undefined;
+    const current = previous ? verificationState(root) : null;
+    const userClosed = ended && all.some((r) => r.kind === "goal.control" && r.goalHash === hash && r.operation === "done" && Date.parse(r.ts) >= Date.parse(ended.ts));
+    if (input.status !== "complete" || !current || current === previous || userClosed) {
+      return { accepted: false, ...none, message: "This goal is already closed. There's nothing to report." };
+    }
+    // Unchecked is a bounded end to checking, not a permanent ban on checking later repairs.
+    // Keep the original objective and criteria while reopening its goal-keeper state for changed work.
+    if (!await setEngineGoal(root, contract.goal, true)) return { accepted: false, ...none, message: "The repaired work could not be reopened for verification." };
+    all = await readAuditTail(root, TAPE_WINDOW);
+  }
   const seq = readSequence(root, all, reportingChat(all), hash);
   const reportTs = nowIso();
   await appendAudit(root, { ts: reportTs, kind: "goal.report", goalHash: hash, ...input });
@@ -697,7 +714,7 @@ async function submitGoalReportLocked(root: string, input: GoalReportInput, opts
   const commandResults = new Map<string, { failed: boolean; output: string }>();
   for (const o of outputs) commandResults.set(o.command.replace(/\s+/g, " ").trim(), { failed: o.failed === true, output: o.output });
   const stateKey = createHash("sha256").update(JSON.stringify([REVIEW_POLICY, correctionKey, currentRequest, workState ?? reportTs, [...commandResults].sort(([a], [b]) => a.localeCompare(b))])).digest("hex").slice(0, 16);
-  const recovery = [...seq.records].reverse().find((r) => r.kind === "goal.recovery" && r.goalHash === hash);
+  const recovery = [...seq.records].reverse().find((r) => r.kind === "goal.recovery" && r.goalHash === hash && reviews.some((review) => review.id === r.reviewId));
   const recoveryUntried = recovery && !seq.records.slice(seq.records.indexOf(recovery) + 1).some((r) => r.kind === "goal.review" && r.goalHash === hash && r.policy === REVIEW_POLICY);
   const retryBase = recoveryUntried && recovery.kind === "goal.recovery" && recovery.reviewId
     ? [...all].reverse().find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.id === recovery.reviewId && r.policy === REVIEW_POLICY)
@@ -809,7 +826,7 @@ async function submitGoalReportLocked(root: string, input: GoalReportInput, opts
     return { accepted: false, outcome: "unverified", ...none, message: unverifiedMessage(completed.message), refusedBy: completed.by };
   }
   const outcome = skipped.length ? "unchecked" : "proved";
-  await end(root, seq, who, hash, outcome, { ...(outcome === "proved" ? { verifiedItems: contract.successCriteria.map((c) => c.id) } : {}), ...(skipped.length ? { skipped } : {}), ...(changedSinceReview ? { changedSinceReview: true } : {}), ...receipt });
+  await end(root, seq, who, hash, outcome, { stateKey, ...(workState ? { tree: workState } : {}), ...(outcome === "proved" ? { verifiedItems: contract.successCriteria.map((c) => c.id) } : {}), ...(skipped.length ? { skipped } : {}), ...(changedSinceReview ? { changedSinceReview: true } : {}), ...receipt });
   const closing = completed.result.tool?.contexts[0] ?? CLOSING.proved(contract.goal);
   return {
     accepted: true, outcome, ...none,

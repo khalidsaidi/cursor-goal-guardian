@@ -9,7 +9,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  appendAudit, defaultContract, getGuardianPaths, goalPhaseOf, nowIso, readAuditTail, readContractSafe, readShellOutputs, recordShellOutput, recordUserPrompt,
+  appendAudit, defaultContract, getGuardianPaths, goalHash, goalPhaseOf, nowIso, readAuditTail, readContractSafe, readShellOutputs, recordShellOutput, recordUserPrompt,
   reviewEvidence, runGoalStop, runGoalTool, submitGoalReport, engineGoal,
 } from "../src/index.js";
 import { STANDIN_EVALUATOR } from "./helpers/setup.js";
@@ -158,6 +158,35 @@ describe("the goal keepers' own code decides", () => {
 });
 
 describe("a check that didn't run is never 'proved'", () => {
+  it("can verify later repairs on the same goal after an unchecked close, without rerunning unchanged work", async () => {
+    const root = await repo();
+    await work(root);
+    const reviewer = process.env.GOAL_GUARDIAN_REVIEWER;
+    process.env.GOAL_GUARDIAN_REVIEWER = "/nonexistent/reviewer";
+    await submitGoalReport(root, report);
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, message: expect.stringContaining("already closed") });
+    const original = await readContractSafe(root);
+    await fsp.writeFile(path.join(root, "a.js"), "repaired after unchecked close\n");
+    if (reviewer === undefined) delete process.env.GOAL_GUARDIAN_REVIEWER;
+    else process.env.GOAL_GUARDIAN_REVIEWER = reviewer;
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "proved" });
+    expect(await readContractSafe(root)).toEqual(original);
+    expect(await phase(root)).toBe("complete");
+    await fsp.writeFile(path.join(root, "a.js"), "changed after proved completion\n");
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, message: expect.stringContaining("already closed") });
+  });
+
+  it("an obsolete review's recovery does not consume the current policy's recovery attempt", async () => {
+    const root = await repo();
+    await work(root);
+    await appendAudit(root, { ts: nowIso(), kind: "goal.recovery", goalHash: goalHash(await readContractSafe(root)), reportTs: nowIso(), reviewId: "obsolete-policy-review", skipped: ["old check timed out"] });
+    process.env.GOAL_GUARDIAN_REVIEWER = "/nonexistent/reviewer";
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, verificationPending: true });
+    expect(await phase(root)).toBe("active");
+    expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
+  });
+
   it("no reviewer: both goal keepers accept, and the goal is complete but unchecked, with why, and the agent is told to say so", async () => {
     const root = await repo();
     await work(root);

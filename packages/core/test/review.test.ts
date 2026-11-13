@@ -152,6 +152,22 @@ describe("running a review", () => {
     expect(await runReview(root, contract)).toMatchObject({ ran: false, reason: expect.stringContaining("couldn't be read") });
   });
 
+  it("does not accept a reviewer repairing its copy instead of reviewing the submitted work", async () => {
+    const root = await repo();
+    const original = await fs.readFile(path.join(root, "a.js"), "utf8");
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`require("fs").writeFileSync("a.js", "fixed only in review copy"); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
+    expect(await runReview(root, { goal: "Add CSV export", successCriteria: [{ id: "sc_1", text: "t" }] })).toMatchObject({ ran: false, reason: expect.stringContaining("reviewer changed submitted files") });
+    expect(await fs.readFile(path.join(root, "a.js"), "utf8")).toBe(original);
+  });
+
+  it("allows generated build outputs but not tests added only in the review copy", async () => {
+    const root = await repo();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`const fs=require("fs"); fs.mkdirSync("dist"); fs.writeFileSync("dist/index.js", "built"); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
+    expect(await runReview(root, { goal: "Add CSV export", successCriteria: [{ id: "sc_1", text: "t" }] })).toMatchObject({ ran: true });
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`require("fs").writeFileSync("new.test.js", "tests not in the submitted project"); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
+    expect(await runReview(root, { goal: "Add CSV export", successCriteria: [{ id: "sc_1", text: "t" }] })).toMatchObject({ ran: false, reason: expect.stringContaining("new.test.js") });
+  });
+
   it("works in a copy of the project as the agent left it, without Guardian's files, and reports what it found", async () => {
     const root = await repo();
     await fs.writeFile(path.join(root, "a.js"), "changed\n");

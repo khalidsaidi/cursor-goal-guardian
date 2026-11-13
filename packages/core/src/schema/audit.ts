@@ -386,6 +386,8 @@ export const goalEndRecordSchema = z
     skipped: z.array(z.string()).optional(),
     /** For a disputed end: the project state and report it was about. The same state reported again stays disputed. */
     stateKey: z.string().optional(),
+    /** Actual project contents when this run closed, for checking later repairs after an unchecked end. */
+    tree: z.string().optional(),
     /** A block accepted on the first turn, in a turn the user's message opened: by DeepSeek's rule, at the agent's word alone. */
     atAgentsWord: z.boolean().optional(),
     rounds: z.number().int().nonnegative().optional(),
