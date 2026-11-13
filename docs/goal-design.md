@@ -91,7 +91,7 @@ Every review that ran is saved as a case: goal, items, explicit user constraints
 
 Once there are at least 8 labelled reviews of both kinds, and again for every 4 new ones, the extension runs Google Research's RRSI by itself (`autoImprove`), vendored unmodified in `third_party/rrsi`, with Guardian's domain (`packages/rsi/cgg`) and its model calls sent to `cursor-agent`. A third of the cases are held out. A new reviewer prompt is applied only if it loses no catch and gets more right on the held-out cases; every run and apply is on the record and the panel has an Undo. It changes the reviewer's prompt only, not the evaluator. Background learning waits while a goal is active or paused, uses a bounded recent batch with both labels in training and held-out cases, and searches one candidate in one round. A shared allowance limits background search and replay attempts to 32 headless Cursor invocations by default (`CGG_RSI_AUTO_CALL_LIMIT`, with zero disabling calls); this is a request limit, not a currency or token budget. A process-owned lease prevents overlapping runs. Reaching the allowance or failing the final checks keeps the current reviewer unchanged.
 
-It has never improved anything from a user's real feedback. What exists is one study run and one replay, both on constructed cases (see the README).
+It has never improved anything from a user's real feedback. Evidence includes the earlier real-model lab search and replay, local automatic-workflow integration tests, and a targeted native Cursor installation/next-review check reusing the historical candidate. The latter used a controller in place of fresh search/trigger orchestration (see the README and release status).
 
 ## What Guardian doesn't do
 

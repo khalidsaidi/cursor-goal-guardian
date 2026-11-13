@@ -35,9 +35,10 @@ nobody can cheaply reconstruct what the session was for.
    unfinished independent checks get one retry, with usable results retained on unchanged
    work. Check reuse depends on the actual project and recorded results, not report wording. A check that still cannot finish leaves completion unchecked. Disagreements between the two checks get a fresh project check
    before an objection goes back to the agent.
-4. **Experimental learning.** RRSI searches for reviewer-prompt changes from your
-   verdicts, and CGG evaluates candidates before adoption. Earlier real-model lab work demonstrated prompt learning with a tradeoff;
-   the current automatic feedback-to-adoption workflow is not yet validated.
+4. **Learns from feedback.** RRSI searches for reviewer-prompt changes from your
+   verdicts. CGG evaluates candidates before adoption and keeps the current reviewer
+   when no candidate qualifies. Earlier real-model lab work demonstrated prompt learning
+   with a tradeoff; automatic installation and use were checked separately with a reused candidate.
 
 Guardian's own checks come first, both for sending the agent back and for accepting
 "done". Codex's and DeepSeek Harness's code is then asked: each is consulted on every round,
@@ -140,9 +141,13 @@ prompt-learning demonstration with a tradeoff; it would fail today's no-lost-cat
 A later replay (Test 15) reported perfect agreement with its reference labels. A consumer
 TypeScript check has since reproduced a missing public export in one of its cases labelled
 finished, so that perfect-accuracy claim is withdrawn. This case was not in the original
-RRSI held-out set and does not erase that separate result. The current real-model automatic
-learning trial adopted no new prompt and did not validate the full feedback-to-adoption
-workflow. That current automatic path remains experimental.
+RRSI held-out set and does not erase that separate result. A later fresh automatic
+search adopted no new prompt. A separate bounded native Cursor connection check reused
+the earlier candidate: it accepted finished work, caught missing tests and a missing
+public export, installed the prompt through CGG's automatic apply function, and confirmed
+that the next real review used it. The check reused historical baseline judgments and a
+controller in place of search/trigger orchestration; it is not a new paired accuracy
+benchmark or a complete fresh feedback-to-search-to-adoption run in native Cursor.
 
 **What this doesn't show.**
 - In the earlier judged studies, no natural run reached the review with a real gap, so
