@@ -175,6 +175,16 @@ describe("running a review", () => {
     expect(await fs.readFile(path.join(root, "a.js"), "utf8")).toBe(original);
   });
 
+  it("allows a new consumer-probe link without accepting replacement of submitted inputs", async () => {
+    const root = await repo();
+    const contract = { goal: "Add CSV export", successCriteria: [{ id: "sc_1", text: "t" }] };
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`require("fs").symlinkSync(".", "consumer-package"); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
+    expect(await runReview(root, contract)).toMatchObject({ ran: true });
+    await expect(fs.lstat(path.join(root, "consumer-package"))).rejects.toThrow();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`const fs=require("fs"); fs.unlinkSync("a.js"); fs.symlinkSync(".", "a.js"); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
+    expect(await runReview(root, contract)).toMatchObject({ ran: false, reason: expect.stringContaining("a.js") });
+  });
+
   it("allows generated build outputs but not tests added only in the review copy", async () => {
     const root = await repo();
     process.env.GOAL_GUARDIAN_REVIEWER = await stub(`const fs=require("fs"); fs.mkdirSync("dist"); fs.writeFileSync("dist/index.js", "built"); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);

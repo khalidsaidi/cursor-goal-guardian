@@ -35,8 +35,9 @@ nobody can cheaply reconstruct what the session was for.
    unfinished independent checks get one retry, with usable results retained on unchanged
    work. Check reuse depends on the actual project and recorded results, not report wording. A check that still cannot finish leaves completion unchecked. Disagreements between the two checks get a fresh project check
    before an objection goes back to the agent.
-4. **Retunes the reviewer.** Your verdicts on its objections are used to adjust the
-   reviewer's prompt.
+4. **Experimental learning.** RRSI searches for reviewer-prompt changes from your
+   verdicts, and CGG evaluates candidates before adoption. Improvement has not yet
+   been demonstrated with the current real-model feedback workflow.
 
 Guardian's own checks come first, both for sending the agent back and for accepting
 "done". Codex's and DeepSeek Harness's code is then asked: each is consulted on every round,
@@ -130,11 +131,12 @@ On 33 natural runs the judges found fully done, the reviewer objected to 2. A re
 median of 18 s for the reviewer and 24 s and 5 model calls for the evaluator; the extra
 check of the evaluator's objections ran on 5 of the 45 replayed runs and took 7 to 14 s.
 
-**The reviewer's base prompt.** Before the new fixed verification requirements, the
-base template came from an RRSI run on the rig. On that
-run's held-out cases it flagged good work 0 of 11 times, down from 8, but caught 1 of 2 real
-failures, down from 2. Replayed on the 33 constructed runs above, it got 33 right against
-28 for the prompt before it, with no catch lost.
+**The reviewer's base prompt.** The base template came from an RRSI run on the
+rig before the current fixed review requirements. Its old replay scores cannot establish
+improvement: a later check reproduced a missing public TypeScript export in a case
+labelled finished. Agreement with those labels could reward overlooking real unfinished
+work. The current real-model learning trial did not adopt a new prompt or demonstrate
+improvement. Self-improvement remains experimental; it is not a proven release capability.
 
 **What this doesn't show.**
 - In the earlier judged studies, no natural run reached the review with a real gap, so

@@ -24,7 +24,7 @@ export interface ReviewExtra {
   file: string;
   what: string;
 }
-export const REVIEW_POLICY = "outcome-completion-v7";
+export const REVIEW_POLICY = "outcome-completion-v8";
 export interface ReviewCheck {
   id: "build" | "public_api" | "behavior";
   verdict: "holds" | "fails" | "unclear" | "not_applicable";
@@ -358,7 +358,7 @@ async function reviewInputs(dir: string): Promise<Map<string, string> | null> {
       const file = path.join(dir, rel), stat = fs.lstatSync(file, { throwIfNoEntry: false });
       if (!stat || stat.isDirectory()) continue;
       const data = stat.isSymbolicLink() ? fs.readlinkSync(file) : fs.readFileSync(file);
-      inputs.set(rel, createHash("sha256").update(String(stat.mode & 0o777)).update(data).digest("hex"));
+      inputs.set(rel, `${stat.isSymbolicLink() ? "link" : "file"}:${createHash("sha256").update(String(stat.mode & 0o777)).update(data).digest("hex")}`);
     }
     return inputs;
   } catch { return null; }
@@ -377,8 +377,8 @@ export async function askAgent(prompt: string, dir: string, scratch: string, bud
   const after = await reviewInputs(dir);
   if (!after) return { ok: false, reason: "the review copy's submitted inputs couldn't be checked after review" };
   const changed = [...before.keys()].filter((file) => after.get(file) !== before.get(file));
-  // New build outputs are expected; new tests/source are changes to the work under assessment.
-  for (const file of after.keys()) if (!before.has(file) && !/^(dist|build|target|out|coverage)\//.test(file)) changed.push(file);
+  // New consumer links and build outputs support checks; added source/tests alter the submitted work.
+  for (const [file, value] of after) if (!before.has(file) && !value.startsWith("link:") && !/^(dist|build|target|out|coverage)\//.test(file)) changed.push(file);
   if (changed.length) return { ok: false, reason: `the reviewer changed submitted files in its temporary copy (${changed.slice(0, 8).join(", ")}); that result does not verify the actual project` };
   return run;
 }
@@ -560,7 +560,7 @@ type Reviewed = Pick<ReviewOutcome, "fails" | "extra"> & {
 export function objectionEntries(review: Reviewed): Array<{ index: number; source: "reviewer" | "evaluator"; line: string }> {
   const dismissed = new Set((review.adjudication?.ran ? review.adjudication.dismissed : []).map((d) => d.id));
   const confirmed = new Map((review.adjudication?.ran ? review.adjudication.confirmed : []).map((c) => [c.id, c.evidence]));
-  const outcomePolicy = review.policy === REVIEW_POLICY || review.policy === "outcome-completion-v6" || review.policy === "outcome-completion-v5" || review.policy === "outcome-completion-v4";
+  const outcomePolicy = review.policy === REVIEW_POLICY || review.policy === "outcome-completion-v7" || review.policy === "outcome-completion-v6" || review.policy === "outcome-completion-v5" || review.policy === "outcome-completion-v4";
   const entries: Array<{ index: number; source: "reviewer" | "evaluator"; line: string }> = [];
   review.fails.forEach((f, i) => {
     if (!dismissed.has(`reviewer_item_${i + 1}`)) entries.push({ index: i, source: "reviewer", line: `Reviewer: ${f.id} isn't done: ${f.evidence}` });
