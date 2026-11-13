@@ -1,7 +1,7 @@
 /**
  * The second check at "done": Google's Agent Development Kit judges the run against the user's own "done when"
  * items. The evaluator is ADK's (third_party/adk-python, unmodified; github.com/google/adk-python, Apache-2.0):
- * its RubricBasedMultiTurnTrajectoryEvaluator, with ADK's judge prompt, its five samples per judgement and its
+ * its RubricBasedMultiTurnTrajectoryEvaluator, with ADK's judge prompt, one judge sample by default and ADK's
  * aggregation of them. Guardian's adapter is packages/evaluator, on the bundled Python with ADK's pinned
  * dependencies. Guardian supplies the run as it recorded it, the rubrics (the user's items word for word, plus one
  * of its own about unrequested work) and the user's own Cursor model. It can't block anything: when it can't run it
@@ -9,6 +9,7 @@
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { stopProcessTree, trackProcessTree } from "../processTree.js";
 import path from "node:path";
 import type { TrajectoryMessage } from "./trajectory.js";
 
@@ -145,9 +146,10 @@ export function runEvaluator(job: EvaluatorJob, budgetMs: number, paths: Evaluat
       clearTimeout(timer);
       resolve(v);
     };
-    const child = spawn(paths.python, ["-I", paths.cli, "--adk", paths.adkDir, "--site", paths.site], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1" } });
+    const child = spawn(paths.python, ["-I", paths.cli, "--adk", paths.adkDir, "--site", paths.site], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, detached: process.platform !== "win32", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1" } });
+    trackProcessTree(child);
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      stopProcessTree(child);
       done(skipped(`the evaluator took longer than ${Math.round(budgetMs / 1000)}s`));
     }, budgetMs);
     child.stdout.on("data", (c: Buffer) => {

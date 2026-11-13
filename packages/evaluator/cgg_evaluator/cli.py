@@ -1,8 +1,7 @@
 """Judge one agent run with Google's Agent Development Kit. JSON in on stdin, one JSON line out on stdout.
 
 The evaluator is ADK's own (third_party/adk-python, unmodified; github.com/google/adk-python, Apache-2.0):
-`RubricBasedMultiTurnTrajectoryEvaluator`, with ADK's judge prompt, ADK's sampling (5 samples per judgement, its
-default) and ADK's aggregation of them. Guardian supplies three things: the run, the rubrics and the model.
+`RubricBasedMultiTurnTrajectoryEvaluator`, with ADK's judge prompt, ADK's configured sampling (one judge call by default) and ADK's aggregation. Guardian supplies three things: the run, the rubrics and the model.
 
 - The run: one ADK Invocation built from the user's request, each recorded command or edit as a tool call with its
   response, and the agent's own completion report as the final response.
@@ -47,14 +46,15 @@ EXTRA_WORK_RUBRIC = (
 # ADK's name for this evaluator's metric (evaluation/eval_metrics.py PrebuiltMetrics).
 METRIC = "rubric_based_multi_turn_trajectory_quality_v1"
 JUDGE_MODEL = "cursor-agent"
-# ADK samples the judge 5 times by default and, by default, one after another. Its own option runs them side by side.
-PARALLELISM = int(os.environ.get("CGG_EVALUATOR_PARALLEL", "5"))
+# Repeated sampling is useful for studies; normal completion needs one extra judgment.
+SAMPLES = int(os.environ.get("CGG_EVALUATOR_SAMPLES", "1"))
+PARALLELISM = int(os.environ.get("CGG_EVALUATOR_PARALLEL", "1"))
 # Long prompts go through a file: Windows caps a command line near 32,000 characters.
 ARGV_LIMIT = 20_000
 TIMEOUT_S = int(os.environ.get("CGG_EVALUATOR_CALL_TIMEOUT", "300"))
 # This machine's own Cursor setup can tell every agent to hand work to helpers; a judge must answer itself.
 NO_DELEGATION = ("Answer this yourself, in this reply. Do not delegate to subagents or helpers and do not use tools: "
-                 "everything you need is in this message.")
+                 "everything you need is in this message. Keep each rubric explanation concise while returning every required verdict.")
 
 
 def _arg(argv: list[str], flag: str, env: str, fallbacks: list[Path]) -> Path | None:
@@ -183,7 +183,7 @@ async def evaluate(job: dict) -> dict:
     properties[EXTRA_WORK_ID] = EXTRA_WORK_RUBRIC
     rubrics = [Rubric(rubric_id=k, rubric_content=RubricContent(text_property=v)) for k, v in properties.items()]
     metric = EvalMetric(metric_name=METRIC, threshold=1.0, criterion=RubricsBasedCriterion(
-        threshold=1.0, rubrics=rubrics, judge_model_options=JudgeModelOptions(judge_model=JUDGE_MODEL, parallelism_limit=PARALLELISM)))
+        threshold=1.0, rubrics=rubrics, judge_model_options=JudgeModelOptions(judge_model=JUDGE_MODEL, num_samples=SAMPLES, parallelism_limit=PARALLELISM)))
     result = await RubricBasedMultiTurnTrajectoryEvaluator(metric).evaluate_invocations([invocation], None, None)
     # ADK's overall scores carry a stock rationale; the judge's own words are on the per-invocation scores.
     said: dict[str, str] = {}

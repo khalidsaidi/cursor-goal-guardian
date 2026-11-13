@@ -119,6 +119,15 @@ describe("the reviewer's instructions", () => {
 });
 
 describe("running a review", () => {
+  it.skipIf(process.platform === "win32")("a timed-out review stops its child processes too", async () => {
+    const root = await repo();
+    const marker = path.join(await tmp("gg-review-child-"), "still-running");
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`require("child_process").spawn(process.execPath, ["-e", ${JSON.stringify('setTimeout(() => require("fs").writeFileSync('+JSON.stringify(marker)+', "leaked"), 700)')}], {stdio:"ignore"}); setTimeout(() => {}, 60000);`);
+    expect(await runReview(root, { goal: "Review work", successCriteria: [] }, 300)).toMatchObject({ ran: false, reason: expect.stringContaining("longer than") });
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    await expect(fs.access(marker)).rejects.toThrow();
+  });
+
   it("finds the reviewer from the setting, and nothing when it isn't there", async () => {
     process.env.GOAL_GUARDIAN_REVIEWER = "/nonexistent/reviewer";
     expect(resolveReviewer()).toBeNull();

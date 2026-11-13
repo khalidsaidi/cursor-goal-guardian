@@ -13,8 +13,7 @@ not, the reviewer checks that claim against the real project before it counts
   with anything missing marked absent), and the agent's own completion report as the final response. The rubrics
   are the user's "done when" items, word for word, plus one of Guardian's, saying the agent changed nothing the
   request doesn't need and that tests, types, docs and comments for the requested work are not extra. Guardian
-  also prepends one line telling the judge not to delegate. ADK's judge prompt, its five samples per judgement and
-  its aggregation are ADK's. The judge model is a `BaseLlm`
+  also prepends one line telling the judge not to delegate. ADK's judge prompt and aggregation remain unchanged. Guardian sets ADK's `num_samples` option to one by default. The judge model is a `BaseLlm`
   registered with ADK's own registry that asks the user's Cursor model through `cursor-agent`, in ask mode.
 - `requirements.txt`: the 17 packages ADK's evaluator loads, pinned. ADK is built on pydantic and google-genai, so the
   standard library alone isn't enough (unlike RRSI): they are installed as wheels next to the bundled Python when the
@@ -35,5 +34,5 @@ Out: `ran`, `reason` when it didn't, `overall` (share of rubrics met), `rubrics`
 Not used from ADK: its `MultiTurnTrajectoryQuality` and `MultiTurnTaskSuccess` evaluators hand the judging to Vertex
 AI's hosted evaluation and need a Google Cloud project, so they can't run on the user's own Cursor model.
 
-Cost: five model calls per review (ADK's default number of samples), run side by side with ADK's own
-`parallelism_limit` option.
+Cost: one model call per extra check by default. Studies can set `CGG_EVALUATOR_SAMPLES` and
+`CGG_EVALUATOR_PARALLEL` through ADK's own sampling and concurrency options.

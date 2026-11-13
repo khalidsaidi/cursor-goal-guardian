@@ -79,7 +79,13 @@ class EvaluatorTest(unittest.TestCase):
         self.assertEqual(next(r for r in out["rubrics"] if r["id"] == "sc_2")["rationale"], "sc_2 judged no.")
         self.assertEqual(next(r for r in out["rubrics"] if r["id"] == "sc_2")["property"], "Tests cover it and pass")
         self.assertAlmostEqual(out["overall"], 1 / 3, places=3)
-        self.assertEqual(out["calls"], 5)  # ADK's default: five samples per judgement
+        self.assertEqual(out["calls"], 1)  # Production uses one sample through ADK's option.
+
+    @unittest.skipUnless(HAVE_DEPS, "ADK's dependencies aren't installed in .site")
+    def test_studies_can_request_repeated_sampling(self):
+        out = self.run_cli(CGG_EVALUATOR_SAMPLES="3", CGG_EVALUATOR_PARALLEL="2")
+        self.assertTrue(out["ran"], out)
+        self.assertEqual(out["calls"], 3)
 
     @unittest.skipUnless(HAVE_DEPS, "ADK's dependencies aren't installed in .site")
     def test_the_judge_prompt_is_adks_own_and_shows_the_recorded_run(self):
@@ -90,7 +96,7 @@ class EvaluatorTest(unittest.TestCase):
         for p in self.prompts():
             self.assertIn(mission, p["prompt"])
             self.assertIn('"property": "Tests cover it and pass"', p["prompt"])
-            self.assertIn("The agent changed nothing that the user's request does not need. Tests, type declarations, documentation and comments for the work the request asks for are part of that work, not extra.", p["prompt"])
+            self.assertIn("Tests, type declarations, documentation, comments and minimal build fixes supporting the requested behavior are part of that work.", p["prompt"])
             self.assertIn('(tool call): run_terminal_command({"command": "npm test"})', p["prompt"])
             self.assertIn("31 passing", p["prompt"])
             self.assertIn("Do not delegate", p["prompt"])
