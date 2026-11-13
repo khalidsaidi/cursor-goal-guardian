@@ -36,8 +36,8 @@ nobody can cheaply reconstruct what the session was for.
    work. Check reuse depends on the actual project and recorded results, not report wording. A check that still cannot finish leaves completion unchecked. Disagreements between the two checks get a fresh project check
    before an objection goes back to the agent.
 4. **Experimental learning.** RRSI searches for reviewer-prompt changes from your
-   verdicts, and CGG evaluates candidates before adoption. Improvement has not yet
-   been demonstrated with the current real-model feedback workflow.
+   verdicts, and CGG evaluates candidates before adoption. Earlier real-model lab work demonstrated prompt learning with a tradeoff;
+   the current automatic feedback-to-adoption workflow is not yet validated.
 
 Guardian's own checks come first, both for sending the agent back and for accepting
 "done". Codex's and DeepSeek Harness's code is then asked: each is consulted on every round,
@@ -131,12 +131,18 @@ On 33 natural runs the judges found fully done, the reviewer objected to 2. A re
 median of 18 s for the reviewer and 24 s and 5 model calls for the evaluator; the extra
 check of the evaluator's objections ran on 5 of the 45 replayed runs and took 7 to 14 s.
 
-**The reviewer's base prompt.** The base template came from an RRSI run on the
-rig before the current fixed review requirements. Its old replay scores cannot establish
-improvement: a later check reproduced a missing public TypeScript export in a case
-labelled finished. Agreement with those labels could reward overlooking real unfinished
-work. The current real-model learning trial did not adopt a new prompt or demonstrate
-improvement. Self-improvement remains experimental; it is not a proven release capability.
+**The reviewer's base prompt.** RRSI evolved the base template with real Claude
+models before the current fixed review requirements. On the original repo-separated
+held-out set, objections to work labelled complete fell and catches of unrequested work
+were retained, but a previously caught real defect was missed. This is an earlier
+prompt-learning demonstration with a tradeoff; it would fail today's no-lost-catch gate.
+
+A later replay (Test 15) reported perfect agreement with its reference labels. A consumer
+TypeScript check has since reproduced a missing public export in one of its cases labelled
+finished, so that perfect-accuracy claim is withdrawn. This case was not in the original
+RRSI held-out set and does not erase that separate result. The current real-model automatic
+learning trial adopted no new prompt and did not validate the full feedback-to-adoption
+workflow. That current automatic path remains experimental.
 
 **What this doesn't show.**
 - In the earlier judged studies, no natural run reached the review with a real gap, so
