@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendAudit, applyImprovement, autoImprove, candidatePath, defaultContract, estimateImprove, labelsFingerprint, recordReviewFeedback, goalHash, getGuardianPaths, harnessPath, improveReviewer, isHeldOut,
-  labelledCases, learningBatch, loadCases, materializeCase, nowIso, readAuditTail, replayCase, reviewLabels, reviewTemplate, saveCase, undoImprovement, REVIEW_PROMPT,
+  labelledCases, learningBatch, loadCases, materializeCase, nowIso, readAuditTail, replayCase, reviewLabels, reviewTemplate, saveCase, undoImprovement, writeHarness, REVIEW_PROMPT, REVIEW_BUDGET_MS, LEARNING_REVIEW_BUDGET_MS,
   type AuditRecord, type RsiPaths,
 } from "../src/index.js";
 
@@ -152,6 +152,13 @@ describe("labels come from explicit user feedback", () => {
 });
 
 describe("the split and the cost", () => {
+  it("background replays have their own deadline below the adapter's outer timeout", async () => {
+    const adapter = await fs.readFile(path.join(REPO_ROOT, "packages/rsi/cgg/adapter.py"), "utf8");
+    const outer = Number(adapter.match(/REPLAY_TIMEOUT_S = (\d+)/)?.[1]) * 1000;
+    expect(LEARNING_REVIEW_BUDGET_MS).toBeGreaterThan(REVIEW_BUDGET_MS);
+    expect(LEARNING_REVIEW_BUDGET_MS).toBeLessThan(outer);
+  });
+
   it("a case always lands on the same side, about a third held out", () => {
     const ids = Array.from({ length: 600 }, (_, i) => `rev_${i}`);
     expect(ids.map(isHeldOut)).toEqual(ids.map(isHeldOut));
@@ -309,6 +316,24 @@ describe.skipIf(posixOnly)("one improvement try with Google's RRSI, start to fin
 });
 
 describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
+  it("does not search when the initial evaluation is incomplete", async () => {
+    const root = await labelledWorkspace();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    await writeHarness(root, "reviewer", REVIEW_PROMPT + "\nNO_VERIFICATION");
+    const result = await autoImprove(root, rsiPaths());
+    expect(result?.run).toMatchObject({ kept: false, reason: expect.stringContaining("no learning search was started") });
+    expect((await readAuditTail(root, 500)).some((r) => r.kind === "improve.progress" && r.stage.includes("searching"))).toBe(false);
+  }, 300_000);
+
+  it("does not spend on a search that cannot improve an already perfect baseline", async () => {
+    const root = await labelledWorkspace();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    await writeHarness(root, "reviewer", REVIEW_PROMPT + "\nQUIET");
+    const result = await autoImprove(root, rsiPaths());
+    expect(result?.run).toMatchObject({ kept: false, reason: expect.stringContaining("already correct on every reserved example") });
+    expect((await readAuditTail(root, 500)).some((r) => r.kind === "improve.progress" && r.stage.includes("searching"))).toBe(false);
+  }, 300_000);
+
   it("keeps a bounded recent batch with real catches and false alarms in both splits", async () => {
     const cases = await labelledCases(await labelledWorkspace());
     const history = [...cases, ...Array.from({ length: 24 }, (_, i) => ({ ...cases[0]!, label: "wrong" as const, reviewCase: { ...cases[0]!.reviewCase, id: `recent_${i}` } }))];

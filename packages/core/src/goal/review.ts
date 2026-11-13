@@ -24,7 +24,7 @@ export interface ReviewExtra {
   file: string;
   what: string;
 }
-export const REVIEW_POLICY = "outcome-completion-v6";
+export const REVIEW_POLICY = "outcome-completion-v7";
 export interface ReviewCheck {
   id: "build" | "public_api" | "behavior";
   verdict: "holds" | "fails" | "unclear" | "not_applicable";
@@ -94,13 +94,12 @@ export const OUTCOME_POLICY = `Completion objections must concern missing reques
 
 export const REVIEW_REQUIREMENTS = `Required verification before accepting completion:
 ${OUTCOME_POLICY}
-- Check the finished behavior, not merely whether a helper exists or its added tests pass. Use ordinary inputs produced by the existing library. For a promised list, inverse, or "every" item, compare the result with EACH behavior category of the existing implementation. A zero-argument helper returning an incomplete constant list is not an exotic-input edge case: its output is incomplete on every call. Agent documentation cannot narrow the user’s requirement. Inspect excluded branches and input guards; test whether they silently drop data the requested behavior includes.
-- For code in a package with a build step, run the existing local build and inspect its output AND expected artifacts. Exit status zero alone is not proof: a tool can log a generation error or omit a bundle and still exit zero. Missing generated files in git do not excuse skipping the build.
-- Exercise the affected public entry points after building, including existing callable/default/named APIs that must keep working. Source-only tests do not establish that CommonJS, ESM or browser outputs work. Use the project's advertised formats, not just whichever one is easiest to import.
+- Start with the changed implementation and its nearby tests, declarations and documentation. Read unchanged code only where it is needed to verify a requested behavior or preserve compatibility. Use a few representative ordinary inputs from the stated input domain.
+- Do not turn a new helper into a full inverse of the existing library, a test of every existing option, or an exhaustive branch matrix unless the user explicitly requested that scope. When the goal explicitly promises every item, type or transformation in a list, check that the promised coverage is complete against the relevant implementation.
+- Run the relevant existing local tests and build. For package changes, inspect the expected artifacts and exercise affected advertised public entry points and module formats. A successful exit alone does not establish that a required bundle exists; source-only tests do not establish that published entry points work. Reuse the build output for focused public-API probes rather than running the same checks repeatedly.
 - Do not call a pre-existing runtime/tooling failure a new defect. Check a baseline when needed. An applicable check that cannot be completed is unclear, never holds or not_applicable. For a docs-only change, or a project with no relevant build/public API, not_applicable requires a concrete explanation.
-- Tests need real coverage of each requested change, not exhaustive coverage of every possible input. A missing regression case does not independently fail the tests item when real behavioral tests cover both changes and pass; report the behavior defect under its own item.
-- New type declarations, tests and documentation for the requested behavior are not extra work. Harmless formatting or wording anywhere in the change is not a reason to send the agent back unless the user explicitly constrained it. For each claimed extra, name the actual unrelated behavior or identifier, not merely a changed file.
-- Verify the requested behavior with focused probes, not just the added tests. Inspect the existing implementation to choose the probes. For a list describing another operation, try examples from each existing transformation branch and compare them with the returned list. For a helper with blocked/skipped categories, test an existing own data value in those categories. Record actual inputs and outputs in each item’s evidence. Merely reciting the helper’s returned constant is not a verification that it is complete.
+- Tests need meaningful coverage of requested behavior, not every possible input. A missing regression example does not by itself fail a tests item when existing behavioral coverage tests the requested changes and passes. Report demonstrated behavior defects under the requirement they violate.
+- Supporting types, tests, documentation and minimal build fixes are part of requested work. For a meaningful unrelated change, identify the actual extra behavior, changed API semantics or lost work; a changed filename or harmless formatting is not evidence of scope creep.
 - Inconclusive item verdicts are unclear. Never turn a check you could not perform into holds.
 The final JSON must include items, extra, and checks. Every required check must have nonempty evidence describing what was run and observed, or why it does not apply:
 {"items":[{"id":"sc_1","verdict":"holds or fails or unclear","evidence":"what you checked"}],"extra":[{"file":"path","what":"the unrelated change"}],"checks":[{"id":"build","verdict":"holds or fails or unclear or not_applicable","evidence":"command and result, or concrete reason"},{"id":"public_api","verdict":"holds or fails or unclear or not_applicable","evidence":"imports/calls and results, or concrete reason"},{"id":"behavior","verdict":"holds or fails or unclear or not_applicable","evidence":"focused probes against the user’s actual requirements, with observed results"}]}`;
@@ -313,6 +312,7 @@ function runAgent(command: string, prompt: string, dir: string, scratch: string,
   return new Promise((resolve) => {
     let settled = false;
     let stdout = "";
+    let stderr = "";
     const done = (v: { ok: true; stdout: string } | { ok: false; reason: string }): void => {
       if (settled) return;
       settled = true;
@@ -325,7 +325,7 @@ function runAgent(command: string, prompt: string, dir: string, scratch: string,
     const child = spawn(command, ["-p", request, "--output-format", "json", "--force", "--trust", "--workspace", dir], {
       cwd: dir,
       env: reviewerEnv(scratch),
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
       shell: process.platform === "win32" && /\.cmd$/i.test(command),
       windowsHide: true,
       detached: process.platform !== "win32",
@@ -338,8 +338,12 @@ function runAgent(command: string, prompt: string, dir: string, scratch: string,
     child.stdout.on("data", (c: Buffer) => {
       stdout += c.toString("utf8");
     });
+    child.stderr.on("data", (c: Buffer) => { stderr = (stderr + c.toString("utf8")).slice(-4096); });
     child.on("error", (err) => done({ ok: false, reason: `the reviewer couldn't start: ${err.message}` }));
-    child.on("close", (code) => done(code === 0 ? { ok: true, stdout } : { ok: false, reason: `the reviewer exited with ${code}` }));
+    child.on("close", (code) => {
+      const detail = stderr.trim().replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]").slice(-600);
+      done(code === 0 ? { ok: true, stdout } : { ok: false, reason: `the reviewer exited with ${code}${detail ? `: ${detail}` : ""}` });
+    });
   });
 }
 
@@ -556,7 +560,7 @@ type Reviewed = Pick<ReviewOutcome, "fails" | "extra"> & {
 export function objectionEntries(review: Reviewed): Array<{ index: number; source: "reviewer" | "evaluator"; line: string }> {
   const dismissed = new Set((review.adjudication?.ran ? review.adjudication.dismissed : []).map((d) => d.id));
   const confirmed = new Map((review.adjudication?.ran ? review.adjudication.confirmed : []).map((c) => [c.id, c.evidence]));
-  const outcomePolicy = review.policy === REVIEW_POLICY || review.policy === "outcome-completion-v5" || review.policy === "outcome-completion-v4";
+  const outcomePolicy = review.policy === REVIEW_POLICY || review.policy === "outcome-completion-v6" || review.policy === "outcome-completion-v5" || review.policy === "outcome-completion-v4";
   const entries: Array<{ index: number; source: "reviewer" | "evaluator"; line: string }> = [];
   review.fails.forEach((f, i) => {
     if (!dismissed.has(`reviewer_item_${i + 1}`)) entries.push({ index: i, source: "reviewer", line: `Reviewer: ${f.id} isn't done: ${f.evidence}` });

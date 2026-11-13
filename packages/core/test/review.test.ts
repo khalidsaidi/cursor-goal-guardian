@@ -119,6 +119,12 @@ describe("the reviewer's instructions", () => {
 });
 
 describe("running a review", () => {
+  it("keeps the useful provider error instead of only reporting an exit code", async () => {
+    const root = await repo();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub('console.error("Model unavailable on this plan"); process.exit(1);');
+    expect(await runReview(root, { goal: "Check work", successCriteria: [] })).toMatchObject({ ran: false, reason: expect.stringContaining("Model unavailable on this plan") });
+  });
+
   it.skipIf(process.platform === "win32")("a timed-out review stops its child processes too", async () => {
     const root = await repo();
     const marker = path.join(await tmp("gg-review-child-"), "still-running");

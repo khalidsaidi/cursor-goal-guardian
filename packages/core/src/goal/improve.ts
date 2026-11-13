@@ -19,7 +19,10 @@ import { newId, nowIso } from "../clock.js";
 import type { AuditRecord, GoalReviewRecord, ImproveRunRecord, ReviewFeedbackRecord } from "../schema/audit.js";
 import { loadCases, materializeCase, type ReviewCase } from "./cases.js";
 import { harnessDir, harnessUsable, removeHarness, writeHarness } from "./harness.js";
-import { REVIEW_BUDGET_MS, reviewIn, reviewPrompt, reviewTemplate, objectionEntries, type ReviewOutcome } from "./review.js";
+import { reviewIn, reviewPrompt, reviewTemplate, objectionEntries, type ReviewOutcome } from "./review.js";
+
+/** Learning runs outside the interactive MCP deadline; leave room under the adapter's five-minute limit. */
+export const LEARNING_REVIEW_BUDGET_MS = 240_000;
 
 /** Labelled cases needed, of both kinds, before an improvement is worth trying. */
 export const MIN_LABELLED = 8;
@@ -123,7 +126,7 @@ export function learningBatch(cases: LabelledCase[], limit = 12): LabelledCase[]
 }
 
 /** Re-run one saved review with another prompt. Guardian's binary exposes this so RRSI can call it. Never throws. */
-export async function replayCase(root: string, caseId: string, template: string, budgetMs = REVIEW_BUDGET_MS): Promise<ReviewOutcome & { flagged: boolean | null }> {
+export async function replayCase(root: string, caseId: string, template: string, budgetMs = LEARNING_REVIEW_BUDGET_MS): Promise<ReviewOutcome & { flagged: boolean | null }> {
   const c = (await loadCases(root)).find((x) => x.id === caseId);
   if (!c) return { ran: false, reason: "no such case", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
   if (!c.constraints && c.prompt.includes("\n\nUser constraints:\n")) return { ran: false, reason: "this older case did not retain the user's constraints", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
@@ -367,6 +370,15 @@ async function improveReviewerLocked(root: string, rsi: RsiPaths, opts: { auto?:
   const before = await rrsi(["heldout", "--label", "before", "--ref", start]);
   if (limit !== null && budgetState().exhausted) return finish({ kept: false, reason: "background learning reached its usage limit; the current reviewer is unchanged", hypotheses: [], diff: "" });
   if (before.code !== 0) return finish({ kept: false, reason: `RRSI couldn't score the current reviewer (see ${path.relative(root, log)})`, hypotheses: [], diff: "" });
+  const heldOutLabels = new Map([...labels].filter(([id]) => isHeldOut(id)));
+  const old = await heldOutScore(runs, "heldout_before", heldOutLabels);
+  if (!old || [...heldOutLabels.keys()].some((id) => typeof old.get(id) !== "boolean")) {
+    const reasons = await Promise.all([...heldOutLabels.keys()].map((id) => fsp.readFile(path.join(runs, "cgg", "jobs", "heldout_before", id, "trial0.json"), "utf8").then((raw) => (JSON.parse(raw) as { reason?: string }).reason).catch(() => undefined)));
+    const detail = reasons.find(Boolean);
+    return finish({ kept: false, reason: `the initial review checks did not finish${detail ? `: ${detail}` : ""}; no learning search was started`, hypotheses: [], diff: "" });
+  }
+  const baseline = compareHeldOutVerdicts(heldOutLabels, old, old).old;
+  if (baseline.correct === heldOutLabels.size) return finish({ kept: false, old: baseline, reason: "the current reviewer was already correct on every reserved example; no learning search was needed", hypotheses: [], diff: "" });
   await progress(`RRSI is searching: ${cfg.T} rounds of ${cfg.m} candidates on ${est.evolve} cases`);
   const search = await rrsi(["run"]);
   if (limit !== null && budgetState().exhausted) return finish({ kept: false, reason: "background learning reached its usage limit; the current reviewer is unchanged", hypotheses: [], diff: "" });
@@ -385,8 +397,6 @@ async function improveReviewerLocked(root: string, rsi: RsiPaths, opts: { auto?:
   const after = await rrsi(["heldout", "--label", "after", "--ref", frontier.incumbent.commit]);
   if (limit !== null && budgetState().exhausted) return finish({ kept: false, reason: "background learning reached its usage limit; the current reviewer is unchanged", hypotheses: [], diff: "" });
   if (after.code !== 0) return finish({ kept: false, reason: `RRSI couldn't score its winner (see ${path.relative(root, log)})`, hypotheses, diff });
-  const heldOutLabels = new Map([...labels].filter(([id]) => isHeldOut(id)));
-  const old = await heldOutScore(runs, "heldout_before", heldOutLabels);
   const neu = await heldOutScore(runs, "heldout_after", heldOutLabels);
   if (!old || !neu) return finish({ kept: false, reason: "the held-out replay records could not be read", hypotheses, diff });
   const comparison = compareHeldOutVerdicts(heldOutLabels, old, neu);
