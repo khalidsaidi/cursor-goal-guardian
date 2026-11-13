@@ -2,9 +2,9 @@
 
 Guardian retunes its reviewer's prompt with RRSI (Regularized Recursive Self-Improvement,
 github.com/google-research/rrsi), vendored unmodified in `third_party/rrsi`. The extension starts a run by itself
-once a workspace has at least 8 labelled reviews of both kinds, and again for every 4 new ones; a result is applied
+when enough feedback covers both real gaps and false alarms in both training and held-out cases, and again after new corrections; a result is applied
 only if it loses no catch and gets more right on held-out cases, and the panel has an Undo. It changes the
-reviewer's prompt only, not the evaluator. It has not yet run on a user's real verdicts: the only runs so far are
+reviewer's prompt only, not the evaluator. Background learning waits while a goal is active or paused. It uses a recent batch, one search candidate, and a shared limit of 32 Cursor agent invocations across search roles and replays. `CGG_RSI_AUTO_CALL_LIMIT` configures that limit; zero prevents background model invocations. This counts headless Cursor invocations, not currency or internal model turns. Hitting the limit keeps the current reviewer and does not retry the same feedback. It has not yet run on a user's real verdicts: the only runs so far are
 on a study rig and against a stand-in agent. This folder is our side:
 
 - `cgg/`: an RRSI domain. Guardian copies it to `domains/cgg/` of a throwaway RRSI checkout it assembles
@@ -14,5 +14,6 @@ on a study rig and against a stand-in agent. This folder is our side:
     candidate prompt through Guardian's own binary (`goal-guardian-hook replay-review`).
   - `cursor_llm.py`: sends RRSI's search roles (analyst, digester, proposer, critic) to `cursor-agent`, the
     user's own Cursor model, by replacing `rrsi.llm.generate` at import. RRSI's files are untouched.
+  - `model_budget.py`: the allowance shared across concurrent search and replay workers.
   - `harness/`: filled at run time with the workspace's current `reviewer.md`.
 - `tests/`: the domain against a temp workspace and a fake `cursor-agent`, and one RRSI smoke run.

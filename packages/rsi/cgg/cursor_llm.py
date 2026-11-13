@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from model_budget import reserve_call
 
 JSON_SUFFIX = ("\n\nOutput ONLY a single valid JSON object. No prose before or "
                "after, no markdown fences.")
@@ -56,7 +57,9 @@ def generate(prompt, system=None, max_retries=3, json_only=False, model=None,
     command = agent_command()
     if not command:
         raise RuntimeError("cursor-agent isn't installed")
-    text = "\n\n".join(p for p in (system or "", cache_prefix or "", prompt) if p) + (JSON_SUFFIX if json_only else "")
+    text = ("Answer this role yourself. Do not delegate or call tools; all required context is supplied here.\n\n"
+            + "\n\n".join(p for p in (system or "", cache_prefix or "", prompt) if p)
+            + (JSON_SUFFIX if json_only else ""))
     chosen = os.environ.get("CGG_SEARCH_MODEL") or None
     last = None
     for attempt in range(max_retries):
@@ -71,6 +74,7 @@ def generate(prompt, system=None, max_retries=3, json_only=False, model=None,
             if chosen:
                 args += ["--model", chosen]
             env = {**os.environ, "GOAL_GUARDIAN_REVIEWING": "1"}
+            reserve_call()
             try:
                 r = subprocess.run(args, cwd=scratch, capture_output=True, text=True, timeout=TIMEOUT_S, env=env,
                                    shell=os.name == "nt" and command.lower().endswith(".cmd"))

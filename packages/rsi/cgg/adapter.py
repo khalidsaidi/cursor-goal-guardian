@@ -27,6 +27,7 @@ from rrsi.domain import Domain          # noqa: E402
 from rrsi.evaluate import TaskResult    # noqa: E402
 import briefs                            # noqa: E402
 import cursor_llm                        # noqa: E402
+from model_budget import reserve_call     # noqa: E402
 
 cursor_llm.install()
 
@@ -99,6 +100,7 @@ class CggDomain(Domain):
         cmd = json.loads(os.environ["CGG_REPLAY"]) + [os.environ["CGG_WORKSPACE"], t["case"], str(prompt_file)]
         rec = {"flagged": None}
         try:
+            reserve_call()
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=REPLAY_TIMEOUT_S)
             rec = json.loads(r.stdout.strip().splitlines()[-1])
             if not rec.get("ran"):

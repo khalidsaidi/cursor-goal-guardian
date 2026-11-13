@@ -2,7 +2,7 @@
  * Guardian improves its own reviewer from what happened in this workspace, with Google Research's RRSI (Regularized
  * Recursive Self-Improvement), bundled unmodified in third_party/rrsi. Guardian supplies what RRSI needs: labelled
  * cases (from the user's review feedback), a domain (packages/rsi/cgg) that replays a review with a candidate
- * prompt, and the user's own model for RRSI's search roles. The user applies a result, or doesn't.
+ * prompt, and the user's own model for RRSI's search roles. An automatically selected result still has to pass held-out checks, and the user can undo it.
  */
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -10,6 +10,9 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { readContractSafe } from "../safeReaders.js";
+import { processLease } from "../processLease.js";
+import { stopProcessTree, trackProcessTree } from "../processTree.js";
+import { getGuardianPaths } from "../paths.js";
 import { goalPhaseOf } from "./loop.js";
 import { appendAudit, readAuditTail } from "../audit/log.js";
 import { newId, nowIso } from "../clock.js";
@@ -94,8 +97,29 @@ export async function labelledCases(root: string, records?: AuditRecord[]): Prom
   return out;
 }
 
-export function enoughToImprove(cases: Array<Pick<LabelledCase, "label">>): boolean {
-  return cases.length >= MIN_LABELLED && cases.some((c) => c.label === "right") && cases.some((c) => c.label === "wrong");
+export function enoughToImprove(cases: Array<Pick<LabelledCase, "label"> & { id?: string; reviewCase?: Pick<ReviewCase, "id"> }>): boolean {
+  if (cases.length < MIN_LABELLED) return false;
+  const identified = cases.map((c) => ({ ...c, id: c.id ?? c.reviewCase?.id }));
+  if (identified.some((c) => !c.id)) return false;
+  return [true, false].every((heldOut) => {
+    const group = identified.filter((c) => isHeldOut(c.id!) === heldOut);
+    return group.some((c) => c.label === "right") && group.some((c) => c.label === "wrong");
+  });
+}
+
+/** A bounded recent batch, retaining examples from both labels on both sides of the fixed split. */
+export function learningBatch(cases: LabelledCase[], limit = 12): LabelledCase[] {
+  if (cases.length <= limit) return cases;
+  const selected = new Set<string>();
+  for (const heldOut of [true, false]) for (const label of ["right", "wrong"] as const) {
+    const match = [...cases].reverse().find((c) => isHeldOut(c.reviewCase.id) === heldOut && c.label === label);
+    if (match) selected.add(match.reviewCase.id);
+  }
+  for (const c of [...cases].reverse()) {
+    if (selected.size >= limit) break;
+    selected.add(c.reviewCase.id);
+  }
+  return cases.filter((c) => selected.has(c.reviewCase.id));
 }
 
 /** Re-run one saved review with another prompt. Guardian's binary exposes this so RRSI can call it. Never throws. */
@@ -135,9 +159,9 @@ interface RsiConfig {
 /** RRSI's proposer may take this many turns per candidate (rrsi/propose.py MAX_TURNS). */
 const PROPOSER_TURNS = 40;
 
-function rsiConfig(rsi: RsiPaths): RsiConfig {
+function rsiConfig(rsi: RsiPaths, auto = false): RsiConfig {
   const raw = JSON.parse(fs.readFileSync(path.join(rsi.domainDir, "rrsi.json"), "utf8")) as Partial<RsiConfig>;
-  return { T: raw.T ?? 2, m: raw.m ?? 2, k: raw.k ?? 1, repair_rounds: raw.repair_rounds ?? 2 };
+  return auto ? { T: 1, m: 1, k: 1, repair_rounds: 1 } : { T: raw.T ?? 2, m: raw.m ?? 2, k: raw.k ?? 1, repair_rounds: raw.repair_rounds ?? 2 };
 }
 
 /** What one run costs on the user's plan, shown before it starts. */
@@ -187,7 +211,11 @@ function rsiRoot(root: string): string {
 
 function sh(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, log: string): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { cwd, env, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
+    trackProcessTree(child);
+    const timer = setTimeout(() => stopProcessTree(child), 600_000);
+    child.once("close", () => clearTimeout(timer));
+    child.once("error", () => clearTimeout(timer));
     let out = "";
     const keep = (b: Buffer): void => {
       out += b.toString("utf8");
@@ -261,27 +289,42 @@ export interface ImproveResult {
 
 /**
  * One improvement try, run by Google's RRSI (third_party/rrsi, unmodified) on this workspace's labelled cases.
- * Started only by the user. Guardian assembles a throwaway RRSI checkout under .cursor/goal-guardian/rsi with its
+ * Automatic background runs are bounded; explicit calls may use the full search configuration. Guardian assembles a throwaway RRSI checkout under .cursor/goal-guardian/rsi with its
  * own domain, scores the current reviewer on the held-out cases, lets RRSI search on the rest, and scores RRSI's
  * winner on the same held-out cases. A winner that does better there without losing a catch waits for the user.
  */
 export async function improveReviewer(root: string, rsi: RsiPaths, opts: { auto?: boolean } = {}): Promise<ImproveResult> {
+  const release = processLease(path.join(getGuardianPaths(root).dir, "improvement.lock"));
+  if (!release) return { status: "running" };
+  try { return await improveReviewerLocked(root, rsi, opts); }
+  finally { release(); }
+}
+
+async function improveReviewerLocked(root: string, rsi: RsiPaths, opts: { auto?: boolean }): Promise<ImproveResult> {
   const records = await readAuditTail(root, AUDIT_WINDOW);
-  if (improveRunning(records)) return { status: "running" };
-  const cases = await labelledCases(root, records);
+  const available = await labelledCases(root, records);
+  const cases = opts.auto ? learningBatch(available) : available;
   if (!enoughToImprove(cases)) return { status: "not-enough" };
   const id = newId("improve");
   const started = Date.now();
-  const cfg = rsiConfig(rsi);
+  const cfg = rsiConfig(rsi, opts.auto);
   const est = estimateImprove(cases, cfg);
-  const labelSet = labelsFingerprint(cases);
-  await appendAudit(root, { ts: nowIso(), kind: "improve.start", id, ...(opts.auto ? { auto: true } : {}), reviews: est.reviews, searchCallsMax: est.searchCallsMax });
+  const requestedLimit = Number(process.env.CGG_RSI_AUTO_CALL_LIMIT ?? "32");
+  const limit = opts.auto ? (Number.isFinite(requestedLimit) ? Math.max(0, Math.min(256, Math.floor(requestedLimit))) : 32) : null;
+  const budget = path.join(rsiRoot(root), "model-budget.json");
+  const budgetState = (): { used: number; exhausted: boolean } => {
+    try { return JSON.parse(fs.readFileSync(budget, "utf8")) as { used: number; exhausted: boolean }; }
+    catch { return { used: 0, exhausted: false }; }
+  };
+  const labelSet = labelsFingerprint(available);
+  await appendAudit(root, { ts: nowIso(), kind: "improve.start", id, ...(opts.auto ? { auto: true } : {}), reviews: est.reviews, searchCallsMax: est.searchCallsMax, ...(limit !== null ? { callLimit: limit } : {}) });
   const progress = (stage: string): Promise<void> => appendAudit(root, { ts: nowIso(), kind: "improve.progress", id, stage });
   const finish = async (rest: Omit<ImproveRunRecord, "ts" | "kind" | "id" | "train" | "heldOut" | "seconds" | "calls">): Promise<ImproveResult> => {
-    const run: ImproveRunRecord = { ts: nowIso(), kind: "improve.run", id, labels: labelSet, ...(opts.auto ? { auto: true } : {}), train: est.evolve, heldOut: est.heldOut, seconds: Math.round((Date.now() - started) / 1000), calls: est.reviews, ...rest };
+    const run: ImproveRunRecord = { ts: nowIso(), kind: "improve.run", id, labels: labelSet, ...(opts.auto ? { auto: true } : {}), train: est.evolve, heldOut: est.heldOut, seconds: Math.round((Date.now() - started) / 1000), calls: limit !== null ? budgetState().used : est.reviews, ...rest };
     await appendAudit(root, run);
     return { status: "done", run };
   };
+  try {
   if (!est.heldOut || !est.evolve) return finish({ kept: false, reason: "not enough cases on both sides of the split yet", hypotheses: [], diff: "" });
 
   // A fresh RRSI checkout: their files, our domain, this workspace's cases and current reviewer.
@@ -293,6 +336,11 @@ export async function improveReviewer(root: string, rsi: RsiPaths, opts: { auto?
   await copyTree(rsi.rrsiDir, repo);
   const domain = path.join(repo, "domains", "cgg");
   await copyTree(rsi.domainDir, domain);
+  if (opts.auto) {
+    const file = path.join(domain, "rrsi.json");
+    await fsp.writeFile(file, JSON.stringify({ ...JSON.parse(await fsp.readFile(file, "utf8")), ...cfg }));
+    await fsp.writeFile(budget, JSON.stringify({ limit, used: 0, exhausted: false }));
+  }
   await fsp.mkdir(path.join(domain, "data"), { recursive: true });
   const labels = new Map(cases.map((c) => [c.reviewCase.id, c.label] as const));
   await fsp.writeFile(path.join(domain, "data", "tasks.json"), JSON.stringify(cases.map((c) => ({ id: c.reviewCase.id, case: c.reviewCase.id, label: c.label, split: isHeldOut(c.reviewCase.id) ? "heldout" : "evolve" })), null, 1));
@@ -311,15 +359,17 @@ export async function improveReviewer(root: string, rsi: RsiPaths, opts: { auto?
   } catch (err) {
     return finish({ kept: false, reason: `RRSI's checkout couldn't be set up: ${err instanceof Error ? err.message : String(err)}`, hypotheses: [], diff: "" });
   }
-  const env: NodeJS.ProcessEnv = { ...process.env, CGG_WORKSPACE: root, CGG_REPLAY: JSON.stringify(rsi.replay), PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1" };
+  const env: NodeJS.ProcessEnv = { ...process.env, CGG_WORKSPACE: root, CGG_REPLAY: JSON.stringify(rsi.replay), PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1", ...(limit !== null ? { CGG_MODEL_BUDGET: budget } : {}) };
   delete env.GOAL_GUARDIAN_REVIEWING;
   const rrsi = (args: string[]) => sh(rsi.python, [path.join(repo, "rrsi.py"), "--domain", "cgg", "--runs", runs, ...args], repo, env, log);
 
   await progress(`Scoring the current reviewer on ${est.heldOut} cases RRSI won't see`);
   const before = await rrsi(["heldout", "--label", "before", "--ref", start]);
+  if (limit !== null && budgetState().exhausted) return finish({ kept: false, reason: "background learning reached its usage limit; the current reviewer is unchanged", hypotheses: [], diff: "" });
   if (before.code !== 0) return finish({ kept: false, reason: `RRSI couldn't score the current reviewer (see ${path.relative(root, log)})`, hypotheses: [], diff: "" });
   await progress(`RRSI is searching: ${cfg.T} rounds of ${cfg.m} candidates on ${est.evolve} cases`);
   const search = await rrsi(["run"]);
+  if (limit !== null && budgetState().exhausted) return finish({ kept: false, reason: "background learning reached its usage limit; the current reviewer is unchanged", hypotheses: [], diff: "" });
   if (search.code !== 0) return finish({ kept: false, reason: `RRSI's search stopped (see ${path.relative(root, log)})`, hypotheses: [], diff: "" });
   const frontier = JSON.parse(await fsp.readFile(path.join(runs, "cgg", "frontier.json"), "utf8")) as { incumbent: { t: number; commit: string } };
   const history = (await fsp.readFile(path.join(runs, "cgg", "history.jsonl"), "utf8").catch(() => ""))
@@ -333,6 +383,7 @@ export async function improveReviewer(root: string, rsi: RsiPaths, opts: { auto?
   if (!harnessUsable("reviewer", winner)) return finish({ kept: false, reason: "RRSI's winner dropped {goal} or {items}", hypotheses, diff });
   await progress("Scoring RRSI's winner on the same held-out cases");
   const after = await rrsi(["heldout", "--label", "after", "--ref", frontier.incumbent.commit]);
+  if (limit !== null && budgetState().exhausted) return finish({ kept: false, reason: "background learning reached its usage limit; the current reviewer is unchanged", hypotheses: [], diff: "" });
   if (after.code !== 0) return finish({ kept: false, reason: `RRSI couldn't score its winner (see ${path.relative(root, log)})`, hypotheses, diff });
   const heldOutLabels = new Map([...labels].filter(([id]) => isHeldOut(id)));
   const old = await heldOutScore(runs, "heldout_before", heldOutLabels);
@@ -343,6 +394,9 @@ export async function improveReviewer(root: string, rsi: RsiPaths, opts: { auto?
   await fsp.mkdir(path.dirname(candidatePath(root, id)), { recursive: true });
   await fsp.writeFile(candidatePath(root, id), winner, "utf8");
   return finish({ hypotheses, diff, ...comparison });
+  } catch (err) {
+    return finish({ kept: false, reason: `improvement stopped; the current reviewer is unchanged: ${err instanceof Error ? err.message : String(err)}`, hypotheses: [], diff: "" });
+  }
 }
 
 export function improveRunning(records: AuditRecord[]): boolean {
@@ -377,13 +431,19 @@ export async function autoImprove(root: string, rsi: RsiPaths): Promise<ImproveR
   // Finish the user's current work before spending model calls improving future reviews.
   const phase = goalPhaseOf(records, await readContractSafe(root));
   if (phase === "active" || phase === "paused") return null;
-  if (improveRunning(records)) return null;
   const cases = await labelledCases(root, records);
   if (!enoughToImprove(cases)) return null;
   const runs = records.filter((r): r is ImproveRunRecord => r.kind === "improve.run");
   const last = runs[runs.length - 1];
-  if (last && (last.labels === labelsFingerprint(cases) || cases.length < last.train + last.heldOut + NEW_LABELS_PER_RUN)) return null;
+  if (last) {
+    if (last.labels === labelsFingerprint(cases)) return null;
+    const start = records.find((r) => r.kind === "improve.start" && r.id === last.id)?.ts ?? last.ts;
+    const known = new Set(cases.map((c) => c.reviewCase.id));
+    const fresh = new Set(records.filter((r) => r.kind === "review.feedback" && Date.parse(r.ts) > Date.parse(start) && known.has(r.reviewId)).map((r) => r.kind === "review.feedback" ? r.reviewId : ""));
+    if (fresh.size < NEW_LABELS_PER_RUN) return null;
+  }
   const result = await improveReviewer(root, rsi, { auto: true });
+  if (result.status === "running") return null;
   if (result.run?.kept) await applyImprovement(root, result.run.id, true);
   return result;
 }

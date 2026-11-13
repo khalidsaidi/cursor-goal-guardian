@@ -334,6 +334,7 @@ export const improveStartRecordSchema = z
     /** What the run is expected to spend on the user's Cursor plan: reviews replayed, and model calls for the search at most. */
     reviews: z.number().int().nonnegative().optional(),
     searchCallsMax: z.number().int().nonnegative().optional(),
+    callLimit: z.number().int().nonnegative().optional(),
   })
   .strict();
 

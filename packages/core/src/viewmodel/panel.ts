@@ -65,7 +65,7 @@ export interface PanelViewModel {
     usingImproved: boolean;
     latest: { id: string; kept: boolean; reason: string; heldOut: number; old?: { correct: number }; new?: { correct: number }; diff: string; hypotheses: string[]; applied: boolean } | null;
     /** What the running or latest try costs on the user's Cursor plan: reviews replayed and, at most, search calls. */
-    cost: { reviews: number; searchCallsMax: number } | null;
+    cost: { reviews: number; searchCallsMax: number; callLimit?: number } | null;
   };
   /** Cursor doesn't load project hooks in an untrusted workspace. */
   hooksDisabled: boolean;
@@ -208,7 +208,7 @@ function buildReviews(records: AuditRecord[]): PanelViewModel["reviews"] {
 
 function buildImprove(records: AuditRecord[], usingImproved: boolean): PanelViewModel["improve"] {
   const saved = new Set(records.filter((r): r is GoalReviewRecord => r.kind === "goal.review" && r.caseSaved === true && Boolean(r.id)).map((r) => r.id!));
-  const labelled = [...reviewLabels(records)].filter(([id]) => saved.has(id)).map(([, l]) => l);
+  const labelled = [...reviewLabels(records)].filter(([id]) => saved.has(id)).map(([id, l]) => ({ id, ...l }));
   const runs = records.filter((r): r is ImproveRunRecord => r.kind === "improve.run");
   const last = runs[runs.length - 1];
   const applies = records.filter((r) => r.kind === "improve.apply" || r.kind === "improve.undo");
@@ -222,7 +222,7 @@ function buildImprove(records: AuditRecord[], usingImproved: boolean): PanelView
     stage: improveRunning(records) ? ([...records].reverse().find((r) => r.kind === "improve.progress") as { stage?: string } | undefined)?.stage ?? null : null,
     usingImproved,
     latest: last ? { id: last.id, kept: last.kept, reason: last.reason, heldOut: last.heldOut, ...(last.old ? { old: last.old } : {}), ...(last.new ? { new: last.new } : {}), diff: last.diff, hypotheses: last.hypotheses, applied } : null,
-    cost: lastStart?.kind === "improve.start" && lastStart.reviews !== undefined ? { reviews: lastStart.reviews, searchCallsMax: lastStart.searchCallsMax ?? 0 } : null,
+    cost: lastStart?.kind === "improve.start" && lastStart.reviews !== undefined ? { reviews: lastStart.reviews, searchCallsMax: lastStart.searchCallsMax ?? 0, ...(lastStart.callLimit !== undefined ? { callLimit: lastStart.callLimit } : {}) } : null,
   };
 }
 

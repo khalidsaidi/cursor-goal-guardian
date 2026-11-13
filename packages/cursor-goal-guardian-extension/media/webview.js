@@ -95,7 +95,7 @@
     const im = vm.improve;
     const out = [];
     const latest = im.latest;
-    const cost = im.cost ? ` About ${im.cost.reviews} reviews and up to ${im.cost.searchCallsMax} more calls to your Cursor model.` : "";
+    const cost = im.cost?.callLimit !== void 0 ? " Background learning stops at its usage limit." : im.cost ? ` About ${im.cost.reviews} reviews and up to ${im.cost.searchCallsMax} more calls to your Cursor model.` : "";
     if (im.running) out.push(`<p class="review-line">${escapeHtml(`Guardian is improving its reviewer with RRSI from your verdicts.${im.stage ? ` ${im.stage}.` : ""}${cost}`)}</p>`);
     else if (latest?.kept) {
       out.push(
@@ -105,7 +105,7 @@
         ...latest.applied ? [] : [`<div class="goal-controls"><button class="link" data-cmd="review.apply:${escapeHtml(latest.id)}">Use it again</button></div>`]
       );
     } else if (latest) out.push(`<p class="review-line">${escapeHtml(`Guardian tried to improve its reviewer and kept the current one: ${latest.reason}.${cost}`)}</p>`);
-    else if (im.labelled) out.push(`<p class="review-line">${escapeHtml(`${im.labelled} review${im.labelled === 1 ? " has" : "s have"} a verdict. With enough of both kinds, Guardian improves its reviewer from them by itself.`)}</p>`);
+    else if (im.labelled) out.push(`<p class="review-line">${escapeHtml(`${im.labelled} review${im.labelled === 1 ? " has" : "s have"} a verdict. With enough examples to learn from and check an improvement, Guardian tries in the background within its usage limit.`)}</p>`);
     if (im.usingImproved) out.push(`<p class="review-line">This workspace uses its improved reviewer. <button class="link" data-cmd="review.undo">Undo</button></p>`);
     return out.join("");
   }

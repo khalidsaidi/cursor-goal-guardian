@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendAudit, applyImprovement, autoImprove, candidatePath, defaultContract, estimateImprove, labelsFingerprint, recordReviewFeedback, goalHash, getGuardianPaths, harnessPath, improveReviewer, isHeldOut,
-  labelledCases, loadCases, materializeCase, nowIso, readAuditTail, replayCase, reviewLabels, reviewTemplate, saveCase, undoImprovement, REVIEW_PROMPT,
+  labelledCases, learningBatch, loadCases, materializeCase, nowIso, readAuditTail, replayCase, reviewLabels, reviewTemplate, saveCase, undoImprovement, REVIEW_PROMPT,
   type AuditRecord, type RsiPaths,
 } from "../src/index.js";
 
@@ -219,7 +219,7 @@ if (prompt.includes("You are a harness engineer agent")) {
 else if (prompt.includes("You are the batch analyst")) say({ action: "report", failure_modes: [{ mode: "false-flag", description: "objects to good work", n_tasks: 3 }], capability_gaps: [], success_habits: [] });
 else if (prompt.includes("You are a trajectory digester")) say({ action: "return", digest: { summary: "flagged good work" } });
 else if (prompt.includes("NO_VERIFICATION")) say({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [] });
-else if (prompt.includes("QUIET")) say({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [], checks: ${JSON.stringify(VERIFIED_CHECKS)} });
+else if (prompt.includes("QUIET") && !fs.readFileSync(path.join(ws, "a.js"), "utf8").includes("throw new Error")) say({ items: [{ id: "sc_1", verdict: "holds", evidence: "ok" }], extra: [], checks: ${JSON.stringify(VERIFIED_CHECKS)} });
 else say({ items: [{ id: "sc_1", verdict: "fails", evidence: "nope" }], extra: [], checks: ${JSON.stringify(VERIFIED_CHECKS)} });
 `,
   );
@@ -238,15 +238,16 @@ const rsiPaths = (): RsiPaths => ({
   replay: [process.execPath, HOOK_CLI, "replay-review"],
 });
 
-/** Cases where the reviewer objected; held-out ones are all labelled wrong, so a quieter reviewer scores better. */
+/** Harmless false alarms and actual missing implementations occur in both training and held-out cases. */
 async function labelledWorkspace(): Promise<string> {
   const root = await repo();
   let rights = 0;
   for (let i = 0; i < 12; i += 1) {
     const id = `rev_${i}`;
+    const label = [1, 2, 3, 4].includes(i) ? "right" : "wrong";
+    await fs.writeFile(path.join(root, "a.js"), label === "right" ? 'export function exportCsv(){ throw new Error("not implemented"); }\n' : 'export function exportCsv(){ return "csv"; }\n');
     await saveCase(root, id, contract, { prompt: REVIEW_PROMPT, ...OBJECTION }, nowIso());
     await appendAudit(root, review(id, `h${i}`));
-    const label = isHeldOut(id) || rights >= 3 ? "wrong" : "right";
     if (label === "right") rights += 1;
     await appendAudit(root, { ts: nowIso(), kind: "review.feedback", reviewId: id, index: 0, label });
     await appendAudit(root, { ts: nowIso(), kind: "review.feedback", reviewId: id, index: 1, label });
@@ -308,6 +309,63 @@ describe.skipIf(posixOnly)("one improvement try with Google's RRSI, start to fin
 });
 
 describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
+  it("keeps a bounded recent batch with real catches and false alarms in both splits", async () => {
+    const cases = await labelledCases(await labelledWorkspace());
+    const history = [...cases, ...Array.from({ length: 24 }, (_, i) => ({ ...cases[0]!, label: "wrong" as const, reviewCase: { ...cases[0]!.reviewCase, id: `recent_${i}` } }))];
+    const batch = learningBatch(history);
+    expect(batch).toHaveLength(12);
+    expect(batch.some((c) => c.reviewCase.id === "recent_23")).toBe(true);
+    for (const heldOut of [true, false]) for (const label of ["right", "wrong"]) {
+      expect(batch.some((c) => isHeldOut(c.reviewCase.id) === heldOut && c.label === label)).toBe(true);
+    }
+  });
+
+  it("recovers an interrupted run after its owning process has exited", async () => {
+    const root = await labelledWorkspace();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    const dead = execFileSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+    const lease = path.join(getGuardianPaths(root).dir, "improvement.lock");
+    await fs.writeFile(lease, dead);
+    await appendAudit(root, { ts: nowIso(), kind: "improve.start", id: "interrupted" });
+    expect((await autoImprove(root, rsiPaths()))?.run?.kept).toBe(true);
+    await expect(fs.access(lease)).rejects.toThrow();
+  }, 300_000);
+
+  it("new corrections to existing cases can trigger the next batch without requiring new cases", async () => {
+    const root = await labelledWorkspace();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    await autoImprove(root, rsiPaths());
+    for (const id of ["rev_0", "rev_5", "rev_8", "rev_9"]) await recordReviewFeedback(root, id, 0, "right");
+    expect((await autoImprove(root, rsiPaths()))?.status).toBe("done");
+    expect((await readAuditTail(root, 1000)).filter((r) => r.kind === "improve.start")).toHaveLength(2);
+  }, 300_000);
+
+  it("waits when the held-out cases cannot check retention of real catches", async () => {
+    const root = await labelledWorkspace();
+    await recordReviewFeedback(root, "rev_2", 0, "wrong");
+    await recordReviewFeedback(root, "rev_2", 1, "wrong");
+    expect(await autoImprove(root, rsiPaths())).toBeNull();
+    expect((await readAuditTail(root, 500)).some((r) => r.kind === "improve.start")).toBe(false);
+  });
+
+  it("overlapping refreshes start just one background learning run", async () => {
+    const root = await labelledWorkspace();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    const results = await Promise.all([autoImprove(root, rsiPaths()), autoImprove(root, rsiPaths())]);
+    expect(results.filter((r) => r?.status === "done")).toHaveLength(1);
+    expect((await readAuditTail(root, 500)).filter((r) => r.kind === "improve.start")).toHaveLength(1);
+  }, 300_000);
+
+  it.each([0, 1])("stops at a background allowance of %i calls and keeps the current reviewer", async (limit) => {
+    const root = await labelledWorkspace();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    process.env.CGG_RSI_AUTO_CALL_LIMIT = String(limit);
+    const result = await autoImprove(root, rsiPaths());
+    expect(result?.run).toMatchObject({ kept: false, calls: limit, reason: expect.stringContaining("usage limit") });
+    expect(reviewTemplate(root)).toBe(REVIEW_PROMPT);
+    expect(await autoImprove(root, rsiPaths())).toBeNull();
+  }, 300_000);
+
   it("keeps feedback but defers model-based learning while the user's goal needs work", async () => {
     const root = await labelledWorkspace();
     await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: goalHash(contract), operation: "resume", actor: "user" });
@@ -322,6 +380,7 @@ describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
     const result = await autoImprove(root, rsiPaths());
     expect(result?.status).toBe("done");
     expect(result!.run).toMatchObject({ kept: true, auto: true, labels: labelsFingerprint(await labelledCases(root)) });
+    expect(result!.run!.calls).toBeLessThanOrEqual(32);
     // Kept by the gate (better on held-out cases, no catch lost), so it is in use at once, and on the record as automatic.
     expect(reviewTemplate(root)).toContain("QUIET");
     const records = await readAuditTail(root, 500);
@@ -338,6 +397,7 @@ describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
     expect(await autoImprove(root, rsiPaths())).toBeNull();
     const busy = await labelledWorkspace();
     await appendAudit(busy, { ts: nowIso(), kind: "improve.start", id: "improve_running" });
+    await fs.writeFile(path.join(getGuardianPaths(busy).dir, "improvement.lock"), String(process.pid));
     expect(await autoImprove(busy, rsiPaths())).toBeNull();
   });
 
