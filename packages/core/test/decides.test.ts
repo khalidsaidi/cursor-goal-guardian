@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendAudit, defaultContract, getGuardianPaths, goalHash, goalPhaseOf, nowIso, readAuditTail, readContractSafe, readShellOutputs, recordShellOutput, recordUserPrompt,
-  reviewEvidence, runGoalStop, runGoalTool, submitGoalReport, engineGoal,
+  resumeMissedGoal, reviewEvidence, runGoalStop, runGoalTool, submitGoalReport, engineGoal,
 } from "../src/index.js";
 import { STANDIN_EVALUATOR } from "./helpers/setup.js";
 
@@ -57,6 +57,21 @@ const kinds = async (root: string, kind: string) => (await readAuditTail(root, 2
 const phase = async (root: string) => goalPhaseOf(await readAuditTail(root, 2000), await readContractSafe(root));
 
 describe("the goal keepers' own code decides", () => {
+  it("the user's missed-work correction reopens the same goal without restarting it for unrelated or repeated feedback", async () => {
+    const root = await repo();
+    await work(root);
+    await submitGoalReport(root, report);
+    const original = await readContractSafe(root);
+    const id = String((await kinds(root, "goal.review"))[0]!.id);
+    expect(await resumeMissedGoal(root, "some-older-review")).toBe(false);
+    expect(await phase(root)).toBe("complete");
+    expect(await resumeMissedGoal(root, id)).toBe(true);
+    expect(await phase(root)).toBe("active");
+    expect(await readContractSafe(root)).toEqual(original);
+    expect(await kinds(root, "goal.control")).toMatchObject([{ operation: "resume", actor: "user" }]);
+    expect(await resumeMissedGoal(root, id)).toBe(false);
+  });
+
   it("overlapping completion reports run the independent checks only once", async () => {
     const root = await repo();
     await work(root);

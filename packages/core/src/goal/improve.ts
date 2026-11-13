@@ -9,6 +9,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { readContractSafe } from "../safeReaders.js";
+import { goalPhaseOf } from "./loop.js";
 import { appendAudit, readAuditTail } from "../audit/log.js";
 import { newId, nowIso } from "../clock.js";
 import type { AuditRecord, GoalReviewRecord, ImproveRunRecord, ReviewFeedbackRecord } from "../schema/audit.js";
@@ -372,6 +374,9 @@ export function labelsFingerprint(cases: LabelledCase[]): string {
  */
 export async function autoImprove(root: string, rsi: RsiPaths): Promise<ImproveResult | null> {
   const records = await readAuditTail(root, AUDIT_WINDOW);
+  // Finish the user's current work before spending model calls improving future reviews.
+  const phase = goalPhaseOf(records, await readContractSafe(root));
+  if (phase === "active" || phase === "paused") return null;
   if (improveRunning(records)) return null;
   const cases = await labelledCases(root, records);
   if (!enoughToImprove(cases)) return null;

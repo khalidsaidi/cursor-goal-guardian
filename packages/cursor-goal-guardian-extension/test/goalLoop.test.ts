@@ -1,12 +1,13 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import * as vscode from "vscode";
+import * as core from "@goal-guardian/core";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { buildPanelViewModel, defaultContract, goalHash, reviewLabels, type AuditRecord } from "@goal-guardian/core";
 import { doctorIntegration, runUninstall, wireIntegration } from "../src/setup.js";
 import { renderSections } from "../src/panel/render.js";
-import { applyGoalCommand, WORK_PROMPT } from "../src/goalControls.js";
+import { applyGoalCommand, applyReviewCommand, WORK_PROMPT } from "../src/goalControls.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -22,6 +23,26 @@ const ctx = { extensionPath: "/ext/dir" } as never;
 const readHooks = async (root: string) => JSON.parse(await fs.readFile(path.join(root, ".cursor", "hooks.json"), "utf8")) as { hooks: Record<string, Array<{ command: string; loop_limit?: number }>> };
 
 describe("goal loop wiring", () => {
+  it("a missed-work correction starts Cursor on the reopened goal, while old feedback does not", async () => {
+    const root = await tmp("gg-feedback-");
+    const feedback = vi.spyOn(core, "recordReviewFeedback").mockResolvedValue(undefined);
+    const resume = vi.spyOn(core, "resumeMissedGoal").mockResolvedValue(true);
+    const learning = vi.spyOn(core, "autoImprove").mockResolvedValue(null);
+    const start = vi.spyOn(vscode.commands, "executeCommand").mockResolvedValue(undefined);
+    try {
+      await applyReviewCommand(root, "review.missed:current", async () => {}, "/extension");
+      expect(feedback).toHaveBeenCalledWith(root, "current", 0, "missed");
+      expect(resume).toHaveBeenCalledWith(root, "current");
+      expect(start).toHaveBeenCalledWith("composer.createNew", expect.objectContaining({ autoSubmit: true, partialState: expect.objectContaining({ text: WORK_PROMPT }) }));
+      start.mockClear();
+      resume.mockResolvedValue(false);
+      await applyReviewCommand(root, "review.missed:older", async () => {}, "/extension");
+      expect(start).not.toHaveBeenCalled();
+    } finally {
+      feedback.mockRestore(); resume.mockRestore(); learning.mockRestore(); start.mockRestore();
+    }
+  });
+
   it("setup wires stop with the rounds cap; the doctor adds it to older workspaces, never to a stranger's", async () => {
     process.env.GOAL_GUARDIAN_TEST_HOME = await tmp("gg-home-");
     const root = await tmp("gg-wire-");

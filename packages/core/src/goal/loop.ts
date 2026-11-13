@@ -525,6 +525,21 @@ export async function controlGoal(root: string, operation: GoalControlRecord["op
   await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: goalHash(contract), operation, actor: "user" });
 }
 
+/** The user's "this wasn't done" corrects the current goal, not just a future reviewer. */
+export async function resumeMissedGoal(root: string, reviewId: string): Promise<boolean> {
+  const contract = await readContractSafe(root);
+  const records = await readAuditTail(root, TAPE_WINDOW);
+  if (goalPhaseOf(records, contract) !== "complete") return false;
+  const hash = goalHash(contract);
+  const ended = [...records].reverse().find((r) => r.kind === "goal.end" && r.goalHash === hash);
+  if (ended?.kind !== "goal.end" || !["proved", "unchecked"].includes(ended.outcome)) return false;
+  const review = [...records].reverse().find((r) => r.kind === "goal.review" && r.goalHash === hash && Date.parse(r.ts) <= Date.parse(ended.ts));
+  if (review?.kind !== "goal.review" || review.id !== reviewId || !review.ran || objectionLines(review).length) return false;
+  if (!await setEngineGoal(root, contract.goal, true)) return false;
+  await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: hash, operation: "resume", actor: "user" });
+  return true;
+}
+
 /** Nothing more to ask: proved anywhere, or this chat's agent can't report at all, and the goal hasn't changed since. */
 function settled(all: AuditRecord[], hash: string, conversationId: string): boolean {
   return all.some((r) => r.kind === "goal.end" && r.goalHash === hash && r.noReport === true && r.conversationId === conversationId);

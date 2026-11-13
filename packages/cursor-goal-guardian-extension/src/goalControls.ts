@@ -1,6 +1,6 @@
 import path from "node:path";
 import * as vscode from "vscode";
-import { applyImprovement, autoImprove, controlGoal, lastActiveConversation, readAuditTail, recordReviewFeedback, undoImprovement, type RsiPaths } from "@goal-guardian/core";
+import { applyImprovement, autoImprove, controlGoal, lastActiveConversation, readAuditTail, recordReviewFeedback, resumeMissedGoal, undoImprovement, type RsiPaths } from "@goal-guardian/core";
 
 export type GoalCommand = "goal.pause" | "goal.resume" | "goal.done" | "goal.work";
 
@@ -53,6 +53,7 @@ export async function applyReviewCommand(root: string, command: string, refresh:
     await recordReviewFeedback(root, id, Number(index), verb === "review.right" ? "right" : "wrong");
   } else if (verb === "review.missed" && id) {
     await recordReviewFeedback(root, id, 0, "missed");
+    if (await resumeMissedGoal(root, id)) await startAgent();
   } else if (verb === "review.apply" && id) {
     await applyImprovement(root, id).catch((err) => vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`));
   } else if (verb === "review.undo") {

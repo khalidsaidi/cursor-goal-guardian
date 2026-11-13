@@ -5,7 +5,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  appendAudit, applyImprovement, autoImprove, candidatePath, defaultContract, estimateImprove, labelsFingerprint, recordReviewFeedback, getGuardianPaths, harnessPath, improveReviewer, isHeldOut,
+  appendAudit, applyImprovement, autoImprove, candidatePath, defaultContract, estimateImprove, labelsFingerprint, recordReviewFeedback, goalHash, getGuardianPaths, harnessPath, improveReviewer, isHeldOut,
   labelledCases, loadCases, materializeCase, nowIso, readAuditTail, replayCase, reviewLabels, reviewTemplate, saveCase, undoImprovement, REVIEW_PROMPT,
   type AuditRecord, type RsiPaths,
 } from "../src/index.js";
@@ -253,6 +253,7 @@ async function labelledWorkspace(): Promise<string> {
     await tick();
   }
   expect(rights).toBeGreaterThan(0);
+  await appendAudit(root, { ts: nowIso(), kind: "goal.end", conversationId: "completed-work", goalHash: goalHash(contract), outcome: "proved" });
   return root;
 }
 
@@ -307,6 +308,14 @@ describe.skipIf(posixOnly)("one improvement try with Google's RRSI, start to fin
 });
 
 describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
+  it("keeps feedback but defers model-based learning while the user's goal needs work", async () => {
+    const root = await labelledWorkspace();
+    await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: goalHash(contract), operation: "resume", actor: "user" });
+    expect((await labelledCases(root)).length).toBeGreaterThan(0);
+    expect(await autoImprove(root, rsiPaths())).toBeNull();
+    expect((await readAuditTail(root, 500)).some((record) => record.kind === "improve.start")).toBe(false);
+  });
+
   it("runs with no click once there are enough verdicts, applies what its gate kept, and doesn't run again on the same verdicts", async () => {
     const root = await labelledWorkspace();
     process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
