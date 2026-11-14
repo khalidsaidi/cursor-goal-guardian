@@ -112,7 +112,16 @@ export function reviewTemplate(root?: string): string {
 }
 
 /** The recorded objective and the human request active during this completion check. */
-export type ReviewContract = Pick<Contract, "goal" | "successCriteria"> & Partial<Pick<Contract, "constraints">> & { currentRequest?: string };
+export interface ReviewUserFeedback { finding: string; judgment: "right" | "wrong"; }
+export type ReviewContract = Pick<Contract, "goal" | "successCriteria"> & Partial<Pick<Contract, "constraints">> & { currentRequest?: string; reviewFeedback?: ReviewUserFeedback[] };
+
+/** Current user guidance is shared by the checkers, outside the learned reviewer template. */
+export function reviewFeedbackContext(feedback?: ReviewUserFeedback[]): string {
+  if (!feedback?.length) return "";
+  return `User feedback on earlier review findings:
+${JSON.stringify(feedback.slice(-8))}
+These are the user's judgments about specific earlier complaints, not a verdict on the whole project. For a rejected complaint (wrong), recheck the actual requirement and finished work instead of repeating it unchanged. If the problem genuinely remains, explain the concrete requirement and evidence; never ignore a demonstrated defect merely because an earlier complaint was rejected. Retain useful checks behind confirmed complaints (right). Other unfinished work must still be checked. Feedback does not remove requirements or make an incomplete check pass.`;
+}
 
 /** Shared by review, evaluation and claim adjudication so earlier turn limits cannot silently narrow completion. */
 export function completionScope(currentRequest?: string): string {
@@ -121,7 +130,7 @@ export function completionScope(currentRequest?: string): string {
 
 export function reviewPrompt(contract: ReviewContract, root?: string, template: string = reviewTemplate(root)): string {
   const items = contract.successCriteria.length ? contract.successCriteria.map((c) => `- ${c.id}: ${c.text}`).join("\n") : "- goal: the goal as stated";
-  return `${template.replace("{goal}", () => contract.goal).replace("{items}", () => items)}${contract.constraints?.length ? `\n\nUser constraints:\n${contract.constraints.map((c) => `- ${c}`).join("\n")}` : ""}\n\n${completionScope(contract.currentRequest)}\n\n${REVIEW_REQUIREMENTS}`;
+  return `${template.replace("{goal}", () => contract.goal).replace("{items}", () => items)}${contract.constraints?.length ? `\n\nUser constraints:\n${contract.constraints.map((c) => `- ${c}`).join("\n")}` : ""}\n\n${completionScope(contract.currentRequest)}${contract.reviewFeedback?.length ? `\n\n${reviewFeedbackContext(contract.reviewFeedback)}` : ""}\n\n${REVIEW_REQUIREMENTS}`;
 }
 
 /** The first balanced JSON object in the text holding an array under `key`. Models add prose and fences around it. */
@@ -499,7 +508,7 @@ export function adjudicatePrompt(contract: ReviewContract, claims: EvaluatorClai
   const list = claims
     .map((c) => c.id === EXTRA_WORK_RUBRIC_ID ? `- ${c.id} (the run changed things the request doesn't need): ${c.rationale}` : c.id.startsWith("reviewer_extra_") ? `- ${c.id} (${c.property}): ${c.rationale}` : `- ${c.id} (${c.property}) is not met: ${c.rationale}`)
     .join("\n");
-  return ADJUDICATE_PROMPT.replace("{goal}", () => contract.goal).replace("{items}", () => items).replace("{claims}", () => list) + (contract.constraints?.length ? `\n\nUser constraints:\n${contract.constraints.map((c) => `- ${c}`).join("\n")}` : "") + `\n\n${completionScope(contract.currentRequest)}`;
+  return ADJUDICATE_PROMPT.replace("{goal}", () => contract.goal).replace("{items}", () => items).replace("{claims}", () => list) + (contract.constraints?.length ? `\n\nUser constraints:\n${contract.constraints.map((c) => `- ${c}`).join("\n")}` : "") + `\n\n${completionScope(contract.currentRequest)}${contract.reviewFeedback?.length ? `\n\n${reviewFeedbackContext(contract.reviewFeedback)}` : ""}`;
 }
 
 /** The reviewer's answer on each claim. A claim left out or answered unclearly is unclear: it is never dismissed by silence. */

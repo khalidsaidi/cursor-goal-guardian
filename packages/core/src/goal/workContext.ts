@@ -4,7 +4,7 @@ import { readContractSafe } from "../safeReaders.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalReviewRecord } from "../schema/audit.js";
 import { goalHash } from "./loop.js";
-import { objectionEntries, REVIEW_POLICY } from "./review.js";
+import { objectionEntries, REVIEW_POLICY, type ReviewUserFeedback } from "./review.js";
 import { verificationState } from "./verificationState.js";
 import { readShellOutputs } from "./record.js";
 
@@ -17,6 +17,24 @@ export function currentGoalRecords(records: AuditRecord[], hash: string): AuditR
     if ((r.kind === "goal.set" && r.goalHash === hash) || (event?.type === "goal/change" && event.data?.operation === "create")) start = i;
   }
   return records.slice(start);
+}
+
+/** Use explicit feedback now as well as saving it for future RRSI search. */
+export function goalReviewFeedback(records: AuditRecord[], hash: string): ReviewUserFeedback[] {
+  const current = currentGoalRecords(records,hash);
+  const reviews = current.filter((r): r is GoalReviewRecord => r.kind === "goal.review" && r.goalHash === hash && Boolean(r.id)).slice(-3);
+  const latest = new Map<string, {reviewId:string; index:number; label:"right"|"wrong"}>();
+  for (const r of current) {
+    if (r.kind !== "review.feedback" || r.label === "missed" || !reviews.some(review=>review.id === r.reviewId)) continue;
+    const key = `${r.reviewId}/${r.index}`;
+    latest.delete(key); // A changed judgment belongs among the most recent feedback, too.
+    latest.set(key,{reviewId:r.reviewId,index:r.index,label:r.label});
+  }
+  return [...latest.values()].slice(-8).flatMap(f => {
+    const review = reviews.find(r=>r.id === f.reviewId)!;
+    const entry = objectionEntries(review).find(e=>e.index === f.index);
+    return entry ? [{finding:entry.line,judgment:f.label}] : [];
+  });
 }
 
 export async function goalWorkContext(root: string, contract?: Contract, records?: AuditRecord[]) {

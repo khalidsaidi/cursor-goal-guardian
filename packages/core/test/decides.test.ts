@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendAudit, defaultContract, getGuardianPaths, goalHash, goalPhaseOf, nowIso, readAuditTail, readContractSafe, readShellOutputs, recordShellOutput, recordUserPrompt,
-  resumeMissedGoal, reviewEvidence, runGoalStop, runGoalTool, submitGoalReport, engineGoal,
+  resumeMissedGoal, reviewEvidence, runGoalStop, runGoalTool, submitGoalReport, engineGoal, recordReviewFeedback, loadCases, replayCase, REVIEW_PROMPT,
 } from "../src/index.js";
 import { STANDIN_EVALUATOR } from "./helpers/setup.js";
 
@@ -70,6 +70,35 @@ describe("the goal keepers' own code decides", () => {
     expect(await readContractSafe(root)).toEqual(original);
     expect(await kinds(root, "goal.control")).toMatchObject([{ operation: "resume", actor: "user" }]);
     expect(await resumeMissedGoal(root, id)).toBe(false);
+  });
+
+  it("uses the user's rejected complaint in the next review and extra check while retaining a real remaining failure", async () => {
+    const root=await repo();await work(root);
+    const bin=path.join(await tmp("gg-feedback-bin-"),"agent");
+    await fsp.writeFile(bin,`#!/usr/bin/env node
+const fs=require('fs'),path=require('path'),a=process.argv.slice(2);
+let p=a[a.indexOf('-p')+1]||'';if(p.startsWith('Read task.md'))p=fs.readFileSync(path.join(a[a.indexOf('--workspace')+1],'task.md'),'utf8');
+const corrected=p.includes('User feedback on earlier review findings:')&&p.includes('demands an uppercase CSV filename')&&p.includes('"judgment":"wrong"');
+console.log(JSON.stringify({type:'result',result:JSON.stringify({items:[{id:'sc_1',verdict:corrected?'holds':'fails',evidence:corrected?'requested export works':'demands an uppercase CSV filename'}],extra:[],checks:[{id:'build',verdict:'holds',evidence:'build works'},{id:'public_api',verdict:'holds',evidence:'exports work'},{id:'behavior',verdict:'fails',evidence:'genuine empty-row handling defect remains'}]})}));
+`);await fsp.chmod(bin,0o755);process.env.GOAL_GUARDIAN_REVIEWER=bin;
+    const evaluator=path.join(path.dirname(bin),"evaluator");
+    await fsp.writeFile(evaluator,`#!/usr/bin/env node
+const fs=require('fs');let s='';process.stdin.on('data',b=>s+=b);process.stdin.on('end',()=>{const j=JSON.parse(s);fs.writeFileSync(${JSON.stringify(path.join(root,".cursor/evaluator-job.json"))},JSON.stringify(j));console.log(JSON.stringify({ran:true,overall:0.5,rubrics:[{id:'sc_1',score:j.user_query.includes('"judgment":"wrong"')?1:0,property:'export',rationale:'current observations'},{id:'extra',score:1,property:'scope',rationale:'no extras'}],calls:1,seconds:0}));});
+`);await fsp.chmod(evaluator,0o755);
+    process.env.GOAL_GUARDIAN_EVALUATOR=JSON.stringify({python:evaluator,cli:evaluator,adkDir:path.dirname(bin),site:path.dirname(bin)});
+    const first=await submitGoalReport(root,report);
+    expect(first.unproved.join(" ")).toContain("uppercase CSV filename");
+    const initial=(await kinds(root,"goal.review"))[0]!;
+    await recordReviewFeedback(root,String(initial.id),0,"wrong");
+    const second=await submitGoalReport(root,report);
+    expect(second.accepted).toBe(false);
+    expect(second.unproved.join(" ")).not.toContain("uppercase CSV filename");
+    expect(second.unproved.join(" ")).toContain("genuine empty-row handling defect remains");
+    const job=JSON.parse(await fsp.readFile(path.join(root,".cursor/evaluator-job.json"),"utf8"));
+    expect(job.user_query).toContain('"judgment":"wrong"');
+    const saved=(await loadCases(root)).at(-1)!;
+    expect(saved.reviewFeedback).toMatchObject([{judgment:"wrong",finding:expect.stringContaining("uppercase CSV filename")}]);
+    expect(await replayCase(root,saved.id,REVIEW_PROMPT)).toMatchObject({ran:true,fails:[{id:"behavior",evidence:"genuine empty-row handling defect remains"}]});
   });
 
   it("overlapping completion reports run the independent checks only once", async () => {

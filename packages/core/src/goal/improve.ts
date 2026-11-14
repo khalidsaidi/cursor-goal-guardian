@@ -153,10 +153,11 @@ export async function replayCase(root: string, caseId: string, template: string,
   if (!c) return { ran: false, reason: "no such case", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
   if (!c.constraints && c.prompt.includes("\n\nUser constraints:\n")) return { ran: false, reason: "this older case did not retain the user's constraints", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
   if (typeof c.currentRequest !== "string") return { ran: false, reason: "this older case did not retain the user request active during review", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
+  if (!c.reviewFeedback && c.prompt.includes("\n\nUser feedback on earlier review findings:")) return { ran:false, reason:"this case did not retain the user feedback seen during review", fails:[],extra:[],unanswered:[],seconds:0,flagged:null };
   const copy = await materializeCase(root, c);
   if (!copy) return { ran: false, reason: "the case's work no longer applies to its commit", fails: [], extra: [], unanswered: [], seconds: 0, flagged: null };
   try {
-    const outcome = await reviewIn(copy.dir, copy.scratch, reviewPrompt({ goal: c.goal, successCriteria: c.items, constraints: c.constraints ?? [], currentRequest: c.currentRequest }, undefined, template), budgetMs, c.items.length ? c.items.map((i) => i.id) : ["goal"]);
+    const outcome = await reviewIn(copy.dir, copy.scratch, reviewPrompt({ goal: c.goal, successCriteria: c.items, constraints: c.constraints ?? [], currentRequest: c.currentRequest, reviewFeedback: c.reviewFeedback }, undefined, template), budgetMs, c.items.length ? c.items.map((i) => i.id) : ["goal"]);
     return { ...outcome, flagged: outcome.ran && !outcome.unanswered.length ? outcome.fails.length + outcome.extra.length > 0 : null };
   } finally {
     await fsp.rm(copy.scratch, { recursive: true, force: true }).catch(() => undefined);

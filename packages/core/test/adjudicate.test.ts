@@ -103,11 +103,12 @@ describe("what the evaluator alone objects to is checked against the project bef
   });
 
   it("the reviewer is given each claim word for word and told to check the project, not the claim", () => {
-    const prompt = adjudicatePrompt({ goal: "Add CSV export", successCriteria: [{ id: "sc_1", text: "the export test passes" }] }, claims);
+    const prompt = adjudicatePrompt({ goal: "Add CSV export", successCriteria: [{ id: "sc_1", text: "the export test passes" }], reviewFeedback:[{finding:"Unrequested uppercase filename complaint",judgment:"wrong"}] }, claims);
     expect(prompt).toContain("- sc_1 (the export test passes) is not met: renames by substring");
     expect(prompt).toContain("- extra (the run changed things the request doesn't need): edited the type declarations");
     expect(prompt).toContain("Do not take a claim's word for anything.");
     expect(prompt).toContain("- sc_1: the export test passes");
+    expect(prompt).toContain('"finding":"Unrequested uppercase filename complaint","judgment":"wrong"');
   });
 
   it("an answer is confirmed, dismissed with evidence, or unclear: silence and a bare dismissal never dismiss", () => {

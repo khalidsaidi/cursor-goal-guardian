@@ -19,13 +19,13 @@ import { reviewEvidence } from "./evidence.js";
 import { verificationState } from "./verificationState.js";
 import { codexContinuationTurn, codexNotice, codexSaid, codexUserFragment, codexUserSet, codexUserStatus, recordRefusal } from "./partners.js";
 import { BLOCKED_AFTER_CONSECUTIVE_ROUNDS, CODEX_TOOLS, ROUND_LIMIT_CODE, deepseekBlockThreshold } from "./originals.js";
-import { goalWorkMessage } from "./workContext.js";
+import { goalWorkMessage, goalReviewFeedback } from "./workContext.js";
 import { captureGoal, parseRequest } from "./capture.js";
 import { writeContract } from "../contractStore.js";
 import { criteriaFromTexts } from "../schema/contract.js";
 import { EngineRefused, engineRun, type EngineOp, type EngineResult, type EngineToolResult } from "./engine.js";
 import { engineView, type EngineGoal } from "./engineFold.js";
-import { MAX_REVIEWS, REVIEW_POLICY, REVIEW_BUDGET_MS, REVIEW_HARD_LIMIT, completionScope, adjudicate, claimsToAdjudicate, objectionLines, runReview, reviewTemplate } from "./review.js";
+import { MAX_REVIEWS, REVIEW_POLICY, REVIEW_BUDGET_MS, REVIEW_HARD_LIMIT, completionScope, reviewFeedbackContext, adjudicate, claimsToAdjudicate, objectionLines, runReview, reviewTemplate } from "./review.js";
 import { GOAL_RESTORED, guardContract } from "./guard.js";
 import { EVALUATOR_BUDGET_MS, runEvaluator } from "./evaluator.js";
 import { readTrajectory } from "./trajectory.js";
@@ -685,8 +685,10 @@ async function submitGoalReportLocked(root: string, input: GoalReportInput, opts
   const correction = [...all].reverse().find((r) => r.kind === "review.feedback" && scopedIds.has(r.reviewId) && (r.label === "wrong" || r.label === "missed"));
   const correctionKey = correction?.ts ?? "";
   const currentRequest = (await readUserPrompts(root))?.at(-1) ?? contract.goal;
-  const reviewContract = { ...contract, currentRequest };
-  const reviewerKey = (() => { try { return createHash("sha256").update(JSON.stringify([reviewTemplate(root), correctionKey, currentRequest])).digest("hex"); } catch { return undefined; } })();
+  const reviewFeedback = goalReviewFeedback(all,hash);
+  const reviewContract = { ...contract, currentRequest, reviewFeedback };
+  const rejectedFeedback = reviewFeedback.filter(f=>f.judgment === "wrong");
+  const reviewerKey = (() => { try { return createHash("sha256").update(JSON.stringify([reviewTemplate(root), correctionKey, currentRequest, rejectedFeedback])).digest("hex"); } catch { return undefined; } })();
   const corrected = new Set(all.filter((r) => r.kind === "review.feedback" && (r.label === "wrong" || r.label === "missed")).map((r) => r.kind === "review.feedback" ? r.reviewId : ""));
   const sameState = !last || (workState !== null && last.tree === workState);
   const standing = last ? objectionLines(last) : [];
@@ -695,7 +697,7 @@ async function submitGoalReportLocked(root: string, input: GoalReportInput, opts
   const outputs = await readShellOutputs(root);
   const commandResults = new Map<string, { failed: boolean; output: string }>();
   for (const o of outputs) commandResults.set(o.command.replace(/\s+/g, " ").trim(), { failed: o.failed === true, output: o.output });
-  const stateKey = createHash("sha256").update(JSON.stringify([REVIEW_POLICY, correctionKey, currentRequest, workState ?? reportTs, [...commandResults].sort(([a], [b]) => a.localeCompare(b))])).digest("hex").slice(0, 16);
+  const stateKey = createHash("sha256").update(JSON.stringify([REVIEW_POLICY, correctionKey, currentRequest, rejectedFeedback, workState ?? reportTs, [...commandResults].sort(([a], [b]) => a.localeCompare(b))])).digest("hex").slice(0, 16);
   const recovery = [...seq.records].reverse().find((r) => r.kind === "goal.recovery" && r.goalHash === hash && reviews.some((review) => review.id === r.reviewId));
   const recoveryUntried = recovery && !seq.records.slice(seq.records.indexOf(recovery) + 1).some((r) => r.kind === "goal.review" && r.goalHash === hash && r.policy === REVIEW_POLICY);
   const retryBase = recoveryUntried && recovery.kind === "goal.recovery" && recovery.reviewId
@@ -733,7 +735,7 @@ async function submitGoalReportLocked(root: string, input: GoalReportInput, opts
   } else if (fresh || (retryBase && reviews.length < REVIEW_HARD_LIMIT)) {
     const reuseReview = workState ? [...all].reverse().find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.policy === REVIEW_POLICY && r.reviewerKey === reviewerKey && !corrected.has(r.id ?? "") && r.goalHash === hash && r.tree === workState && r.ran && !r.unanswered?.length) : undefined;
     const reuseEvaluator = workState ? [...all].reverse().find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.policy === REVIEW_POLICY && !corrected.has(r.id ?? "") && r.goalHash === hash && r.tree === workState && r.stateKey === stateKey && r.evaluator?.ran === true && !r.evaluator.unanswered?.length)?.evaluator : undefined;
-    const asked = [contract.goal, ...(contract.successCriteria.length ? ["Done when:", ...contract.successCriteria.map((c) => `- ${c.text}`)] : []), ...(contract.constraints.length ? ["User constraints:", ...contract.constraints] : []), completionScope(currentRequest)].join("\n");
+    const asked = [contract.goal, ...(contract.successCriteria.length ? ["Done when:", ...contract.successCriteria.map((c) => `- ${c.text}`)] : []), ...(contract.constraints.length ? ["User constraints:", ...contract.constraints] : []), completionScope(currentRequest), reviewFeedbackContext(reviewFeedback)].filter(Boolean).join("\n");
     const claimed = `Check the requested work against the current project and recorded evidence. Captured evidence: ${JSON.stringify(result.proved)}. Observed changed files: ${JSON.stringify(stillChanged(seq))}. Agent file labels are hints, not scope verdicts.`;
     const checksStarted = Date.now();
     const [outcome, evaluator] = await Promise.all([

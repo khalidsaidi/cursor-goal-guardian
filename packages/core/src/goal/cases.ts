@@ -9,8 +9,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { getGuardianPaths } from "../paths.js";
-import type { Contract } from "../schema/contract.js";
-import { DEP_DIRS, type ReviewExtra, type ReviewFailure } from "./review.js";
+import { DEP_DIRS, type ReviewExtra, type ReviewFailure, type ReviewContract, type ReviewUserFeedback } from "./review.js";
 
 /** A case bigger than this isn't saved: replays are for ordinary goals, not whole-repo rewrites. */
 export const MAX_CASE_BYTES = 2 * 1024 * 1024;
@@ -25,6 +24,7 @@ export interface ReviewCase {
   constraints?: string[];
   /** Active human turn, distinct from temporary limits in the original request. */
   currentRequest?: string;
+  reviewFeedback?: ReviewUserFeedback[];
   items: Array<{ id: string; text: string }>;
   /** The commit the work sits on. */
   base: string;
@@ -61,7 +61,7 @@ const OUTSIDE_GUARDIAN = ["--", ".", ":(exclude).cursor"];
 export async function saveCase(
   root: string,
   id: string,
-  contract: Pick<Contract, "goal" | "successCriteria"> & Partial<Pick<Contract, "constraints">> & { currentRequest?: string },
+  contract: ReviewContract,
   review: { prompt: string; fails: ReviewFailure[]; extra: ReviewExtra[] },
   ts: string,
   maxBytes = MAX_CASE_BYTES,
@@ -90,6 +90,7 @@ export async function saveCase(
     goal: contract.goal,
     constraints: [...(contract.constraints ?? [])],
     currentRequest: contract.currentRequest ?? contract.goal,
+    reviewFeedback: contract.reviewFeedback ?? [],
     items: contract.successCriteria.map((c) => ({ id: c.id, text: c.text })),
     base: head.stdout.toString("utf8").trim(),
     prompt: review.prompt,

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {execFileSync} from "node:child_process";
-import {appendAudit,defaultContract,getGuardianPaths,goalHash,goalWorkContext,goalTurnContext,reviewEvidence,nowIso,REVIEW_POLICY,writeContract} from "../src/index.js";
+import {appendAudit,defaultContract,getGuardianPaths,goalHash,goalWorkContext,goalReviewFeedback,goalTurnContext,reviewEvidence,nowIso,REVIEW_POLICY,writeContract} from "../src/index.js";
 import {verificationState} from "../src/goal/verificationState.js";
 const made:string[]=[];
 afterEach(async()=>{for(const p of made.splice(0))await fs.rm(p,{recursive:true,force:true});});
@@ -43,6 +43,27 @@ describe("useful work carried into another chat",()=>{
   const {root,hash,tree}=await fixture();
   await appendAudit(root,{ts:nowIso(),kind:"goal.review",id:"incomplete",goalHash:hash,reportTs:nowIso(),policy:REVIEW_POLICY,tree,ran:true,seconds:1,fails:[],extra:[],unanswered:["public_api"]});
   expect(await goalTurnContext(root)).toContain("Finish the relevant check: No clear verdict for public_api");
+ });
+ it("uses the latest feedback without importing old or unjudged findings",async()=>{
+  const {root,hash}=await fixture();
+  await appendAudit(root,{ts:nowIso(),kind:"review.feedback",reviewId:"review1",index:0,label:"wrong"});
+  let records=await import("../src/audit/log.js").then(m=>m.readGoalRecords(root));
+  expect(goalReviewFeedback(records,hash)).toMatchObject([{judgment:"wrong",finding:expect.stringContaining("No b export")}]);
+  await appendAudit(root,{ts:nowIso(),kind:"review.feedback",reviewId:"review1",index:0,label:"right"});
+  records=await import("../src/audit/log.js").then(m=>m.readGoalRecords(root));
+  expect(goalReviewFeedback(records,hash)).toMatchObject([{judgment:"right"}]);
+  await appendAudit(root,{ts:nowIso(),kind:"goal.engine",event:{type:"goal/change",data:{operation:"create"}}});
+  records=await import("../src/audit/log.js").then(m=>m.readGoalRecords(root));
+  expect(goalReviewFeedback(records,hash)).toEqual([]);
+ });
+ it("keeps a recent correction when feedback exceeds the context bound",async()=>{
+  const {root,hash,tree}=await fixture();
+  await appendAudit(root,{ts:nowIso(),kind:"goal.review",id:"many",goalHash:hash,reportTs:nowIso(),policy:REVIEW_POLICY,tree,ran:true,seconds:1,fails:Array.from({length:9},(_,i)=>({id:`item${i}`,evidence:`problem${i}`})),extra:[]});
+  for(let i=0;i<9;i++)await appendAudit(root,{ts:nowIso(),kind:"review.feedback",reviewId:"many",index:i,label:"wrong"});
+  await appendAudit(root,{ts:nowIso(),kind:"review.feedback",reviewId:"many",index:0,label:"right"});
+  const records=await import("../src/audit/log.js").then(m=>m.readGoalRecords(root));
+  const feedback=goalReviewFeedback(records,hash);
+  expect(feedback).toHaveLength(8);expect(feedback.at(-1)).toMatchObject({judgment:"right",finding:expect.stringContaining("problem0")});
  });
  it("supplies changed source beyond proof hints and discloses bounded evidence",async()=>{
   const {root}=await fixture();
