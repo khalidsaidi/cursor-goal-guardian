@@ -104,5 +104,24 @@ export function reviewEvidence(root: string, proofs: GoalProof[], outputs: Shell
       steps.push(...step(`guardian_check_proof(item=${JSON.stringify(proof.criterion)}, cited_file=${JSON.stringify(proof.file)}, cited_text=${JSON.stringify(squash(proof.contains ?? "").slice(0, QUOTE_MAX))})`, fileEvidence(root, proof)));
     }
   }
+  // Include actual changed source beyond caller hints, and disclose what the bounded packet omits.
+  const paths = readTree(root)?.paths ?? [];
+  const included = new Set(evidence.slice(0, 18).flatMap(p => p.file ? [projectPath(root, p.file)] : []));
+  for (const file of paths) {
+    if (included.size >= 8) break;
+    if (included.has(file) || file.startsWith(".cursor/")) continue;
+    const full = path.join(root, file);
+    try { if (!fs.statSync(full).isFile()) continue; } catch { continue; }
+    steps.push(...step(`guardian_project_file(path=${JSON.stringify(file)})`, fileEvidence(root, { criterion: "goal", file })));
+    included.add(file);
+  }
+  steps.push(...step("guardian_evidence_coverage(what=\"scope and limits of the supplied observations\")", JSON.stringify({
+    compared_to: "current HEAD; earlier committed work may instead appear in recorded edits or selected source excerpts",
+    changed_files: paths.length, source_excerpts: [...included], omitted_changed_files: paths.filter(p => !included.has(p)),
+    status_truncated: status !== null && status.length > STATUS_MAX,
+    diff_truncated: diff !== null && diff.length > DIFF_MAX,
+    source_excerpt_limit: SOURCE_MAX, command_output_excerpt_limit: OUTPUT_MAX,
+    guidance: "Assess the user's requirements from the supplied observations independently. Excerpts are bounded, not the entire project. An omitted file is not itself a defect. When a relevant property cannot be established, identify its missing evidence or specific check and leave it unclear; do not infer success or invent a failure.",
+  })));
   return steps;
 }

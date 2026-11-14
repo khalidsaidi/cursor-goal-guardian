@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { getGuardianPaths, readContractSafe, writeContract } from "@goal-guardian/core";
+import { getGuardianPaths, readConfigSafe, readContractSafe, writeContract, writeJsonAtomic } from "@goal-guardian/core";
 
 export interface CommandCenterDeps {
   root: string;
@@ -21,6 +21,7 @@ export async function openCommandCenter(deps: CommandCenterDeps): Promise<void> 
     { label: "$(pencil) Update goal…", description: contract.goal || "no goal declared", action: "goal" },
     { label: "$(graph) Open the session panel", action: "panel" },
     { label: "$(files) Open a guardian file…", action: "files" },
+    { label: "$(settings-gear) Automatic learning…", description: "control background usage", action: "learning" },
     { label: "$(trash) Remove Guardian from this workspace…", description: "deletes everything it created", action: "remove" },
   ];
 
@@ -32,6 +33,17 @@ export async function openCommandCenter(deps: CommandCenterDeps): Promise<void> 
       const goal = await vscode.window.showInputBox({ title: "Goal", value: contract.goal, prompt: "One unambiguous sentence." });
       if (goal === undefined) return;
       await writeContract(deps.root, { ...contract, goal });
+      break;
+    }
+    case "learning": {
+      const config = await readConfigSafe(deps.root);
+      const allowance = await vscode.window.showQuickPick([
+        { label: "Off", description: "Keep feedback; no automatic learning calls", limit: 0 },
+        { label: "Light", description: "Up to 16 background model invocations per 24 hours", limit: 16 },
+        { label: "Standard", description: "Up to 32 background model invocations per 24 hours (default)", limit: 32 },
+      ], { title: "Automatic learning allowance for this workspace" });
+      if (!allowance) return;
+      await writeJsonAtomic(getGuardianPaths(deps.root).config, { ...config, learning: { ...config.learning, dailyCallLimit: allowance.limit } });
       break;
     }
     case "panel":

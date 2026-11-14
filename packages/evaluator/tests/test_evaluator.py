@@ -113,6 +113,16 @@ class EvaluatorTest(unittest.TestCase):
         self.assertFalse(self.run_cli(FAKE_FAIL="1")["ran"])
         self.assertFalse(self.run_cli(FAKE_ANSWER="I could not judge this.")["ran"])
 
+    @unittest.skipUnless(HAVE_DEPS, "ADK dependencies unavailable")
+    def test_unclear_evidence_remains_unscored_through_adks_own_parser(self):
+        answer = verdicts(sc_1="yes", sc_2="unclear", extra="yes")
+        out = self.run_cli(FAKE_ANSWER=answer)
+        self.assertFalse(out["ran"], out)
+        self.assertIsNone(out["overall"])
+        self.assertEqual(out["rubrics"], [])
+        self.assertIn("sc_2 judged unclear", out["reason"])
+        self.assertIn("specific missing check", self.prompts()[0]["prompt"])
+
     def test_nothing_to_judge_and_missing_pieces_are_reported(self):
         out = self.run_cli(site=self.tmp / "no-such-site")
         self.assertFalse(out["ran"])

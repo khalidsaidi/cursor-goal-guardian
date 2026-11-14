@@ -1,7 +1,7 @@
 import { goalHash, goalPhaseOf } from "../goal/loop.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalReviewRecord, ImproveRunRecord } from "../schema/audit.js";
-import { enoughToImprove, improveRunning, reviewLabels, type ReviewLabel } from "../goal/improve.js";
+import { enoughToImprove, improveRunning, reviewLabels, reviewFeedbackTargets, type ReviewLabel } from "../goal/improve.js";
 import { dismissedLines, objectionEntries, objectionLines } from "../goal/review.js";
 
 export interface TourStep {
@@ -208,7 +208,7 @@ function buildReviews(records: AuditRecord[]): PanelViewModel["reviews"] {
 
 function buildImprove(records: AuditRecord[], usingImproved: boolean): PanelViewModel["improve"] {
   const saved = new Set(records.filter((r): r is GoalReviewRecord => r.kind === "goal.review" && r.caseSaved === true && Boolean(r.id)).map((r) => r.id!));
-  const labelled = [...reviewLabels(records)].filter(([id]) => saved.has(id)).map(([id, l]) => ({ id, ...l }));
+  const labelled = [...saved].flatMap(id => { const targets = reviewFeedbackTargets(records, id); return targets.length ? [{ id, label: targets.some(t => t.label === "right") ? "right" as const : "wrong" as const }] : []; });
   const runs = records.filter((r): r is ImproveRunRecord => r.kind === "improve.run");
   const last = runs[runs.length - 1];
   const applies = records.filter((r) => r.kind === "improve.apply" || r.kind === "improve.undo");

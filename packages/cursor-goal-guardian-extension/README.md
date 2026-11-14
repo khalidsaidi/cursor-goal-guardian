@@ -237,3 +237,5 @@ runs and what is adapted.
   (Apache-2.0).
 - The reviewer's prompt is retuned with [RRSI](https://github.com/google-research/rrsi) by
   Google Research (Apache-2.0).
+
+Automatic learning yields to active work and shares a rolling workspace allowance across attempts. In **Goal Guardian → Automatic learning…**, choose Off, Light or Standard. Feedback remains saved when learning is off. Compatible checks and search history are reused; learning is evaluated against the specific findings you judged.

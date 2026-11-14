@@ -100,7 +100,11 @@ def ask_agent(text: str) -> str:
     if not command:
         raise RuntimeError("cursor-agent isn't installed")
     CALLS["n"] += 1
-    text = f"{NO_DELEGATION}\n\n{text}"
+    text = (f"{NO_DELEGATION}\n\n{text}\n\n"
+            "Evidence handling for this run: bounded excerpts and omitted files are not proof of a defect or of success. "
+            "If the supplied observations cannot establish a rubric, keep its ID/Property/Rationale fields, "
+            "identify the specific missing check in Rationale, and write Verdict: unclear. "
+            "Do not use 'unknown' as the verdict. Judge independently of any agent's completion claim.")
     with tempfile.TemporaryDirectory(prefix="gg-eval-") as scratch:
         if len(text) > ARGV_LIMIT:
             Path(scratch, "task.md").write_text(text, encoding="utf-8")
@@ -140,6 +144,8 @@ async def evaluate(job: dict) -> dict:
     from google.adk.evaluation.eval_rubrics import Rubric, RubricContent
     from google.adk.evaluation.rubric_based_multi_turn_trajectory_evaluator import RubricBasedMultiTurnTrajectoryEvaluator
 
+    answers = []
+
     class CursorLlm(BaseLlm):
         """ADK's judge model, answered by the user's own Cursor model."""
 
@@ -153,6 +159,7 @@ async def evaluate(job: dict) -> dict:
             if isinstance(system, str) and system:
                 parts.insert(0, system)
             answer = await asyncio.to_thread(ask_agent, "\n\n".join(parts))
+            answers.append(answer)
             yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text=answer)]))
 
     LLMRegistry.register(CursorLlm)
@@ -194,7 +201,13 @@ async def evaluate(job: dict) -> dict:
     scored = [{"id": s.rubric_id, "property": properties.get(s.rubric_id, ""), "score": s.score,
                "rationale": said.get(s.rubric_id) or s.rationale or ""} for s in (result.overall_rubric_scores or [])]
     if not scored:
-        return {"ran": False, "reason": "ADK's evaluator gave no rubric scores"}
+        # Keep ADK's complete-sample scoring rule. Its own parser can still expose a useful missing check.
+        from google.adk.evaluation.rubric_based_evaluator import DefaultAutoRaterResponseParser
+        unclear = [s for answer in answers for s in DefaultAutoRaterResponseParser().parse(answer)
+                   if s.score is None and s.rubric_id in properties]
+        detail = "; ".join(f"{s.rubric_id}: {s.rationale}" for s in unclear)[:300]
+        return {"ran": False, "reason": "ADK's evaluator gave no complete rubric scores" + (f"; missing check: {detail}" if detail else "")}
+
     return {"ran": True, "overall": result.overall_score, "rubrics": scored}
 
 

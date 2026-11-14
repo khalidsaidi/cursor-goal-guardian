@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Carry prior checks and concrete findings into the goal view and returning-agent context; scope them to the current goal and mark stale work.
+- Supply ADK with changed-source observations and explicit evidence limits; retain uncertainty as incomplete verification.
+- Learn from the specific findings the user judged, preserve useful catches, and retain compatible replay/search knowledge and supported project guidance.
+- Yield background learning to foreground work, preserve compatible progress, and share a durable workspace allowance across attempts. Add an automatic-learning usage control to the command center.
+
 - Give the goal engines complementary roles: DeepSeek owns phase/round authority; Codex supplies budgets and continuation instructions. State changes notify Codex without duplicate approvals or rollback.
 
 Built and run on Linux x64 only so far.

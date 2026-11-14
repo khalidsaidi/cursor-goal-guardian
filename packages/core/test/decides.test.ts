@@ -276,7 +276,7 @@ describe("the second check sees the finished project", () => {
     const root=await repo();
     await fsp.writeFile(path.join(root,"long.js"), "// header\n".repeat(700)+'export   function\nhelper() { return "ACTUAL_IMPLEMENTATION"; }\n');
     const steps=reviewEvidence(root,[{criterion:"sc_1",file:"long.js",contains:"export function helper()"}],[]);
-    const proof=steps.filter(s=>s.role==="tool").at(-1)!.content;
+    const proof=steps.find((s,i)=>s.role==="tool" && steps[i-1]?.tool_calls?.startsWith("guardian_check_proof"))!.content;
     expect(proof).toContain("The quoted text is in it.");
     expect(proof).toContain("ACTUAL_IMPLEMENTATION");
   });

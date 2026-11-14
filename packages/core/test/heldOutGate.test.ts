@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compareHeldOutVerdicts, type ReviewLabel } from "../src/goal/improve.js";
+import { compareHeldOutVerdicts, compareFeedbackResults, type LabelledCase, type ReviewLabel } from "../src/goal/improve.js";
 
 const labels = new Map<string, ReviewLabel>([["gap-a", "right"], ["gap-b", "right"], ["good", "wrong"]]);
 const verdicts = (...values: unknown[]) => new Map([...labels.keys()].map((id, i) => [id, values[i]]));
@@ -46,4 +46,20 @@ describe("held-out prompt acceptance", () => {
     expect(compareHeldOutVerdicts(labels, verdicts(true, true, false), verdicts(true, true, false))).toMatchObject({ kept: false });
     expect(compareHeldOutVerdicts(new Map(), new Map(), new Map())).toMatchObject({ kept: false, reason: "no held-out cases to compare" });
   });
+});
+
+// The production comparison uses concrete issue identities, rather than whole-case flag booleans.
+describe("specific feedback qualification",()=>{
+ const cases=[{reviewCase:{id:"a"},targets:[{key:"useful",finding:"missing API",label:"right"},{key:"nit",finding:"style complaint",label:"wrong"}]}] as LabelledCase[];
+ it("cannot hide a lost useful issue behind another flag",()=>{
+  const before=new Map([["a/useful",true],["a/nit",true]]);
+  const after=new Map([["a/useful",false],["a/nit",false],["a/unrelated",true]]);
+  expect(compareFeedbackResults(cases,before,after)).toMatchObject({kept:false,lostCatches:1});
+ });
+ it("accepts removing a rejected complaint while the real defect remains",()=>{
+  expect(compareFeedbackResults(cases,new Map([["a/useful",true],["a/nit",true]]),new Map([["a/useful",true],["a/nit",false]]))).toMatchObject({kept:true,lostCatches:0});
+ });
+ it("requires an unambiguous same-issue match",()=>{
+  expect(compareFeedbackResults(cases,new Map([["a/useful",true],["a/nit",true]]),new Map<string,unknown>([["a/useful",null],["a/nit",false]]))).toMatchObject({kept:false,reason:expect.stringContaining("incomplete")});
+ });
 });

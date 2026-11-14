@@ -19,6 +19,7 @@ import { reviewEvidence } from "./evidence.js";
 import { verificationState } from "./verificationState.js";
 import { codexContinuationTurn, codexNotice, codexSaid, codexUserFragment, codexUserSet, codexUserStatus, recordRefusal } from "./partners.js";
 import { BLOCKED_AFTER_CONSECUTIVE_ROUNDS, CODEX_TOOLS, ROUND_LIMIT_CODE, deepseekBlockThreshold } from "./originals.js";
+import { goalWorkMessage } from "./workContext.js";
 import { captureGoal, parseRequest } from "./capture.js";
 import { writeContract } from "../contractStore.js";
 import { criteriaFromTexts } from "../schema/contract.js";
@@ -1044,6 +1045,7 @@ export async function runGoalStop(root: string, input: { conversationId?: string
   if (!codexTurnNow.ran) notes.push(`- Codex's goal code didn't run (${codexTurnNow.reason ?? "no reason given"}). Until it does, this goal can't be recorded as proved.`);
   const round = loopCount + 1;
   notes.push(...reviewer.map((l) => `- ${l}`));
+  notes.push(...await goalWorkMessage(root, contract, all));
   // Who let this round start, each in its own right, so the record doesn't credit one with another's decision.
   const decidedBy = {
     guardian: `its gates passed: goal work this turn in an agent mode, a completed turn, the goal not yet accepted${idle ? ", nothing changed since last round" : ""}`,
@@ -1100,6 +1102,7 @@ export async function goalTurnContext(root: string): Promise<string | null> {
   return [
     `This workspace has an open goal the user set. Work on it only if this message asks for it, or asks to continue or finish: that means the whole goal, and report with ${CODEX_TOOLS.update.name} when it's done. If this message limits the work or asks for something separate, do only that, leave the rest of the goal alone, and call ${CODEX_TOOLS.update.name} with status set_aside and the message's own words in user_words before you stop. A limit in an earlier message ended with that message.`,
     ...goalBlock(contract.goal, contract.successCriteria),
+    ...await goalWorkMessage(root, contract, records),
   ].join("\n");
 }
 

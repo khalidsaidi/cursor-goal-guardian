@@ -40,6 +40,7 @@ export interface ReviewOutcome {
   /** Done-when ids the reviewer gave no clear verdict on: left out, or answered with something that is neither holds nor a no. */
   unanswered: string[];
   seconds: number;
+  tokens?: number;
   checks?: ReviewCheck[];
   verdicts?: Array<{ id: string; verdict: "holds" | "fails" | "unclear"; evidence: string }>;
 }
@@ -391,7 +392,15 @@ export async function reviewIn(dir: string, scratch: string, prompt: string, bud
   if (!run.ok) return { ran: false, reason: run.reason, fails: [], extra: [], unanswered: [], seconds: seconds() };
   const parsed = parseReview(run.stdout, expect, true);
   if (!parsed) return { ran: false, reason: "the reviewer's answer couldn't be read", fails: [], extra: [], unanswered: [], seconds: seconds() };
-  return { ran: true, ...parsed, seconds: seconds() };
+  let tokens: number | undefined;
+  for (const line of run.stdout.trim().split("\n")) {
+    try {
+      const usage = JSON.parse(line).usage;
+      const total = usage?.total_tokens ?? (typeof usage?.input_tokens === "number" && typeof usage?.output_tokens === "number" ? usage.input_tokens + usage.output_tokens : undefined);
+      if (typeof total === "number" && Number.isFinite(total) && total > 0) tokens = total;
+    } catch { /* diagnostic lines carry no usage */ }
+  }
+  return { ran: true, ...parsed, seconds: seconds(), ...(tokens !== undefined ? { tokens } : {}) };
 }
 
 /** Run one review of the project against the goal. Never throws. */

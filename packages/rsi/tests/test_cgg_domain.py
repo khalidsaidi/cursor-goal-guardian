@@ -60,7 +60,7 @@ class CggDomainTest(unittest.TestCase):
         os.environ["CGG_WORKSPACE"] = str(self.tmp)
         os.environ["CGG_REPLAY"] = json.dumps([sys.executable, str(executable(self.tmp / "replay", FAKE_REPLAY))])
         sys.path[:0] = [str(self.repo)]
-        for m in [m for m in sys.modules if m.startswith(("rrsi", "domains", "adapter", "cursor_llm", "briefs"))]:
+        for m in [m for m in sys.modules if m.startswith(("rrsi", "domains", "adapter", "cursor_llm", "briefs", "feedback", "replay_cache", "model_budget"))]:
             del sys.modules[m]
         from rrsi.domain import load_domain
         self.dom = load_domain("cgg")

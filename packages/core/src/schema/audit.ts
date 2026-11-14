@@ -349,6 +349,8 @@ export const improveRunRecordSchema = z
     id: z.string(),
     /** The labelled cases this run learned from, as one fingerprint: a new batch of labels gives a new one. */
     labels: z.string().optional(),
+    yielded: z.boolean().optional(),
+    deferredUntil: z.number().int().nonnegative().optional(),
     /** Started by Guardian itself, not by a click. */
     auto: z.boolean().optional(),
     kept: z.boolean(),

@@ -5,4 +5,5 @@
 2. Scope of "extra": tests, types and docs for the new work belong to it; extra means changes to other
    behaviour, renames, refactors, validation or rewrites of existing code or docs that no item needs.
 3. Evidence first: run the project's checks and the new behaviour before judging; quote what you saw.
-4. Tie-break: when unsure whether something is a failure or extra, say holds and leave it out.
+4. Uncertainty: an applicable check that could not finish is unclear. Do not invent defects or call unverified work verified.
+5. Project memory: retain observed project-specific checking practices; do not hard-code saved-case verdicts or weaken the fixed requirements.

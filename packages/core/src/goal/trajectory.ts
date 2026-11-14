@@ -34,7 +34,8 @@ export async function readTrajectory(root: string, sinceTs: string | null): Prom
     steps.push({ at, call: `edit_file(path=${JSON.stringify(e.file)})`, result: cut(changes) });
   }
   steps.sort((a, b) => a.at - b.at);
-  return steps.slice(-MAX_ACTIONS).flatMap((s): TrajectoryMessage[] => [
+  const selected = steps.slice(-MAX_ACTIONS);
+  return selected.flatMap((s): TrajectoryMessage[] => [
     { role: "assistant", content: "", tool_calls: s.call },
     { role: "tool", content: s.result, tool_calls: null },
   ]);

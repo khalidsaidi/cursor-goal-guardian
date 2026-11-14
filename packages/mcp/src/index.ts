@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
  * Goal Guardian MCP server (stdio). The goal tools (get_goal, create_goal,
- * update_goal) are run by both DeepSeek Harness's own tool pipeline and
- * Codex's own handlers, under both projects' descriptions; a change happens
- * only if both accept. Also DeepSeek's /goal command as goal_command, and
+ * update_goal) use DeepSeek for goal phase and rounds, and Codex for
+ * accounting, budget enforcement and continuation context. Also DeepSeek's /goal command as goal_command, and
  * Guardian's own guardian_change_goal. stdout is JSON-RPC only; diagnostics go
  * to stderr.
  */

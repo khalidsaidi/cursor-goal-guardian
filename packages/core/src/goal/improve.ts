@@ -9,7 +9,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { readContractSafe } from "../safeReaders.js";
+import os from "node:os";
+import { readConfigSafe, readContractSafe } from "../safeReaders.js";
 import { processLease } from "../processLease.js";
 import { stopProcessTree, trackProcessTree } from "../processTree.js";
 import { getGuardianPaths } from "../paths.js";
@@ -19,7 +20,7 @@ import { newId, nowIso } from "../clock.js";
 import type { AuditRecord, GoalReviewRecord, ImproveRunRecord, ReviewFeedbackRecord } from "../schema/audit.js";
 import { loadCases, materializeCase, type ReviewCase } from "./cases.js";
 import { harnessDir, harnessUsable, removeHarness, writeHarness } from "./harness.js";
-import { reviewIn, reviewPrompt, reviewTemplate, objectionEntries, type ReviewOutcome } from "./review.js";
+import { reviewIn, reviewPrompt, reviewTemplate, objectionEntries, REVIEW_POLICY, REVIEW_REQUIREMENTS, resolveReviewer, type ReviewOutcome } from "./review.js";
 
 /** Learning runs outside the interactive MCP deadline; leave room under the adapter's five-minute limit. */
 export const LEARNING_REVIEW_BUDGET_MS = 240_000;
@@ -33,9 +34,24 @@ const AUDIT_WINDOW = 50_000;
 export type ReviewLabel = "right" | "wrong";
 export interface LabelledCase {
   reviewCase: ReviewCase;
-  /** right: it should have objected; wrong: it shouldn't have. */
+  /** Batch balance label; individual feedback targets determine correctness. */
   label: ReviewLabel;
   source: "user" | "fixed" | "overruled" | "missed";
+  targets?: FeedbackTarget[];
+}
+export interface FeedbackTarget { key: string; finding: string; label: ReviewLabel; }
+
+/** Keep what the user actually judged. A wrong objection does not label the whole project correct. */
+export function reviewFeedbackTargets(records: AuditRecord[], reviewId: string): FeedbackTarget[] {
+  const review = records.find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.id === reviewId && r.ran);
+  if (!review) return [];
+  const entries = new Map(objectionEntries(review).filter(e => e.source === "reviewer").map(e => [e.index, e.line]));
+  const feedback = new Map<number, ReviewFeedbackRecord>();
+  for (const r of records) if (r.kind === "review.feedback" && r.reviewId === reviewId) feedback.set(r.index, r);
+  return [...feedback].flatMap(([index, f]) => {
+    const finding = entries.get(index);
+    return finding && f.label !== "missed" ? [{ key: `finding_${index}`, finding, label: f.label }] : [];
+  });
 }
 
 /** New labelled cases needed since the last try before Guardian tries again by itself. */
@@ -91,11 +107,12 @@ export interface ReplayScore {
 
 /** Labelled cases, newest last. */
 export async function labelledCases(root: string, records?: AuditRecord[]): Promise<LabelledCase[]> {
-  const labels = reviewLabels(records ?? (await readAuditTail(root, AUDIT_WINDOW)));
+  const history = records ?? await readAuditTail(root, AUDIT_WINDOW);
   const out: LabelledCase[] = [];
   for (const c of await loadCases(root)) {
-    const l = labels.get(c.id);
-    if (l && typeof c.currentRequest === "string") out.push({ reviewCase: c, ...l });
+    const targets = reviewFeedbackTargets(history, c.id);
+    // A vague missed-work button still resumes the goal, but cannot specify a defect for learning qualification.
+    if (targets.length && typeof c.currentRequest === "string") out.push({ reviewCase: c, label: targets.some(t => t.label === "right") ? "right" : "wrong", source: "user", targets });
   }
   return out;
 }
@@ -181,7 +198,7 @@ export function estimateImprove(cases: LabelledCase[], cfg: RsiConfig): ImproveE
   // Held out before and after; the evolve set once for the baseline and once per candidate.
   const reviews = (2 * heldOut + evolve * (1 + cfg.T * cfg.m)) * cfg.k;
   // Per round: the analyst and digester, then each candidate's proposer turns and critic repairs.
-  const searchCallsMax = cfg.T * (2 + cfg.m * (PROPOSER_TURNS + cfg.repair_rounds + 1));
+  const searchCallsMax = cfg.T * (2 + cfg.m * (PROPOSER_TURNS + cfg.repair_rounds + 1)) + reviews; // at most one specific-issue match judgment per replay
   return { evolve, heldOut, reviews, searchCallsMax };
 }
 
@@ -190,32 +207,51 @@ export async function improveEstimate(root: string, rsi: RsiPaths): Promise<Impr
   return enoughToImprove(cases) ? estimateImprove(cases, rsiConfig(rsi)) : null;
 }
 
-/** Identifiers and file names from the cases: a general prompt has no reason to mention them. */
+/** Saved-case identities cannot become memorized verdict exceptions. */
 function leakTerms(cases: LabelledCase[]): string[] {
-  const out = new Set<string>();
-  const add = (text: string): void => {
-    for (const w of text.match(/[A-Za-z_][A-Za-z0-9_.\/-]{3,}/g) ?? []) {
-      // camelCase, snake_case, paths and names with digits are specific; ordinary words aren't.
-      const t = w.replace(/[./\\-]+$/, "");
-      if (/[a-z][A-Z]|[_/\\]|\.\w|\d/.test(t)) out.add(t);
-    }
-  };
-  for (const c of cases) {
-    add(c.reviewCase.goal);
-    for (const i of c.reviewCase.items) add(i.text);
-    for (const e of c.reviewCase.extra) add(e.file);
+  // Project paths and APIs are legitimate workspace knowledge; only saved-case identities are forbidden.
+  return cases.map(c => c.reviewCase.id);
+}
+
+/** A cache identity includes the real reviewer/model/runtime and installed dependency metadata, never labels. */
+async function replayVersion(root: string, rsi: RsiPaths): Promise<string> {
+  const hash = createHash("sha256").update(JSON.stringify([REVIEW_POLICY, REVIEW_REQUIREMENTS, process.version, process.env.CGG_MODEL_ID, process.env.CGG_SEARCH_MODEL]));
+  for (const file of [resolveReviewer(), ...rsi.replay, ...["package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "node_modules/.modules.yaml", "node_modules/.package-lock.json", ".venv/pyvenv.cfg"].map(f => path.join(root, f))]) {
+    if (!file) continue;
+    try { hash.update(await fsp.readFile(file)); } catch { hash.update(String(file)); }
   }
-  return [...out].filter((w) => w.length >= 4);
+  let modelKnown = Boolean(process.env.CGG_MODEL_ID);
+  try { const config = JSON.parse(await fsp.readFile(path.join(os.homedir(), ".cursor", "cli-config.json"), "utf8")); const model = config.selectedModel ?? config.model; if (model) { modelKnown = true; hash.update(JSON.stringify(model)); } } catch { /* no observable default model */ }
+  // Unknown effective models cannot safely share evaluations between attempts.
+  if (!modelKnown) hash.update(String(Date.now()));
+  for (const name of await fsp.readdir(rsi.domainDir)) if (/\.(py|md|json)$/.test(name)) hash.update(await fsp.readFile(path.join(rsi.domainDir, name)));
+  return hash.digest("hex");
 }
 
 function rsiRoot(root: string): string {
   return path.join(path.dirname(harnessDir(root)), "rsi");
 }
 
-function sh(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, log: string): Promise<{ code: number | null; out: string }> {
+function sh(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, log: string, foreground?: () => Promise<boolean>): Promise<{ code: number | null; out: string; yielded?: boolean }> {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, env, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
     trackProcessTree(child);
+    let alive = true, checking = false, yielded = false;
+    const monitor = foreground ? setInterval(() => {
+      if (checking || !alive) return;
+      checking = true;
+      void foreground().then(active => {
+        if (!active || !alive || yielded) return;
+        yielded = true;
+        // Replay processes own isolated reviewer groups: let their shutdown handlers stop those too.
+        if (process.platform === "win32" || !child.pid) { stopProcessTree(child); return; }
+        try { process.kill(-child.pid, "SIGTERM"); } catch { stopProcessTree(child); }
+        const force = setTimeout(() => stopProcessTree(child), 1000);
+        child.once("close", () => clearTimeout(force));
+      }).finally(() => { checking = false; }).catch(() => undefined);
+    }, 500) : null;
+    child.once("close", () => { alive = false; if (monitor) clearInterval(monitor); });
+    child.once("error", () => { alive = false; if (monitor) clearInterval(monitor); });
     const timer = setTimeout(() => stopProcessTree(child), 600_000);
     child.once("close", () => clearTimeout(timer));
     child.once("error", () => clearTimeout(timer));
@@ -227,7 +263,7 @@ function sh(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, lo
     child.stdout.on("data", keep);
     child.stderr.on("data", keep);
     child.on("error", (err) => resolve({ code: -1, out: `${out}\n${err.message}` }));
-    child.on("close", (code) => resolve({ code, out }));
+    child.on("close", (code) => resolve({ code, out, ...(yielded ? { yielded: true } : {}) }));
   });
 }
 
@@ -268,15 +304,18 @@ export function compareHeldOutVerdicts(labels: ReadonlyMap<string, ReviewLabel>,
   return { kept: true, reason: `${neu.correct} right against ${old.correct} now on ${labels.size} cases RRSI never saw`, ...scores };
 }
 
-/** Read the expected held-out verdicts; missing, malformed and inconclusive results remain incomplete. */
-async function heldOutScore(runs: string, job: string, labels: Map<string, ReviewLabel>): Promise<Map<string, unknown> | null> {
-  const jobDir = path.join(runs, "cgg", "jobs", job);
-  const tasks = await fsp.readdir(jobDir).catch(() => null);
-  if (!tasks) return null;
+/** A candidate must preserve each useful issue, not merely produce some objection on that case. */
+export function compareFeedbackResults(cases: LabelledCase[], before: Map<string, unknown>, after: Map<string, unknown>) {
+  const labels = new Map(cases.flatMap(c => (c.targets ?? []).map(t => [`${c.reviewCase.id}/${t.key}`, t.label] as const)));
+  const comparison = compareHeldOutVerdicts(labels, before, after);
+  return { ...comparison, reason: comparison.reason.replace(/cases/g, "feedback checks") };
+}
+
+async function heldOutScore(runs: string, job: string, cases: LabelledCase[]): Promise<Map<string, unknown>> {
   const verdicts = new Map<string, unknown>();
-  for (const id of labels.keys()) {
-    const rec = await fsp.readFile(path.join(jobDir, id, "trial0.json"), "utf8").then((x) => JSON.parse(x) as { flagged?: unknown }).catch(() => null);
-    if (rec) verdicts.set(id, rec.flagged);
+  for (const c of cases) {
+    const rec = await fsp.readFile(path.join(runs, "cgg", "jobs", job, c.reviewCase.id, "trial0.json"), "utf8").then(JSON.parse).catch(() => null);
+    for (const target of c.targets ?? []) verdicts.set(`${c.reviewCase.id}/${target.key}`, rec?.ran && typeof rec.flagged === "boolean" && !rec.unanswered?.length ? rec.feedback_matches?.[target.key] : undefined);
   }
   return verdicts;
 }
@@ -312,28 +351,92 @@ async function improveReviewerLocked(root: string, rsi: RsiPaths, opts: { auto?:
   const started = Date.now();
   const cfg = rsiConfig(rsi, opts.auto);
   const est = estimateImprove(cases, cfg);
-  const requestedLimit = Number(process.env.CGG_RSI_AUTO_CALL_LIMIT ?? "32");
+  const preferences = (await readConfigSafe(root)).learning;
+  const requestedLimit = Number(process.env.CGG_RSI_AUTO_CALL_LIMIT ?? preferences?.callLimit ?? 32);
   const limit = opts.auto ? (Number.isFinite(requestedLimit) ? Math.max(0, Math.min(256, Math.floor(requestedLimit))) : 32) : null;
+  const learningDir = path.join(getGuardianPaths(root).dir, "learning");
+  const pendingFile = path.join(learningDir, "pending.json");
+  const dailyFile = path.join(learningDir, "allowance.json");
+  await fsp.mkdir(learningDir, { recursive: true });
+  const now = Date.now();
+  const savedDaily = await fsp.readFile(dailyFile, "utf8").then(JSON.parse).catch(() => null);
+  const daily = savedDaily && Number.isFinite(savedDaily.windowStarted) && now - savedDaily.windowStarted < 86_400_000 ? savedDaily : { used: 0, windowStarted: now };
+  daily.limit = preferences?.dailyCallLimit ?? 32;
+  if (opts.auto) await fsp.writeFile(dailyFile, JSON.stringify(daily));
   const budget = path.join(rsiRoot(root), "model-budget.json");
-  const budgetState = (): { used: number; exhausted: boolean } => {
-    try { return JSON.parse(fs.readFileSync(budget, "utf8")) as { used: number; exhausted: boolean }; }
+  const budgetState = (): { used: number; exhausted: boolean; daily_exhausted?: boolean } => {
+    try { return JSON.parse(fs.readFileSync(budget, "utf8")) as { used: number; exhausted: boolean; daily_exhausted?: boolean }; }
     catch { return { used: 0, exhausted: false }; }
   };
   const labelSet = labelsFingerprint(available);
   await appendAudit(root, { ts: nowIso(), kind: "improve.start", id, ...(opts.auto ? { auto: true } : {}), reviews: est.reviews, searchCallsMax: est.searchCallsMax, ...(limit !== null ? { callLimit: limit } : {}) });
   const progress = (stage: string): Promise<void> => appendAudit(root, { ts: nowIso(), kind: "improve.progress", id, stage });
   const finish = async (rest: Omit<ImproveRunRecord, "ts" | "kind" | "id" | "train" | "heldOut" | "seconds" | "calls">): Promise<ImproveResult> => {
-    const run: ImproveRunRecord = { ts: nowIso(), kind: "improve.run", id, labels: labelSet, ...(opts.auto ? { auto: true } : {}), train: est.evolve, heldOut: est.heldOut, seconds: Math.round((Date.now() - started) / 1000), calls: limit !== null ? budgetState().used : est.reviews, ...rest };
+    const run: ImproveRunRecord = { ts: nowIso(), kind: "improve.run", id, labels: labelSet, ...(opts.auto ? { auto: true } : {}), train: est.evolve, heldOut: est.heldOut, seconds: Math.round((Date.now() - started) / 1000), calls: budgetState().used, ...rest };
+    const memoryFile = path.join(getGuardianPaths(root).dir, "learning", "search-history.json");
+    try {
+      const rows = (await fsp.readFile(path.join(rsiRoot(root), "runs", "cgg", "history.jsonl"), "utf8")).split("\n").filter(Boolean).map(line => JSON.parse(line));
+      const previous = await fsp.readFile(memoryFile, "utf8").then(JSON.parse).catch(() => []);
+      const memory = new Map(previous.map((entry: { key: string }) => [entry.key, entry]));
+      for (const entry of rows) {
+        if (!entry.hypothesis) continue;
+        const key = createHash("sha256").update(JSON.stringify([labelSet, entry])).digest("hex");
+        memory.set(key, { key, feedback: labelSet, run: id, qualified: rest.kept, qualification: rest.reason, search: entry });
+      }
+      await fsp.mkdir(path.dirname(memoryFile), { recursive: true });
+      await fsp.writeFile(memoryFile, JSON.stringify([...memory.values()].slice(-80), null, 1));
+    } catch { /* no completed search history on an early stop */ }
+    if (!rest.yielded && !rest.deferredUntil) await fsp.rm(pendingFile, { force: true });
     await appendAudit(root, run);
     return { status: "done", run };
   };
+  const foreground = async (): Promise<boolean> => {
+    if (!opts.auto) return false;
+    const phase = goalPhaseOf(await readAuditTail(root, AUDIT_WINDOW), await readContractSafe(root));
+    return phase === "active" || phase === "paused" || (await readConfigSafe(root)).learning?.dailyCallLimit === 0;
+  };
+  const pause = () => finish({ kept: false, yielded: true, reason: "Learning yielded to the user's goal; compatible progress is saved for later", hypotheses: [], diff: "" });
+  const exhausted = () => {
+    const day = budgetState().daily_exhausted;
+    return finish({ kept: false, ...(day ? { deferredUntil: daily.windowStarted + 86_400_000 } : {}), reason: day ? "Automatic learning reached this workspace's daily allowance; progress is saved" : "background learning reached its usage limit; the current reviewer is unchanged", hypotheses: [], diff: "" });
+  };
   try {
+  if (opts.auto && daily.used >= daily.limit) return finish({ kept: false, deferredUntil: daily.windowStarted + 86_400_000, reason: "Automatic learning is waiting for its workspace allowance", hypotheses: [], diff: "" });
   if (!est.heldOut || !est.evolve) return finish({ kept: false, reason: "not enough cases on both sides of the split yet", hypotheses: [], diff: "" });
 
   // A fresh RRSI checkout: their files, our domain, this workspace's cases and current reviewer.
   const base = rsiRoot(root);
   const repo = path.join(base, "repo");
   const runs = path.join(base, "runs");
+  const current = reviewTemplate(root);
+  const version = await replayVersion(root, rsi);
+  const compatibility = createHash("sha256").update(JSON.stringify([labelSet, reviewTemplate(root), cfg, version, Boolean(opts.auto)])).digest("hex");
+  const pending = await fsp.readFile(pendingFile, "utf8").then(JSON.parse).catch(() => null);
+  const resume = pending?.compatibility === compatibility && typeof pending.start === "string" && fs.existsSync(repo);
+  const log = path.join(base, "rrsi.log");
+  let start: string;
+  if (resume) {
+    start = pending.start;
+    if (opts.auto) {
+      const state = await fsp.readFile(budget, "utf8").then(JSON.parse);
+      state.limit = limit;
+      state.exhausted = state.used >= (limit ?? Number.MAX_SAFE_INTEGER);
+      if (daily.used < daily.limit) delete state.daily_exhausted;
+      await fsp.writeFile(budget, JSON.stringify(state));
+    }
+    // Interrupted trials are retried; complete trials and accepted search history remain intact.
+    const clean = async (dir: string): Promise<void> => {
+      for (const entry of await fsp.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+        const file = path.join(dir, entry.name);
+        if (entry.isDirectory()) await clean(file);
+        else if (/^(trial\d+|eval)\.json$/.test(entry.name)) {
+          const rec = await fsp.readFile(file, "utf8").then(JSON.parse).catch(() => null);
+          if (!rec || rec.missing > 0 || (entry.name.startsWith("trial") && (rec.flagged === null || Object.values(rec.feedback_matches ?? {}).some(v => v === null)))) await fsp.rm(file, { force: true });
+        }
+      }
+    };
+    await clean(runs);
+  } else {
   await fsp.rm(base, { recursive: true, force: true });
   await fsp.mkdir(base, { recursive: true });
   await copyTree(rsi.rrsiDir, repo);
@@ -342,18 +445,17 @@ async function improveReviewerLocked(root: string, rsi: RsiPaths, opts: { auto?:
   if (opts.auto) {
     const file = path.join(domain, "rrsi.json");
     await fsp.writeFile(file, JSON.stringify({ ...JSON.parse(await fsp.readFile(file, "utf8")), ...cfg }));
-    await fsp.writeFile(budget, JSON.stringify({ limit, used: 0, exhausted: false }));
+
   }
+  await fsp.writeFile(budget, JSON.stringify({ limit: limit ?? Number.MAX_SAFE_INTEGER, used: 0, exhausted: false }));
   await fsp.mkdir(path.join(domain, "data"), { recursive: true });
-  const labels = new Map(cases.map((c) => [c.reviewCase.id, c.label] as const));
-  await fsp.writeFile(path.join(domain, "data", "tasks.json"), JSON.stringify(cases.map((c) => ({ id: c.reviewCase.id, case: c.reviewCase.id, label: c.label, split: isHeldOut(c.reviewCase.id) ? "heldout" : "evolve" })), null, 1));
+  await fsp.writeFile(path.join(domain, "data", "tasks.json"), JSON.stringify(cases.map((c) => ({ id: c.reviewCase.id, case: c.reviewCase.id, label: c.label, feedback: c.targets, split: isHeldOut(c.reviewCase.id) ? "heldout" : "evolve" })), null, 1));
   await fsp.writeFile(path.join(domain, "data", "leak_terms.json"), JSON.stringify(leakTerms(cases)));
+  const previousSearch = await fsp.readFile(path.join(getGuardianPaths(root).dir, "learning", "search-history.json"), "utf8").then(JSON.parse).catch(() => []);
+  await fsp.writeFile(path.join(domain, "data", "previous_search.json"), JSON.stringify(previousSearch.slice(-20)));
   await fsp.mkdir(path.join(domain, "harness"), { recursive: true });
-  const current = reviewTemplate(root);
   await fsp.writeFile(path.join(domain, "harness", "reviewer.md"), current);
   await fsp.writeFile(path.join(base, ".gitignore"), "*\n");
-  const log = path.join(base, "rrsi.log");
-  let start: string;
   try {
     git(["init", "-q"], repo);
     git(["add", "-A"], repo);
@@ -362,18 +464,23 @@ async function improveReviewerLocked(root: string, rsi: RsiPaths, opts: { auto?:
   } catch (err) {
     return finish({ kept: false, reason: `RRSI's checkout couldn't be set up: ${err instanceof Error ? err.message : String(err)}`, hypotheses: [], diff: "" });
   }
-  const env: NodeJS.ProcessEnv = { ...process.env, CGG_WORKSPACE: root, CGG_REPLAY: JSON.stringify(rsi.replay), PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1", ...(limit !== null ? { CGG_MODEL_BUDGET: budget } : {}) };
+    await fsp.writeFile(pendingFile, JSON.stringify({ compatibility, start }));
+  }
+  const learning = path.join(getGuardianPaths(root).dir, "learning");
+  const env: NodeJS.ProcessEnv = { ...process.env, CGG_REPLAY_VERSION: version, CGG_REPLAY_CACHE: path.join(learning, "replays"), CGG_FEEDBACK_CACHE: path.join(learning, "feedback-matches"), CGG_WORKSPACE: root, CGG_REPLAY: JSON.stringify(rsi.replay), PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1", CGG_MODEL_BUDGET: budget, ...(limit !== null ? { CGG_DAILY_MODEL_BUDGET: dailyFile } : {}) };
   delete env.GOAL_GUARDIAN_REVIEWING;
-  const rrsi = (args: string[]) => sh(rsi.python, [path.join(repo, "rrsi.py"), "--domain", "cgg", "--runs", runs, ...args], repo, env, log);
+  const rrsi = async (args: string[]) => await foreground() ? { code: -1, out: "foreground work", yielded: true } : sh(rsi.python, [path.join(repo, "rrsi.py"), "--domain", "cgg", "--runs", runs, ...args], repo, env, log, opts.auto ? foreground : undefined);
 
   await progress(`Scoring the current reviewer on ${est.heldOut} cases RRSI won't see`);
   const before = await rrsi(["heldout", "--label", "before", "--ref", start]);
-  if (limit !== null && budgetState().exhausted) return finish({ kept: false, reason: "background learning reached its usage limit; the current reviewer is unchanged", hypotheses: [], diff: "" });
+  if (before.yielded) return pause();
+  if (limit !== null && budgetState().exhausted) return exhausted();
   if (before.code !== 0) return finish({ kept: false, reason: `RRSI couldn't score the current reviewer (see ${path.relative(root, log)})`, hypotheses: [], diff: "" });
-  const heldOutLabels = new Map([...labels].filter(([id]) => isHeldOut(id)));
-  const old = await heldOutScore(runs, "heldout_before", heldOutLabels);
+  const reserved = cases.filter(c => isHeldOut(c.reviewCase.id));
+  const heldOutLabels = new Map(reserved.flatMap(c => (c.targets ?? []).map(t => [`${c.reviewCase.id}/${t.key}`, t.label] as const)));
+  const old = await heldOutScore(runs, "heldout_before", reserved);
   if (!old || [...heldOutLabels.keys()].some((id) => typeof old.get(id) !== "boolean")) {
-    const reasons = await Promise.all([...heldOutLabels.keys()].map((id) => fsp.readFile(path.join(runs, "cgg", "jobs", "heldout_before", id, "trial0.json"), "utf8").then((raw) => (JSON.parse(raw) as { reason?: string }).reason).catch(() => undefined)));
+    const reasons = await Promise.all(reserved.map((c) => c.reviewCase.id).map((id) => fsp.readFile(path.join(runs, "cgg", "jobs", "heldout_before", id, "trial0.json"), "utf8").then((raw) => (JSON.parse(raw) as { reason?: string }).reason).catch(() => undefined)));
     const detail = reasons.find(Boolean);
     return finish({ kept: false, reason: `the initial review checks did not finish${detail ? `: ${detail}` : ""}; no learning search was started`, hypotheses: [], diff: "" });
   }
@@ -381,7 +488,8 @@ async function improveReviewerLocked(root: string, rsi: RsiPaths, opts: { auto?:
   if (baseline.correct === heldOutLabels.size) return finish({ kept: false, old: baseline, reason: "the current reviewer was already correct on every reserved example; no learning search was needed", hypotheses: [], diff: "" });
   await progress(`RRSI is searching: ${cfg.T} rounds of ${cfg.m} candidates on ${est.evolve} cases`);
   const search = await rrsi(["run"]);
-  if (limit !== null && budgetState().exhausted) return finish({ kept: false, reason: "background learning reached its usage limit; the current reviewer is unchanged", hypotheses: [], diff: "" });
+  if (search.yielded) return pause();
+  if (limit !== null && budgetState().exhausted) return exhausted();
   if (search.code !== 0) return finish({ kept: false, reason: `RRSI's search stopped (see ${path.relative(root, log)})`, hypotheses: [], diff: "" });
   const frontier = JSON.parse(await fsp.readFile(path.join(runs, "cgg", "frontier.json"), "utf8")) as { incumbent: { t: number; commit: string } };
   const history = (await fsp.readFile(path.join(runs, "cgg", "history.jsonl"), "utf8").catch(() => ""))
@@ -395,11 +503,14 @@ async function improveReviewerLocked(root: string, rsi: RsiPaths, opts: { auto?:
   if (!harnessUsable("reviewer", winner)) return finish({ kept: false, reason: "RRSI's winner dropped {goal} or {items}", hypotheses, diff });
   await progress("Scoring RRSI's winner on the same held-out cases");
   const after = await rrsi(["heldout", "--label", "after", "--ref", frontier.incumbent.commit]);
-  if (limit !== null && budgetState().exhausted) return finish({ kept: false, reason: "background learning reached its usage limit; the current reviewer is unchanged", hypotheses: [], diff: "" });
+  if (after.yielded) return pause();
+  if (limit !== null && budgetState().exhausted) return exhausted();
   if (after.code !== 0) return finish({ kept: false, reason: `RRSI couldn't score its winner (see ${path.relative(root, log)})`, hypotheses, diff });
-  const neu = await heldOutScore(runs, "heldout_after", heldOutLabels);
+  const neu = await heldOutScore(runs, "heldout_after", reserved);
   if (!old || !neu) return finish({ kept: false, reason: "the held-out replay records could not be read", hypotheses, diff });
-  const comparison = compareHeldOutVerdicts(heldOutLabels, old, neu);
+  if (await foreground()) return pause();
+  if (reviewTemplate(root) !== current || labelsFingerprint(await labelledCases(root)) !== labelSet) return finish({kept:false,reason:"The reviewer or your feedback changed during learning; no earlier result was installed",hypotheses,diff});
+  const comparison = compareFeedbackResults(reserved, old, neu);
   if (!comparison.kept) return finish({ hypotheses, diff, ...comparison });
   await fsp.mkdir(path.dirname(candidatePath(root, id)), { recursive: true });
   await fsp.writeFile(candidatePath(root, id), winner, "utf8");
@@ -427,7 +538,7 @@ export async function applyImprovement(root: string, runId: string, auto = false
 
 /** One fingerprint for a set of labelled cases: which reviews, and what each was judged. */
 export function labelsFingerprint(cases: LabelledCase[]): string {
-  return createHash("sha256").update(cases.map((c) => `${c.reviewCase.id}:${c.label}`).sort().join("\n")).digest("hex").slice(0, 16);
+  return createHash("sha256").update(cases.map(c => JSON.stringify([c.reviewCase.id, c.targets ?? c.label])).sort().join("\n")).digest("hex").slice(0, 16);
 }
 
 /**
@@ -442,19 +553,32 @@ export async function autoImprove(root: string, rsi: RsiPaths): Promise<ImproveR
   const phase = goalPhaseOf(records, await readContractSafe(root));
   if (phase === "active" || phase === "paused") return null;
   const cases = await labelledCases(root, records);
-  if (!enoughToImprove(cases)) return null;
+  const preference = (await readConfigSafe(root)).learning?.dailyCallLimit ?? 32;
+  if (!preference || !enoughToImprove(cases)) return null;
   const runs = records.filter((r): r is ImproveRunRecord => r.kind === "improve.run");
   const last = runs[runs.length - 1];
   if (last) {
-    if (last.labels === labelsFingerprint(cases)) return null;
+    if (last.labels === labelsFingerprint(cases)) {
+      if (!last.yielded) {
+        if (!last.deferredUntil) return null;
+        if (Date.now() < last.deferredUntil) {
+          const allowance = await fsp.readFile(path.join(getGuardianPaths(root).dir, "learning/allowance.json"), "utf8").then(JSON.parse).catch(() => null);
+          if (!allowance || allowance.used >= preference) return null;
+        }
+      }
+    } else {
     const start = records.find((r) => r.kind === "improve.start" && r.id === last.id)?.ts ?? last.ts;
     const known = new Set(cases.map((c) => c.reviewCase.id));
     const fresh = new Set(records.filter((r) => r.kind === "review.feedback" && Date.parse(r.ts) > Date.parse(start) && known.has(r.reviewId)).map((r) => r.kind === "review.feedback" ? r.reviewId : ""));
     if (fresh.size < NEW_LABELS_PER_RUN) return null;
+    }
   }
   const result = await improveReviewer(root, rsi, { auto: true });
   if (result.status === "running") return null;
-  if (result.run?.kept) await applyImprovement(root, result.run.id, true);
+  if (result.run?.kept) {
+    const latestPhase = goalPhaseOf(await readAuditTail(root, AUDIT_WINDOW), await readContractSafe(root));
+    if (latestPhase !== "active" && latestPhase !== "paused" && (await readConfigSafe(root)).learning?.dailyCallLimit !== 0) await applyImprovement(root, result.run.id, true);
+  }
   return result;
 }
 

@@ -95,7 +95,7 @@ function renderGoalRun(vm: PanelViewModel): string {
   // The review let this through. If it shouldn't have, the user says so here, and the reviewer learns from the miss.
   const missed = g.passedReview
     ? g.saidMissed
-      ? `<p class="review-line"><span class="review-said">you said: this wasn't done. The reviewer will learn from having missed it.</span></p>`
+      ? `<p class="review-line"><span class="review-said">you said: this wasn't done. The goal is reopened so Cursor can finish it.</span></p>`
       : `<p class="review-line">The review found nothing wrong with this. <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>`
     : "";
   return `<p class="review-line">${escapeHtml(head)}</p>${lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("")}${missed}`;

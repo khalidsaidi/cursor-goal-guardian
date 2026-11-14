@@ -73,7 +73,7 @@
       ...g.changedSinceReview ? ["The last review objected, and the agent changed the project after it. That final state wasn't reviewed again."] : [],
       ...g.goalFileEdited ? ["The agent edited Guardian's goal files during this run."] : []
     ];
-    const missed = g.passedReview ? g.saidMissed ? `<p class="review-line"><span class="review-said">you said: this wasn't done. The reviewer will learn from having missed it.</span></p>` : `<p class="review-line">The review found nothing wrong with this. <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>` : "";
+    const missed = g.passedReview ? g.saidMissed ? `<p class="review-line"><span class="review-said">you said: this wasn't done. The goal is reopened so Cursor can finish it.</span></p>` : `<p class="review-line">The review found nothing wrong with this. <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>` : "";
     return `<p class="review-line">${escapeHtml(head)}</p>${lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("")}${missed}`;
   }
   var SOURCE_WORD = { user: "your call", fixed: "the agent fixed it", overruled: "you marked the goal done over it", missed: "you said the work wasn't done" };

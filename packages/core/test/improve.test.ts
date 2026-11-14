@@ -172,7 +172,7 @@ describe("the split and the cost", () => {
     const est = estimateImprove(cases, { T: 2, m: 2, k: 1, repair_rounds: 2 });
     expect(est.evolve + est.heldOut).toBe(12);
     expect(est.reviews).toBe(2 * est.heldOut + est.evolve * 5);
-    expect(est.searchCallsMax).toBe(2 * (2 + 2 * 43));
+    expect(est.searchCallsMax).toBe(2 * (2 + 2 * 43) + est.reviews);
   });
 });
 
@@ -217,11 +217,16 @@ const a = process.argv.slice(2);
 let prompt = a[a.indexOf("-p") + 1];
 const ws = a[a.indexOf("--workspace") + 1];
 if (prompt.startsWith("Read task.md")) prompt = fs.readFileSync(path.join(ws, "task.md"), "utf8");
+if(process.env.CGG_TEST_AGENT_MARKER) fs.writeFileSync(process.env.CGG_TEST_AGENT_MARKER,String(process.pid));
+if(process.env.CGG_TEST_AGENT_DELAY) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(process.env.CGG_TEST_AGENT_DELAY));
 const say = (o) => process.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify(o) }) + "\\n");
 if (prompt.includes("You are a harness engineer agent")) {
   const log = prompt.slice(prompt.lastIndexOf("=== INTERACTION LOG ==="));
   if (!log.includes('"action": "edit_file"')) say({ action: "edit_file", path: "reviewer.md", old: "Stay in this folder.", new: "QUIET: only object to what an item needs.\\nStay in this folder." });
   else say({ action: "done", summary: "object only to what an item needs", edits: [{ id: "C1", component: "prompt", hypothesis: "most objections here were overruled", targets_mode: "false flags", why_not_lower_lever: "it is a prose rule", trigger_condition: "every review", predicted_affected: ["x"], retroactive_check: "overruled cases pass; nothing caught is lost; general", regression_risk: "a real gap missed" }] });
+ } else if (prompt.includes("Match the same concrete problem")) {
+  const body = JSON.parse(prompt.split("INPUT_DATA_JSON:")[1].split("\\n\\nOutput ONLY")[0]);
+  say({matches:body.reference_issues.map(t=>({key:t.key,present:body.candidate_findings.length>0,reason:"controlled stand-in"}))});
 } else if (prompt.includes("You are a strict reviewer of harness")) say({ verdict: "accept", reasons: [], risk_notes: [] });
 else if (prompt.includes("You are the batch analyst")) say({ action: "report", failure_modes: [{ mode: "false-flag", description: "objects to good work", n_tasks: 3 }], capability_gaps: [], success_habits: [] });
 else if (prompt.includes("You are a trajectory digester")) say({ action: "return", digest: { summary: "flagged good work" } });
@@ -295,7 +300,7 @@ describe.skipIf(posixOnly)("one improvement try with Google's RRSI, start to fin
     const result = await improveReviewer(root, rsiPaths());
     const log = await fs.readFile(path.join(getGuardianPaths(root).dir, "rsi", "rrsi.log"), "utf8").catch(() => "");
     expect(result.status, log.slice(-3000)).toBe("done");
-    expect(result.run, `${result.run?.reason}\n${log.slice(-3000)}`).toMatchObject({ kept: true });
+    expect(result.run, `${result.run?.reason}\n${log.slice(-3000)}\n${await fs.readFile(path.join(getGuardianPaths(root).dir,"rsi/runs/cgg/jobs/heldout_before/rev_0/trial0.json"),"utf8").catch(()=>"no rev0")}`).toMatchObject({ kept: true });
     expect(result.run!.new!.correct).toBeGreaterThan(result.run!.old!.correct);
     expect(result.run!.diff).toContain("+ QUIET");
     expect(result.run!.hypotheses.join(" ")).toContain("overruled");
@@ -360,9 +365,12 @@ describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
     const root = await labelledWorkspace();
     process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
     await autoImprove(root, rsiPaths());
+    const memory=JSON.parse(await fs.readFile(path.join(getGuardianPaths(root).dir,"learning/search-history.json"),"utf8"));
+    expect(memory.some((row:{search:{hypothesis?:string}})=>Boolean(row.search.hypothesis))).toBe(true);
     for (const id of ["rev_0", "rev_5", "rev_8", "rev_9"]) await recordReviewFeedback(root, id, 0, "right");
     expect((await autoImprove(root, rsiPaths()))?.status).toBe("done");
     expect((await readAuditTail(root, 1000)).filter((r) => r.kind === "improve.start")).toHaveLength(2);
+    expect(JSON.parse(await fs.readFile(path.join(getGuardianPaths(root).dir,"rsi/repo/domains/cgg/data/previous_search.json"),"utf8"))).toEqual(memory.slice(-20));
   }, 300_000);
 
   it("waits when the held-out cases cannot check retention of real catches", async () => {
@@ -399,6 +407,57 @@ describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
     expect((await readAuditTail(root, 500)).some((record) => record.kind === "improve.start")).toBe(false);
   });
 
+  it("yields running learning to foreground work and resumes compatible progress without resetting its allowance", async () => {
+    const root = await labelledWorkspace();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    process.env.CGG_MODEL_ID = "local-test-model";
+    process.env.CGG_TEST_AGENT_MARKER = path.join(root, "entered");
+    process.env.CGG_TEST_AGENT_DELAY = "2000";
+    const running = autoImprove(root, rsiPaths());
+    for (let n=0; n<200; n++) {
+      if (await fs.access(process.env.CGG_TEST_AGENT_MARKER).then(()=>true).catch(()=>false)) break;
+      await new Promise(r=>setTimeout(r,25));
+    }
+    await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: goalHash(contract), operation: "resume", actor: "user" });
+    expect((await running)?.run).toMatchObject({ kept:false, yielded:true });
+    const reviewerPid=Number(await fs.readFile(process.env.CGG_TEST_AGENT_MARKER,"utf8"));
+    await new Promise(r=>setTimeout(r,100));
+    expect(()=>process.kill(reviewerPid,0)).toThrow();
+    const base = path.join(getGuardianPaths(root).dir,"learning");
+    const pending = JSON.parse(await fs.readFile(path.join(base,"pending.json"),"utf8"));
+    const witness=path.join(getGuardianPaths(root).dir,"rsi/resume-witness");
+    await fs.writeFile(witness,"preserve compatible progress");
+    const spent = JSON.parse(await fs.readFile(path.join(base,"allowance.json"),"utf8")).used;
+    expect(spent).toBeGreaterThan(0);
+    expect(await autoImprove(root,rsiPaths())).toBeNull();
+    await appendAudit(root, { ts: nowIso(), kind: "goal.end", conversationId:"finished", goalHash:goalHash(contract), outcome:"proved" });
+    delete process.env.CGG_TEST_AGENT_DELAY;
+    delete process.env.CGG_TEST_AGENT_MARKER;
+    const resumed = await autoImprove(root,rsiPaths());
+    expect(resumed?.run,JSON.stringify(resumed)).toMatchObject({kept:true});
+    expect(await fs.readFile(witness,"utf8")).toBe("preserve compatible progress");
+    expect(JSON.parse(await fs.readFile(path.join(base,"allowance.json"),"utf8")).used).toBeGreaterThan(spent);
+    expect(sh(path.join(getGuardianPaths(root).dir,"rsi/repo"),"cat-file","-t",pending.start).trim()).toBe("commit");
+    await expect(fs.access(path.join(base,"pending.json"))).rejects.toThrow();
+  }, 120_000);
+
+  it("shares a daily allowance across attempts, waits when spent, and resumes when the user raises it", async () => {
+    const root = await labelledWorkspace();
+    process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
+    process.env.CGG_MODEL_ID = "local-test-model";
+    await fs.writeFile(getGuardianPaths(root).config,JSON.stringify({schemaVersion:2,learning:{dailyCallLimit:1}}));
+    const limited = await autoImprove(root,rsiPaths());
+    expect(limited?.run).toMatchObject({kept:false,deferredUntil:expect.any(Number),calls:1});
+    expect(await autoImprove(root,rsiPaths())).toBeNull();
+    await fs.writeFile(getGuardianPaths(root).config,JSON.stringify({schemaVersion:2,learning:{dailyCallLimit:32}}));
+    const resumed = await autoImprove(root,rsiPaths());
+    expect(resumed?.run,JSON.stringify(resumed)).toMatchObject({kept:true});
+    const daily=JSON.parse(await fs.readFile(path.join(getGuardianPaths(root).dir,"learning/allowance.json"),"utf8"));
+    expect(daily.used).toBeGreaterThan(1);expect(daily.used).toBeLessThanOrEqual(32);
+    await fs.writeFile(getGuardianPaths(root).config,JSON.stringify({schemaVersion:2,learning:{dailyCallLimit:0}}));
+    expect(await autoImprove(root,rsiPaths())).toBeNull();
+  },120_000);
+
   it("runs with no click once there are enough verdicts, applies what its gate kept, and doesn't run again on the same verdicts", async () => {
     const root = await labelledWorkspace();
     process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
@@ -426,15 +485,15 @@ describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
     expect(await autoImprove(busy, rsiPaths())).toBeNull();
   });
 
-  it("learns from a miss: a review that passed work the user then says wasn't done should have objected", async () => {
+  it("keeps missed-work feedback but requires a concrete issue for learning qualification", async () => {
     const root = await repo();
     await saveCase(root, "rev_pass", contract, { prompt: REVIEW_PROMPT, fails: [], extra: [] }, nowIso());
     await appendAudit(root, review("rev_pass", "h", { fails: [], extra: [] }));
     expect(reviewLabels(await readAuditTail(root, 100)).size).toBe(0);
     await recordReviewFeedback(root, "rev_pass", 0, "missed");
     expect(reviewLabels(await readAuditTail(root, 100)).get("rev_pass")).toEqual({ label: "right", source: "missed" });
-    // It is a replayable case like any other, labelled as one the reviewer should have flagged.
-    expect(await labelledCases(root)).toMatchObject([{ label: "right", source: "missed", reviewCase: { id: "rev_pass", flagged: false } }]);
+    // Reopen the work, without inventing the concrete defect a replay must retain.
+    expect(await labelledCases(root)).toEqual([]);
     // "Missed" said about a review that did object isn't a verdict on its objections.
     await appendAudit(root, review("rev_obj", "h2"));
     await recordReviewFeedback(root, "rev_obj", 0, "missed");

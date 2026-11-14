@@ -1,0 +1,61 @@
+/** Work already observed on this goal, derived from existing records rather than another goal store. */
+import { readGoalRecords } from "../audit/log.js";
+import { readContractSafe } from "../safeReaders.js";
+import type { Contract } from "../schema/contract.js";
+import type { AuditRecord, GoalReviewRecord } from "../schema/audit.js";
+import { goalHash } from "./loop.js";
+import { objectionEntries, REVIEW_POLICY } from "./review.js";
+import { verificationState } from "./verificationState.js";
+import { readShellOutputs } from "./record.js";
+
+/** Identical words can start a new goal: old receipts must not become its progress. */
+export function currentGoalRecords(records: AuditRecord[], hash: string): AuditRecord[] {
+  let start = 0;
+  for (let i = 0; i < records.length; i += 1) {
+    const r = records[i]!;
+    const event = r.kind === "goal.engine" ? r.event as { type?: string; data?: { operation?: string } } | undefined : undefined;
+    if ((r.kind === "goal.set" && r.goalHash === hash) || (event?.type === "goal/change" && event.data?.operation === "create")) start = i;
+  }
+  return records.slice(start);
+}
+
+export async function goalWorkContext(root: string, contract?: Contract, records?: AuditRecord[]) {
+  const goal = contract ?? await readContractSafe(root);
+  const hash = goalHash(goal);
+  const current = currentGoalRecords(records ?? await readGoalRecords(root), hash);
+  const review = [...current].reverse().find((r): r is GoalReviewRecord => r.kind === "goal.review" && r.goalHash === hash);
+  const state = review ? verificationState(root) : null;
+  const feedback = current.filter(r => r.kind === "review.feedback" && r.reviewId === review?.id);
+  const latestFeedback = new Map(feedback.flatMap(r => r.kind === "review.feedback" ? [[r.index, r.label] as const] : []));
+  const rejected = new Set([...latestFeedback].filter(([,label]) => label === "wrong").map(([index]) => index));
+  const corrected = feedback.some(r => r.kind === "review.feedback" && (r.label === "wrong" || r.label === "missed"));
+  const unchanged = Boolean(review && state && review.tree === state && review.policy === REVIEW_POLICY);
+  const findings = review ? objectionEntries(review).filter(e => !rejected.has(e.index)).map(e => e.line) : [];
+  const end = [...current].reverse().find(r => r.kind === "goal.end" && r.goalHash === hash);
+  const verified = end?.kind === "goal.end" && end.outcome === "proved" && review?.ran && !review.unanswered?.length && !findings.length && unchanged && !corrected && end.tree === state ? end.verifiedItems ?? [] : [];
+  const since = current[0]?.ts;
+  const commands = (await readShellOutputs(root)).filter(o => !since || Date.parse(o.startedAt) >= Date.parse(since)).slice(-4).map(o => ({ command: o.command, failed: o.failed === true, recorded_at: o.ts }));
+  return {
+    verified_items: verified,
+    last_review: review ? {
+      id: review.id ?? null, recorded_at: review.ts, project_unchanged: unchanged, feedback_requires_recheck: corrected,
+      items: review.verdicts ?? [], checks: review.checks ?? [], findings,
+      unavailable: [!review.ran ? review.reason ?? "Project review did not finish" : null, ...(review.unanswered ?? []).map(id => `No clear verdict for ${id}`), review.evaluator && !review.evaluator.ran ? review.evaluator.reason ?? "Extra evaluation did not finish" : null].filter(Boolean),
+    } : null,
+    recorded_commands: commands,
+    next_steps: corrected ? ["Use the user's correction; recheck the affected work without repeating a rejected objection."]
+      : findings.length ? [unchanged ? "Address the concrete findings below within the user's current request." : "Inspect changes since the last review and recheck whether its findings still apply.", ...findings]
+      : verified.length ? ["Relevant completion checks already passed on this project state. Do not repeat them merely to restate the result."]
+      : ["Continue the requested work from the current project. Reuse relevant recorded checks while their inputs remain unchanged."],
+    guidance: "These are recorded observations, not new requirements or a substitute for the user's latest request. Old findings may be stale after edits. Do not redo completed work or rerun passing checks merely to fill in a report.",
+  };
+}
+
+export async function goalWorkMessage(root: string, contract?: Contract, records?: AuditRecord[]): Promise<string[]> {
+  const work = await goalWorkContext(root, contract, records);
+  if (!work.last_review && !work.recorded_commands.length) return [];
+  const lines = ["Work carried forward from this goal:", work.last_review ? `Last review: ${work.last_review.project_unchanged ? "same project snapshot" : "project changed; findings need rechecking"}${work.last_review.feedback_requires_recheck ? "; user corrected this review" : ""}.` : "No independent review on this goal yet.",
+    ...work.next_steps.slice(0, 5), ...work.recorded_commands.slice(-3).map(c => `Recorded ${c.failed ? "failed" : "completed"} command: ${c.command}`),
+    "Full prior checks and findings are in get_goal.work. Use relevant results; do not repeat passing checks merely to restate them."];
+  return [lines.join("\n").slice(0, 2400)];
+}

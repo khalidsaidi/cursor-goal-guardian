@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { guardContract, CODEX_TOOLS, codexGetGoal, goalBudget, goalPhaseOf, readGoalRecords, runGoalTool, type EngineToolDefinition } from "@goal-guardian/core";
+import { goalWorkContext, guardContract, CODEX_TOOLS, codexGetGoal, goalBudget, goalPhaseOf, readGoalRecords, runGoalTool, type EngineToolDefinition } from "@goal-guardian/core";
 import { readContractSafe, workspaceRoot } from "../workspace.js";
 
 /** Codex's get_goal, by its own name and description. Guardian's goal also carries the user's "done when" list. */
@@ -7,7 +7,7 @@ export function registerGetGoal(server: McpServer, theirs: EngineToolDefinition)
   server.registerTool(
     CODEX_TOOLS.get.name,
     {
-      description: `${CODEX_TOOLS.get.description}\n\nDeepSeek Harness: ${theirs.description}\n\nGuardian: the "their" field is DeepSeek's own get_goal answer, and "codex" is Codex's own, from its real handler. the goal is the user's own request, recorded word for word, with its 'done when' items and their ids. Usage and any token budget come from Codex's own goal store.`,
+      description: `${CODEX_TOOLS.get.description}\n\nDeepSeek Harness: ${theirs.description}\n\nGuardian: the "their" field is DeepSeek's own get_goal answer, and "codex" is Codex's own, from its real handler. Use goal as the authoritative view; goal.work carries prior checks, findings and next steps. Partner answers are diagnostics. The goal is the user's own request, recorded word for word, with its 'done when' items and their ids. Usage and any token budget come from Codex's own goal store.`,
       inputSchema: {},
     },
     async () => {
@@ -23,7 +23,8 @@ export function registerGetGoal(server: McpServer, theirs: EngineToolDefinition)
       const usage = stored
         ? { tokens_used: stored.tokens_used, token_budget: stored.token_budget, time_used_seconds: stored.time_used_seconds, remaining_tokens: stored.token_budget === null ? null : Math.max(stored.token_budget - stored.tokens_used, 0), budget_status: stored.status }
         : { tokens_used: records.reduce((sum, r) => sum + (r.kind === "goal.round" ? (r.tokens ?? 0) : 0), 0), token_budget: null };
-      const goal = { objective: contract.goal, done_when: contract.successCriteria, status, constraints: contract.constraints, ...usage };
+      const work = await goalWorkContext(root, contract, records);
+      const goal = { work, objective: contract.goal, done_when: contract.successCriteria, status, constraints: contract.constraints, ...usage };
       // DeepSeek Harness's own get_goal, through its tool pipeline: the id and revision its update_goal takes.
       const theirs = await runGoalTool(root, "get_goal", {});
       let their: unknown = theirs.text;

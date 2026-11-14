@@ -127,3 +127,10 @@ describe("clock and ids", () => {
     expect(typeof nowIso(systemClock)).toBe("string");
   });
 });
+
+describe("learning preferences",()=>{
+ it("preserves allowance settings while dropping retired options",()=>{
+  expect(parseConfig({schemaVersion:2,oldSetting:true,learning:{dailyCallLimit:0,callLimit:12}})).toEqual({schemaVersion:2,learning:{dailyCallLimit:0,callLimit:12}});
+  expect(()=>parseConfig({learning:{dailyCallLimit:-1}})).toThrow();
+ });
+});

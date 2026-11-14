@@ -36,9 +36,11 @@ nobody can cheaply reconstruct what the session was for.
    work. Check reuse depends on the actual project and recorded results, not report wording. A check that still cannot finish leaves completion unchecked. Disagreements between the two checks get a fresh project check
    before an objection goes back to the agent.
 4. **Learns from feedback.** RRSI searches for reviewer-prompt changes from your
-   verdicts. CGG evaluates candidates before adoption and keeps the current reviewer
+   verdicts on specific findings. A new complaint cannot stand in for a useful catch that was lost. Compatible replay results and search history are reused; stable project-specific checking guidance can be learned. CGG evaluates candidates before adoption and keeps the current reviewer
    when no candidate qualifies. Earlier real-model lab work demonstrated prompt learning
    with a tradeoff; automatic installation and use were checked separately with a reused candidate.
+
+A returning chat receives the goal with prior findings and checks; changed work is marked for rechecking. Automatic learning yields when your goal needs work and shares a rolling workspace allowance across attempts. Use **Goal Guardian → Automatic learning…** to turn it off or choose a smaller allowance. The allowance counts headless model invocations, not dollars or provider-internal turns.
 
 Guardian's own checks come first, both for sending the agent back and for accepting
 "done". DeepSeek Harness owns the goal's phase, authority checks and round admission.

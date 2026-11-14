@@ -9,6 +9,7 @@ export * from "./safeReaders.js";
 export * from "./contractStore.js";
 export * from "./audit/log.js";
 export * from "./goal/record.js";
+export * from "./goal/workContext.js";
 export * from "./goal/capture.js";
 export * from "./goal/review.js";
 export * from "./goal/evaluator.js";

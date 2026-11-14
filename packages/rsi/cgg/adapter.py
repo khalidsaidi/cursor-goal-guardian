@@ -3,8 +3,8 @@
 Harness: harness/reviewer.md, the prompt Guardian's reviewer reads when an agent says the goal is done.
 Tasks: the workspace's labelled review cases, listed by Guardian in data/tasks.json with their split
 (evolve or held out, by a stable hash of the case id). Running a task replays that review with the candidate
-prompt through Guardian's own binary; a task's reward is 1.0 when the replay agrees with the case's verdict:
-it flags a case it was right to object to, and passes one it was wrong to object to.
+prompt through Guardian's own binary. Rewards compare the specific findings judged by the user:
+retain each useful catch and remove each rejected complaint. Other genuine defects may coexist.
 
 Environment, set by Guardian when it starts RRSI:
   CGG_WORKSPACE   the project whose cases these are
@@ -27,6 +27,8 @@ from rrsi.domain import Domain          # noqa: E402
 from rrsi.evaluate import TaskResult    # noqa: E402
 import briefs                            # noqa: E402
 import cursor_llm                        # noqa: E402
+import feedback                          # noqa: E402
+import replay_cache                      # noqa: E402
 from model_budget import reserve_call     # noqa: E402
 
 cursor_llm.install()
@@ -47,7 +49,7 @@ TASKS = _tasks()
 
 
 def _leak_patterns() -> list:
-    """Words specific to these cases (identifiers and file names) must not appear in a general prompt."""
+    """Saved-case identities must not become memorized answer exceptions."""
     p = DATA / "leak_terms.json"
     terms = json.loads(p.read_text()) if p.exists() else []
     out = []
@@ -98,16 +100,21 @@ class CggDomain(Domain):
         t = TASKS[tid]
         prompt_file = self.harness_dir(root) / "reviewer.md"
         cmd = json.loads(os.environ["CGG_REPLAY"]) + [os.environ["CGG_WORKSPACE"], t["case"], str(prompt_file)]
-        rec = {"flagged": None}
+        cache = replay_cache.entry(t, prompt_file)
+        rec = replay_cache.load(cache)
         try:
-            reserve_call()
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=REPLAY_TIMEOUT_S)
-            rec = json.loads(r.stdout.strip().splitlines()[-1])
-            if not rec.get("ran"):
-                rec["flagged"] = None
-        except Exception as e:  # noqa: BLE001 - a replay that can't run is a missing trial
+            if rec is None:
+                reserve_call()
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=REPLAY_TIMEOUT_S)
+                rec = json.loads(r.stdout.strip().splitlines()[-1])
+                if not rec.get("ran"):
+                    rec["flagged"] = None
+                replay_cache.save(cache, rec)
+            if rec.get("ran") and isinstance(rec.get("flagged"), bool) and not rec.get("unanswered") and t.get("feedback"):
+                rec["feedback_matches"] = feedback.matches(t, rec)
+        except Exception as e:
             rec = {"flagged": None, "reason": str(e)[:300]}
-        rec.update({"task_id": tid, "label": t["label"], "trial": trial})
+        rec.update({"task_id": tid, "label": t["label"], "trial": trial, "feedback": t.get("feedback", [])})
         out.write_text(json.dumps(rec, indent=1))
 
     def run(self, root, runs_dir, job, ids, k, log_prefix=""):
@@ -132,11 +139,16 @@ class CggDomain(Domain):
                     missing += 1
                     rewards.append(0.0)
                     continue
-                rewards.append(right(label, r["flagged"]))
+                judged = feedback.satisfaction(TASKS[t], r) if TASKS[t].get("feedback") else right(label, r["flagged"])
+                if judged is None:
+                    missing += 1
+                    rewards.append(0.0)
+                    continue
+                rewards.append(judged)
                 counts[label] += 1
                 if r["flagged"]:
                     counts["right_caught" if label == "right" else "wrong_flagged"] += 1
-            per[t] = TaskResult(rewards=rewards, weights=[WEIGHT[label]] * k, missing=missing, extra={"label": label})
+            per[t] = TaskResult(rewards=rewards, weights=[WEIGHT[label]] * k, tokens=[(self._rec(runs_dir, job, t, i) or {}).get("tokens") for i in range(k)], missing=missing, extra={"label": label})
         return per, counts
 
     # ---- evidence ----------------------------------------------------------
@@ -149,8 +161,10 @@ class CggDomain(Domain):
         lab = rec["label"]
         want = "should be flagged: people agreed the work had a gap" if lab == "right" else \
             "should NOT be flagged: people overruled the objection"
+        if rec.get("feedback"):
+            want = "specific feedback targets=" + json.dumps(rec["feedback"]) + " | matched=" + json.dumps(rec.get("feedback_matches"))
         lines = [f"case {rec['task_id']} | {want}",
-                 f"reviewer flagged={rec.get('flagged')} | right={right(lab, rec.get('flagged')) == 1.0}"]
+                 f"reviewer flagged={rec.get('flagged')} | satisfaction={feedback.satisfaction({'feedback': rec['feedback']}, rec) if rec.get('feedback') else right(lab, rec.get('flagged'))}"]
         for f in rec.get("fails") or []:
             lines.append(f"  item {f.get('id')} judged FAILS: {f.get('evidence')}")
         for x in rec.get("extra") or []:
