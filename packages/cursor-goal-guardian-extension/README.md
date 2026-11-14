@@ -230,8 +230,9 @@ runs and what is adapted.
 
 - [OpenAI Codex](https://github.com/openai/codex)'s goal package (Apache-2.0) and
   [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)'s goal packages (MIT)
-  each hold a copy of the goal, can refuse a change, and supply most of the instructions
-  the agent is sent.
+  supply complementary goal support: DeepSeek owns goal status, authority checks and
+  rounds; Codex supplies usage budgets and continuation instructions. Status changes
+  notify Codex without a second approval. Both supply instructions the agent is sent.
 - The evaluator is [Google's Agent Development Kit](https://github.com/google/adk-python)
   (Apache-2.0).
 - The reviewer's prompt is retuned with [RRSI](https://github.com/google-research/rrsi) by

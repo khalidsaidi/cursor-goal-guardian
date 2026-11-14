@@ -41,15 +41,17 @@ nobody can cheaply reconstruct what the session was for.
    with a tradeoff; automatic installation and use were checked separately with a reused candidate.
 
 Guardian's own checks come first, both for sending the agent back and for accepting
-"done". Codex's and DeepSeek Harness's code is then asked: each is consulted on every round,
-and each can refuse a change. The goal's phase (active, paused, complete) is read from
-DeepSeek Harness's own record; the goal's words and "done when" items are in Guardian's file.
+"done". DeepSeek Harness owns the goal's phase, authority checks and round admission.
+Codex maintains usage and token budgets and supplies continuation instructions. Accepted
+phase changes are copied into Codex's store without a second status approval; Codex's
+usage and budget limits remain independent reasons to stop. The goal's words and
+"done when" items live in Guardian's file.
 
 ## Other people's code, used as they wrote it
 
 | Code | What it does here | What is adapted |
 |---|---|---|
-| [OpenAI Codex](https://github.com/openai/codex)'s goal package (Apache-2.0), at `ac54a05`, through `packages/codex-goals` | Holds a copy of the goal, can refuse a change, is asked whether to continue each round, and supplies the continuation instructions, usage accounting and an optional token budget | Its continuation turn is produced in a thread started with Codex's own test support, with a local capture server in place of a model, and read back |
+| [OpenAI Codex](https://github.com/openai/codex)'s goal package (Apache-2.0), at `ac54a05`, through `packages/codex-goals` | Holds an accounting copy of the goal, supplies continuation instructions and goal-change context, and enforces usage accounting and an optional token budget; DeepSeek owns ordinary phase changes | Its continuation turn is produced in a thread started with Codex's own test support, with a local capture server in place of a model, and read back |
 | [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)'s four goal packages (MIT), published npm build 0.2.2-rc.1 | Holds a copy of the goal's phase, revision and rounds, can refuse a change, its round driver is asked about each round, and it supplies the round prompt and closing instructions | One line inlined at build time; a `Promise.withResolvers` polyfill; a stand-in agent; Guardian re-arms its goal once per stop and writes its round-limit block itself |
 | [Google ADK](https://github.com/google/adk-python)'s rubric evaluator (Apache-2.0), at `c0bcdaa` | Judges Guardian's record of the run, plus evidence Guardian adds from the project, against your "done when" items and one rubric of Guardian's about unrequested work | The judge is your Cursor model, with one line of Guardian's telling it not to delegate |
 | [RRSI](https://github.com/google-research/rrsi) by Google Research (Apache-2.0), at `be50316` | Searches for a better reviewer prompt from this workspace's labelled reviews | Its model calls go to your Cursor model |
@@ -63,10 +65,10 @@ what runs and what is adapted.
 
 | Shown as | Meaning |
 |---|---|
-| proved | The reviewer and the evaluator both checked every requested item and neither objects, and Codex's and DeepSeek Harness's code both accepted |
+| proved | The reviewer and the evaluator both checked every requested item and neither objects, DeepSeek accepted completion, and Codex's accounting copy was synchronized |
 | unchecked | Accepted, but the reviewer or the evaluator didn't run or didn't answer for an item |
 | disputed | A concrete review objection remains unresolved |
-| unverified | Codex's or DeepSeek Harness's code didn't run, or their copies of the goal disagree |
+| unverified | Codex's or DeepSeek Harness's code didn't run, or Codex's accounting copy couldn't synchronize |
 | blocked | The agent reported an obstacle. On the first turn this is at the agent's word and shown as "blocked (unverified)" |
 | stalled, limit, stopped | Three rounds with nothing changed; Cursor's 20 follow-ups per message or DeepSeek Harness's 256 rounds per goal; a cancelled or failed turn |
 | set aside | Your latest message asked for only part of the goal or for something else |

@@ -100,7 +100,7 @@ describe("the goal keepers' own code decides", () => {
     expect(fs.existsSync(lock)).toBe(false);
   });
 
-  it("a goal is proved in the report both accept, and only there: both checks clean, Codex's handler and DeepSeek's tool each saying yes", async () => {
+  it("a goal is proved after both independent checks, DeepSeek completion and Codex synchronization", async () => {
     const root = await repo();
     await work(root);
     const answer = await submitGoalReport(root, report);
@@ -108,7 +108,7 @@ describe("the goal keepers' own code decides", () => {
     // What the agent is told to do next is DeepSeek's own wrap-up, from its tool; Codex's answer is beside it.
     expect(answer.message).toContain("<goal_complete>");
     expect(answer.message).toContain("Independent verification completed: Reviewer: ran; evaluator: ran");
-    expect(answer.codex).toMatchObject({ goal: { status: "complete" } });
+    expect(answer.codex).toMatchObject({ notified: "complete" });
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "proved", proved: expect.arrayContaining([{ criterion: "goal", command: "make test", recordedAt: expect.any(String) }]) }]);
     expect((await engineGoal(root))?.phase).toBe("complete");
     expect(await stop(root)).toBeNull();
@@ -123,7 +123,7 @@ describe("the goal keepers' own code decides", () => {
     expect(answer).toMatchObject({ accepted: false, outcome: "unverified", refusedBy: "codex" });
     expect(answer.message).toContain("Codex's goal program isn't installed");
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "unverified", by: "codex", reason: "Codex's goal program isn't installed" }]);
-    expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "complete", by: "codex" }]);
+    expect(await kinds(root, "goal.refused")).toEqual([]); // unavailable accounting is not a competing phase refusal
     // DeepSeek's tool was never asked to complete anything, and the goal stays open.
     expect((await engineGoal(root))?.phase).toBe("active");
     expect(await phase(root)).toBe("active");

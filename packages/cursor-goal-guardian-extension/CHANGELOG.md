@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Give the goal engines complementary roles: DeepSeek owns phase/round authority; Codex supplies budgets and continuation instructions. State changes notify Codex without duplicate approvals or rollback.
+
 Built and run on Linux x64 only so far.
 
 ### Completion verification

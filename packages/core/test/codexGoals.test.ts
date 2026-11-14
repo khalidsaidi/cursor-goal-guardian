@@ -143,8 +143,8 @@ describe("Codex's goal store beside the goal loop", () => {
     // (Guardian looks, then sets). The stop only accounts; it never creates a goal in Codex's store.
     const first = await stop(root, 400);
     // ... and the goal reaches both goal keepers before the round, which tells this store-only build once more.
-    expect(store.log().map((r) => r.op)).toEqual(["get", "set", "account", "set"]);
-    expect(store.log()[2]).toMatchObject({ op: "account", tokens: 400 });
+    expect(store.log().map((r) => r.op)).toEqual(["get", "set", "get", "account", "set"]);
+    expect(store.log().find(r=>r.op === "account")).toMatchObject({ op: "account", tokens: 400 });
     expect(first).toContain("- Tokens used: 400\n- Token budget: none\n- Tokens remaining: unbounded");
     expect((await setGoalBudget(root, 1000)).goal).toMatchObject({ token_budget: 1000, tokens_used: 400, status: "active" });
     await fsp.writeFile(path.join(root, "a.js"), "more\n");

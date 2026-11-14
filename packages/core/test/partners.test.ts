@@ -52,6 +52,8 @@ const fs = require("fs");
 const req = JSON.parse(fs.readFileSync(0, "utf8"));
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(req) + "\\n");
 const s = JSON.parse(fs.readFileSync(${JSON.stringify(settings)}, "utf8"));
+if (req.op === "status" && s.failStatus) { process.stdout.write(JSON.stringify({ok:false,error:"accounting notification unavailable"}) + "\\n"); process.exit(0); }
+if (req.op === "status") { s.status = req.status; fs.writeFileSync(${JSON.stringify(settings)}, JSON.stringify(s)); }
 const goal = { goal_id: "g1", objective: "Add CSV export", status: s.status || "active", token_budget: null, tokens_used: 450, time_used_seconds: 12, created_at_ms: 1, updated_at_ms: 2 };
 const events = { goal_updated: [], warnings: [] };
 let out = { ok: false, error: "unknown op " + req.op };
@@ -95,7 +97,7 @@ const noReviewer = (): void => {
   process.env.GOAL_GUARDIAN_REVIEWER = "/nonexistent/reviewer";
 };
 
-describe("two goal keepers side by side", () => {
+describe("complementary goal keepers", () => {
   it("a send-back carries DeepSeek's round prompt and Codex's own continuation", async () => {
     noReviewer();
     const codex = await fakeCodex();
@@ -112,60 +114,93 @@ describe("two goal keepers side by side", () => {
     expect(await kinds(root, "goal.partners")).toMatchObject([{ codex: { ran: true, continues: true } }]);
   }, 30_000);
 
-  it("the goal is complete when Codex's handler and DeepSeek's tool both accept", async () => {
+  it("DeepSeek completes the goal and Codex receives its status without a second approval", async () => {
     noReviewer();
     const codex = await fakeCodex();
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
     await doneWork(root);
-    // The report itself is where both are asked: Codex's handler, then DeepSeek's tool. Both said yes, so the goal
-    // is complete at once. The reviewer wasn't there to check it, so it is recorded as unchecked, not proved.
+    // DeepSeek commits the phase; Codex is notified. Missing reviewers still leave completion unchecked.
     expect(await finishReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
-    expect(codex.log().filter((r) => r.op === "tool")).toMatchObject([{ name: "update_goal", arguments: { status: "complete" } }]);
+    expect(codex.log().filter((r) => r.op === "tool")).toEqual([]);
+    expect(codex.log()).toContainEqual({ op: "status", status: "complete" });
     expect((await engineGoal(root))?.phase).toBe("complete");
     expect(await kinds(root, "goal.refused")).toEqual([]);
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "unchecked", skipped: [expect.stringContaining("the reviewer didn't run")] }]);
     expect(await stop(root)).toBeNull();
   }, 30_000);
 
-  it("when one accepts and another refuses, the change doesn't happen and the record says who refused", async () => {
+  it("Codex's status-tool restrictions do not veto DeepSeek's completion, pause or block", async () => {
     noReviewer();
     const codex = await fakeCodex();
-    codex.set({ refuse: { "update_goal:complete": "Codex says no: the goal isn't complete" } });
+    codex.set({ refuse: { update_goal: "a second approval should never be requested" } });
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
     await doneWork(root);
-    // Codex's refusal is the answer the agent gets, and nothing is completed or recorded as ended.
-    expect(await finishReport(root, report)).toMatchObject({ accepted: false, refusedBy: "codex", message: "Not completed: Codex says no: the goal isn't complete" });
-    expect(await stop(root)).toContain("Call update_goal again");
-    expect(await kinds(root, "goal.end")).toEqual([]);
-    expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "complete", by: "codex", message: "Codex says no: the goal isn't complete" }]);
-    // Codex was asked first and refused, so DeepSeek's service was never asked to complete anything.
-    expect((await engineGoal(root))?.phase).not.toBe("complete");
-    expect(goalPhaseOf(await readGoalRecords(root), await readContractSafe(root))).toBe("active");
-    // The agent's "blocked": DeepSeek's tool accepts it in a turn the user's message opened, Codex's refuses, so
-    // DeepSeek's block is taken back.
-    codex.set({ refuse: { "update_goal:blocked": "Codex says no to blocked" } });
-    const other = await workspace();
-    await doneWork(other);
-    const answer = await finishReport(other, { status: "blocked", proofs: [], changes: [], reason: "no network" });
-    expect(answer).toMatchObject({ accepted: false, refusedBy: "codex", message: "Codex says no to blocked" });
-    expect((await engineGoal(other))?.phase).toBe("active");
-    expect(await kinds(other, "goal.refused")).toMatchObject([{ change: "blocked", by: "codex" }]);
+    expect(await finishReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
+    expect((await engineGoal(root))?.phase).toBe("complete");
+    const blocked = await workspace();
+    await doneWork(blocked);
+    expect(await finishReport(blocked, { status: "blocked", proofs: [], changes: [], reason: "no network" })).toMatchObject({ accepted: true });
+    expect((await engineGoal(blocked))?.phase).toBe("blocked");
+    const paused = await workspace();
+    await doneWork(paused);
+    await recordUserPrompt(paused, "pause this goal", "c1", "agent");
+    expect(await finishReport(paused, { status: "paused", proofs: [], changes: [], userWords: "pause this goal" })).toMatchObject({ accepted: true });
+    expect((await engineGoal(paused))?.phase).toBe("paused");
+    expect(codex.log().filter(r => r.op === "tool")).toEqual([]);
   }, 30_000);
 
-  it("if Codex's goal is stopped while DeepSeek's is active, the two disagree: the run ends unverified and the agent is told", async () => {
+  it("DeepSeek's refusal leaves the phase and Codex mirror unchanged", async () => {
     noReviewer();
     const codex = await fakeCodex();
     process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
     const root = await workspace();
     await doneWork(root);
-    codex.set({ continue: false, status: "paused" });
-    const said = await stop(root);
-    expect(said).toContain("Codex's scheduling started no continuation: its goal is paused while DeepSeek's is active");
-    expect(said).toContain("can't keep this goal going or record it as proved");
-    expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "unverified", by: "codex", reason: "Codex's scheduling started no continuation: its goal is paused while DeepSeek's is active" }]);
-    expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "continue", by: "codex" }]);
+    await stop(root);
+    const offset=codex.log().length;
+    expect(await finishReport(root, { status: "blocked", proofs: [], changes: [], reason: "need a tool" })).toMatchObject({ accepted: false, refusedBy: "deepseek" });
+    expect((await engineGoal(root))?.phase).toBe("active");
+    expect(codex.log().slice(offset).some(r => r.op === "status" && r.status === "blocked")).toBe(false);
+  }, 30_000);
+
+  it("a failed accounting notification leaves completion unverified without undoing DeepSeek's decision", async () => {
+    noReviewer();
+    const codex=await fakeCodex();
+    process.env.GOAL_GUARDIAN_CODEX_GOALS=codex.file;
+    const root=await workspace();
+    await doneWork(root);
+    codex.set({failStatus:true});
+    expect(await finishReport(root,report)).toMatchObject({accepted:false,outcome:"unverified",refusedBy:"codex"});
+    expect((await engineGoal(root))?.phase).toBe("complete");
+    expect(await kinds(root,"goal.end")).toMatchObject([{outcome:"unverified",by:"codex"}]);
+    expect(codex.log().filter(r=>r.op === "tool")).toEqual([]);
+  },30_000);
+
+  it("a stale Codex phase is synchronized without overruling DeepSeek's active goal", async () => {
+    noReviewer();
+    const codex = await fakeCodex();
+    process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
+    const root = await workspace();
+    await doneWork(root);
+    codex.set({ status: "paused" });
+    expect(await stop(root)).toContain("CODEX SAYS");
+    expect(codex.log()).toContainEqual({ op: "status", status: "active" });
+    expect((await engineGoal(root))?.phase).toBe("active");
+    expect(await kinds(root, "goal.end")).toEqual([]);
+  }, 30_000);
+
+  it("Codex's usage limit still stops DeepSeek's next round", async () => {
+    noReviewer();
+    const codex=await fakeCodex();
+    process.env.GOAL_GUARDIAN_CODEX_GOALS=codex.file;
+    const root=await workspace();
+    await doneWork(root);
+    codex.set({ status: "usage_limited", continue: false });
+    expect(await stop(root)).toContain("usage_limited");
+    expect((await engineGoal(root))?.phase).toBe("blocked");
+    expect(await kinds(root,"goal.end")).toMatchObject([{ outcome: "budget_limited", by: "codex" }]);
+    expect(codex.log().some(r=>r.op === "status" && r.status === "active")).toBe(false);
   }, 30_000);
 
   it("a user's goal change goes through Codex's GoalService, and the agent is shown Codex's own words for it", async () => {
@@ -203,16 +238,17 @@ describe("two goal keepers side by side", () => {
     expect(await runGoalStop(root, { conversationId: "c1", status: "completed", loopCount: 0 })).toContain("<goal_round>");
   });
 
-  it("create_goal asks Codex's own handler first; its refusal means no goal is created", async () => {
-    const codex = await fakeCodex();
-    codex.set({ refuse: { create_goal: "cannot create a new goal because this thread has an unfinished goal" } });
-    process.env.GOAL_GUARDIAN_CODEX_GOALS = codex.file;
-    const root = await workspace("");
-    await recordUserPrompt(root, "Add CSV export", "c1", "agent");
-    const out = await createGoalByTool(root, "Add CSV export");
-    expect(out.isError).toBe(true);
-    expect(out.text).toContain("unfinished goal");
-    expect(await engineGoal(root)).toBeNull();
-    expect(await kinds(root, "goal.refused")).toMatchObject([{ change: "create", by: "codex" }]);
+  it("DeepSeek owns creation even when Codex's create handler would refuse", async () => {
+    const codex=await fakeCodex();
+    codex.set({ refuse: { create_goal: "stale Codex phase" } });
+    process.env.GOAL_GUARDIAN_CODEX_GOALS=codex.file;
+    const root=await workspace("");
+    await recordUserPrompt(root,"Add CSV export","c1","agent");
+    expect((await createGoalByTool(root,"Add CSV export")).isError).toBe(false);
+    expect((await engineGoal(root))?.phase).toBe("active");
+    expect(codex.log().filter(r=>r.op === "tool")).toEqual([]);
+    expect(codex.log().some(r=>r.op === "user_goal" && r.objective === "Add CSV export")).toBe(true);
+    // DeepSeek still refuses replacing its unfinished goal.
+    expect((await createGoalByTool(root,"Add CSV export")).isError).toBe(true);
   }, 30_000);
 });

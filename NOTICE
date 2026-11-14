@@ -88,12 +88,14 @@ Codex's own goal package (its goal extension and goal store at ac54a05,
 Apache-2.0) runs unmodified beside Guardian's goal file and DeepSeek
 Harness's packages: it is fetched from Codex's repository at build time and
 linked into packages/codex-goals, and none of it is copied here. Guardian runs
-its tool handlers and tool definitions, its turn accounting and token budget,
+its get_goal handler and tool definitions, its turn accounting and token budget,
 its handling of a goal the user changes, and its own decision and prompt for
-continuing. Its store holds a copy of the goal, its handlers can refuse a
-change, and its "complete" is a status change that judges nothing. What is
+continuing. Its store holds an accounting copy of the goal; DeepSeek owns ordinary
+phase changes and Codex receives notifications without a second create/update
+approval. Codex retains its usage and budget stops. Its "complete" is a status
+change that judges nothing. What is
 adapted: Codex produces its continuation turn in a thread started with Codex's
 own test support, whose model endpoint is a local capture server, and Guardian
 reads that request back, because only Cursor's stop hook can start the agent's
 next turn. A goal is recorded as complete only when Guardian's own checks pass
-and Codex's handler and DeepSeek Harness's tool both accept it.
+and DeepSeek Harness's tool accepts it and Codex's accounting copy is synchronized.

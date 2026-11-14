@@ -17,7 +17,7 @@ import { CLOSING, goalBlock, goalBudgetLimitMessage, goalChangedMessage, goalClo
 import { budgetOf, codexGoals, codexTool, codexTurn, resolveCodexGoals, type CodexGoal, type CodexGoalAnswer, type CodexToolAnswer, type CodexUsage } from "./codexGoals.js";
 import { reviewEvidence } from "./evidence.js";
 import { verificationState } from "./verificationState.js";
-import { codexAgentTool, codexContinuationTurn, codexNotice, codexSaid, codexUserFragment, codexUserSet, codexUserStatus, recordRefusal } from "./partners.js";
+import { codexContinuationTurn, codexNotice, codexSaid, codexUserFragment, codexUserSet, codexUserStatus, recordRefusal } from "./partners.js";
 import { BLOCKED_AFTER_CONSECUTIVE_ROUNDS, CODEX_TOOLS, ROUND_LIMIT_CODE, deepseekBlockThreshold } from "./originals.js";
 import { captureGoal, parseRequest } from "./capture.js";
 import { writeContract } from "../contractStore.js";
@@ -201,7 +201,7 @@ async function engine(root: string, contract: Pick<Contract, "goal" | "successCr
 async function engineTry(root: string, contract: Pick<Contract, "goal" | "successCriteria">, op: EngineOp, objective = contract.goal, mirror = true): Promise<{ ok: true; result: EngineResult } | { ok: false; message: string }> {
   try {
     const result = await engineRun(root, objective, legacyGoalPhase(await readGoalRecords(root), contract), op);
-    // A change the agent asked for reaches Codex through Codex's own update_goal handler (bothTools), not this mirror.
+    // Agent state changes are mirrored explicitly after DeepSeek accepts them.
     if (mirror && !("by" in op && op.by === "agent")) await tellCodexStore(root, objective, op);
     return { ok: true, result };
   } catch (err) {
@@ -246,18 +246,21 @@ export async function runGoalCommand(root: string, input: string): Promise<{ kin
  * After one of their tools or their /goal command changed the objective, the contract (the home of the goal's
  * words and its "done when" items) follows their log: a new objective replaces the goal, a cleared one empties it.
  */
-async function contractFollowsEngine(root: string, items: string[] = []): Promise<void> {
+async function contractFollowsEngine(root: string, items: string[] = [], codexOp: EngineOp = { type: "sync" }): Promise<void> {
   const contract = await readContractSafe(root);
   const view = engineView(await readGoalRecords(root));
   if (view === undefined) return;
   const objective = view?.objective ?? "";
-  if (objective === contract.goal.trim()) return;
+  if (objective === contract.goal.trim()) {
+    if (codexOp.type === "create") await tellCodexStore(root, objective, codexOp);
+    return;
+  }
   const saved = await writeContract(root, { ...contract, goal: objective, successCriteria: criteriaFromTexts(items) });
   if (objective) {
     const conversationId = reportingChat(await readAuditTail(root, TAPE_WINDOW));
     await appendAudit(root, { ts: nowIso(), kind: "goal.set", goalHash: goalHash(saved), ...(conversationId ? { conversationId } : {}) });
   }
-  await tellCodexStore(root, objective, { type: "sync" });
+  await tellCodexStore(root, objective, codexOp);
 }
 
 const parseJson = (text: string): unknown => {
@@ -285,24 +288,15 @@ export async function createGoalByTool(root: string, objective: string, maxGoalR
   const prompts = await readUserPrompts(root);
   if (prompts && !userSaidLatest(objective, prompts)) return { isError: true, text: `Not created: ${NOT_THE_USERS}`, contexts: [] };
   const { goal, items } = parseRequest(prompts?.at(-1) ?? objective);
-  const hash = goalHash(await readContractSafe(root));
-  // Codex's own create_goal handler is asked first: like DeepSeek's, it refuses while an unfinished goal exists. The
-  // goal is created only if both accept; if DeepSeek's then refuses, Codex's new goal is taken back.
-  const asked = await codexToolOrMissing(root, "create_goal", { objective: goal });
-  const codex = asked.answer;
-  if (codex && !codex.accepted) {
-    await recordRefusal(root, hash, "create", "codex", codex.refusal ?? "Codex's create_goal refused");
-    return { isError: true, text: JSON.stringify({ refused_by: "codex", codex: codexSaid(codex) }), contexts: [] };
-  }
+  // DeepSeek owns creation and its unfinished-goal/authority rules. Codex receives the accepted objective
+  // through its GoalService so its budget ledger and continuation context follow the same goal.
   const out = await runGoalTool(root, "create_goal", { objective: goal, ...(maxGoalRounds ? { max_goal_rounds: maxGoalRounds } : {}) });
   if (out.isError) {
-    if (codex) await codexGoals(root, { op: "clear" });
-    await recordRefusal(root, hash, "create", "deepseek", out.text);
+    await recordRefusal(root, goalHash(await readContractSafe(root)), "create", "deepseek", out.text);
     return out;
   }
-  await contractFollowsEngine(root, items);
-  // A goal keeper that didn't answer is named, never passed over.
-  return { ...out, text: JSON.stringify({ their: parseJson(out.text), codex: codex ? codexSaid(codex) : { did_not_run: asked.missing } }) };
+  await contractFollowsEngine(root, items, { type: "create" });
+  return out;
 }
 
 /** Their update_goal actions that Guardian's report path doesn't cover: edit (the user's new words) and resume. */
@@ -409,6 +403,12 @@ export async function setGoalBudget(root: string, tokenBudget: number | null): P
 /** This turn's tokens and seconds go to Codex's store; its answer says where the budget stands. */
 async function accountTurn(root: string, seq: Sequence, conversationId: string, tokens: number | undefined, split?: CodexUsage): Promise<CodexGoal | null> {
   if (!resolveCodexGoals()) return null;
+  // A stale phase copy must not become a second authority or cause this turn's usage to be skipped.
+  // Never re-create a missing ledger, and never override Codex's own usage/budget stop.
+  const ledger = await codexGoals(root, { op: "get" });
+  if (ledger.ran && ledger.goal && ["paused", "blocked", "complete"].includes(ledger.goal.status)) {
+    await codexGoals(root, { op: "status", status: "active" });
+  }
   const starts = seq.records.filter((r) => (r.kind === "user.message" || r.kind === "goal.round") && r.conversationId === conversationId).map((r) => Date.parse(r.ts));
   const seconds = starts.length ? Math.max(0, Math.round((Date.now() - Math.max(...starts)) / 1000)) : 0;
   // Codex's own turn accounting (turn start, token usage, turn stop) where its extension is installed: it works out
@@ -421,17 +421,12 @@ async function accountTurn(root: string, seq: Sequence, conversationId: string, 
   return first.goal;
 }
 
-/**
- * Codex's store and DeepSeek's log must be holding the same open goal before either is asked to accept a change.
- * Null when they agree; otherwise what Codex's store says. Guardian does not repair this itself: only a message from
- * the user (or their own change of the goal) puts the goal into Codex's store again.
- */
-async function codexDisagrees(root: string): Promise<string | null> {
-  if (!resolveCodexGoals()) return null;
+/** A missing accounting ledger cannot support verified completion. State authority stays with DeepSeek. */
+async function codexLedgerIssue(root: string): Promise<string | null> {
+  if (!resolveCodexGoals()) return "Codex's goal program isn't installed";
   const held = await codexGoals(root, { op: "get" });
-  if (!held.ran) return null; // not running is reported where its handler is asked
+  if (!held.ran) return held.reason ?? "Codex's accounting ledger didn't answer";
   if (!held.goal) return "Codex's goal store holds no goal while DeepSeek's log has an open one";
-  if (held.goal.status === "paused" || held.goal.status === "blocked") return `Codex's goal is ${held.goal.status} while DeepSeek's is active`;
   return null;
 }
 
@@ -442,69 +437,40 @@ async function codexToolOrMissing(root: string, name: "get_goal" | "create_goal"
   return out.ran ? { answer: out, missing: null } : { answer: null, missing: `Codex's goal program didn't answer${out.reason ? `: ${out.reason}` : ""}` };
 }
 
-type BothAnswer =
+type StateChangeAnswer =
   | { ok: true; result: EngineResult; codex: unknown }
-  /** `missing`: that goal keeper's code didn't run at all, which is not a refusal by its rules. */
   | { ok: false; by: "deepseek" | "codex"; message: string; missing?: true };
 
-/**
- * A change the agent asked for through update_goal goes to both projects' own tools: DeepSeek's (through its tool
- * pipeline, with its authority checks) and Codex's (its real handler). It happens only if both accept. The one
- * likelier to refuse is asked first, and if the second refuses, the first is put back: DeepSeek's `complete` can't
- * be undone, so Codex goes first there; its `blocked` and `paused` can (their resume), so DeepSeek goes first.
- *
- * A goal is completed only by both having answered yes: if either one's code can't run, nothing is completed and the
- * answer says which. For `blocked` and `paused`, a Codex that didn't run is named in the answer and its store told.
- */
-async function bothTools(
+/** DeepSeek decides state changes; Codex is notified to keep accounting/continuation on that state. */
+async function changeGoalState(
   root: string,
   contract: Pick<Contract, "goal" | "successCriteria">,
   op: Extract<EngineOp, { type: "pause" | "complete" | "block" }>,
   conversationId?: string,
-): Promise<BothAnswer> {
-  const hash = goalHash(contract);
+): Promise<StateChangeAnswer> {
   const status = op.type === "pause" ? "paused" : op.type === "complete" ? "complete" : "blocked";
-  // Both must be holding the goal the contract holds before either is asked about it (a goal typed into the
-  // contract or the panel reaches them here, through their own create and edit). What they refuse shows up below.
-  // Only DeepSeek's is brought in line with the contract here: Codex's store is never re-created on the way to asking it.
   await engineTry(root, contract, { type: "sync" }, contract.goal, false).catch(() => undefined);
-  const refuse = async (by: "deepseek" | "codex", message: string, missing = false): Promise<BothAnswer> => {
-    await recordRefusal(root, hash, status, by, message, conversationId);
-    return { ok: false, by, message, ...(missing ? { missing: true as const } : {}) };
-  };
-  // Their refusal comes back as words; their code not running at all (it can't be loaded, say) is thrown.
-  const theirs = async (): Promise<{ ok: true; result: EngineResult } | { ok: false; message: string; missing?: true }> => {
-    try {
-      return await engineTry(root, contract, { ...op, by: "agent" }, contract.goal, false);
-    } catch (err) {
-      return { ok: false, missing: true, message: `DeepSeek's goal code didn't run: ${err instanceof Error ? err.message : String(err)}` };
-    }
-  };
+  // Completion still needs a working accounting integration, not a second opinion on the phase.
   if (op.type === "complete") {
-    const apart = await codexDisagrees(root);
-    if (apart) return refuse("codex", apart, true);
-    const codex = await codexToolOrMissing(root, "update_goal", { status });
-    if (codex.answer === null) return refuse("codex", codex.missing, true);
-    if (!codex.answer.accepted) return refuse("codex", codex.answer.refusal ?? "Codex's update_goal refused");
-    const ds = await theirs();
-    if (!ds.ok) {
-      await codexGoals(root, { op: "status", status: "active" });
-      return refuse("deepseek", ds.message, ds.missing === true);
-    }
-    return { ok: true, result: ds.result, codex: codexSaid(codex.answer) };
+    const issue = await codexLedgerIssue(root);
+    if (issue) return { ok: false, by: "codex", missing: true, message: issue };
   }
-  const ds = await theirs();
-  if (!ds.ok) return refuse("deepseek", ds.message, ds.missing === true);
-  const codex = await codexToolOrMissing(root, "update_goal", { status });
-  if (codex.answer === null) {
-    await tellCodexStore(root, contract.goal, op);
-    return { ok: true, result: ds.result, codex: { did_not_run: codex.missing } };
+  let accepted: Awaited<ReturnType<typeof engineTry>>;
+  try { accepted = await engineTry(root, contract, { ...op, by: "agent" }, contract.goal, false); }
+  catch (err) {
+    return { ok: false, by: "deepseek", missing: true, message: `DeepSeek's goal code didn't run: ${err instanceof Error ? err.message : String(err)}` };
   }
-  if (!codex.answer.accepted) {
-    await engine(root, contract, { type: "resume" }, contract.goal, false);
-    return refuse("codex", codex.answer.refusal ?? "Codex's update_goal refused");
+  if (!accepted.ok) {
+    await recordRefusal(root, goalHash(contract), status, "deepseek", accepted.message, conversationId);
+    return { ok: false, by: "deepseek", message: accepted.message };
   }
-  return { ok: true, result: ds.result, codex: codexSaid(codex.answer) };
+  const mirrored = await codexGoals(root, { op: "status", status });
+  if (!mirrored.ran || !mirrored.goal || mirrored.goal.status !== status) {
+    const message = mirrored.reason ?? `Codex's accounting copy did not record ${status}`;
+    if (op.type === "complete") return { ok: false, by: "codex", missing: true, message };
+    return { ok: true, result: accepted.result, codex: { did_not_run: message } };
+  }
+  return { ok: true, result: accepted.result, codex: { notified: status } };
 }
 
 /** Record a goal in DeepSeek's service: a new one, or the open one with the user's new words. False when refused. */
@@ -580,7 +546,7 @@ export interface GoalReportAnswer {
   unclaimed: string[];
   /** The result of DeepSeek's own tool, where the call reached it. */
   their?: string;
-  /** What Codex's own update_goal handler answered, where the call reached it. */
+  /** Codex accounting synchronization result; it is not a second phase approval. */
   codex?: unknown;
   /** Which of the goal keepers refused the change, when one did. */
   refusedBy?: string;
@@ -670,14 +636,14 @@ async function submitGoalReportLocked(root: string, input: GoalReportInput, opts
     return { accepted: true, ...none, message: CLOSING.setAside };
   }
   if (input.status === "paused") {
-    // Codex's update_goal lets the agent pause only at the user's explicit request; Guardian asks to see the request.
+    // Guardian requires the user's explicit request before DeepSeek may pause the goal.
     const prompts = await readUserPrompts(root);
     if (!prompts || !userAsked(input.userWords, prompts, goalWords(contract))) {
       return { accepted: false, ...none, message: "Not paused: pass the user's request to pause in user_words, quoted exactly from their latest message. Words from an earlier message, or a piece of the goal itself, don't count. If they didn't ask for this, keep working on the goal." };
     }
     // Their update_goal decides: it pauses only in a turn the user's own message opened.
-    // Codex's update_goal then decides too; the pause happens only if both accept.
-    const paused = await bothTools(root, contract, { type: "pause" }, reportingChat(all));
+    // Codex is notified after DeepSeek accepts the pause.
+    const paused = await changeGoalState(root, contract, { type: "pause" }, reportingChat(all));
     if (!paused.ok) return { accepted: false, ...none, message: `Not paused: ${paused.message}`, refusedBy: paused.by };
     await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: hash, operation: "pause", actor: "agent" });
     return { accepted: true, ...none, message: CLOSING.paused, ...(paused.codex !== undefined ? { codex: paused.codex } : {}) };
@@ -686,8 +652,8 @@ async function submitGoalReportLocked(root: string, input: GoalReportInput, opts
     if (!input.reason?.trim()) return { accepted: false, ...none, message: "Say what is blocking you in reason." };
     // Their update_goal decides, with its own threshold: in a goal round it refuses before enough rounds have
     // passed; in a turn the user's message opened it accepts at once. Its wrap-up instruction is the answer.
-    // Codex's update_goal then decides too; the goal is blocked only if both accept.
-    const blocked = await bothTools(root, contract, { type: "block", code: MODEL_REPORTED_CODE, message: input.reason.trim() }, reportingChat(all));
+    // Codex is notified after DeepSeek accepts the block.
+    const blocked = await changeGoalState(root, contract, { type: "block", code: MODEL_REPORTED_CODE, message: input.reason.trim() }, reportingChat(all));
     if (!blocked.ok) return { accepted: false, ...none, message: blocked.message, refusedBy: blocked.by };
     const closing = blocked.result.tool?.contexts[0] ?? CLOSING.blocked(contract.goal, input.reason);
     // Their rule accepts a block at once in a turn the user's own message opened. Nothing checked it, and the agent
@@ -832,9 +798,9 @@ async function submitGoalReportLocked(root: string, input: GoalReportInput, opts
   if (workState && verificationState(root) !== workState) {
     return { accepted: false, ...none, message: "The project changed while verification was running. Report the current work again so only checks for the changed state are repeated." };
   }
-  // The goal becomes complete only here, by Codex's own handler and DeepSeek's own tool each accepting this report.
-  // What either refuses is the answer; if either one's code didn't run, nothing is accepted and the run ends unverified.
-  const completed = await bothTools(root, contract, { type: "complete" }, chat);
+  // Independent checks assess the work; DeepSeek commits completion and Codex receives that state.
+  // A missing or failed integration is unverified, never a second state-approval rule.
+  const completed = await changeGoalState(root, contract, { type: "complete" }, chat);
   if (!completed.ok) {
     if (!completed.missing) return { accepted: false, ...none, message: `Not completed: ${completed.message}`, refusedBy: completed.by };
     await end(root, seq, who, hash, "unverified", { by: completed.by, reason: completed.message, ...(skipped.length ? { skipped } : {}), ...receipt });
@@ -854,7 +820,7 @@ async function submitGoalReportLocked(root: string, input: GoalReportInput, opts
 const BLOCKED_AT_WORD = "Guardian: recorded as blocked on the first turn, at your word alone: no round was tried and nothing checked the obstacle. Say exactly that to the user in your closing message.";
 const DISPUTED_SAME = "Recorded as disputed, not proved: the independent review already objected to this very state, and nothing has changed since. Reporting again doesn't get another review. Either fix what it objects to and report again, or tell the user plainly what the review says is wrong and why you disagree, and stop.";
 const DISPUTED = "Recorded as disputed, not proved: the independent review objected and its reviews for this run are used up. Don't report again. Tell the user plainly what the review says is wrong and what you did about it, and stop.";
-const unverifiedMessage = (why: string): string => `Recorded as unverified, not proved: ${why}. The goal can only be completed by both goal keepers' own code accepting it. Don't report again. Tell the user this, and what you finished, and stop.`;
+const unverifiedMessage = (why: string): string => `Recorded as unverified, not proved: ${why}. Verified completion needs DeepSeek's state transition and a working Codex accounting copy. Don't report again. Tell the user this, and what you finished, and stop.`;
 const verificationRecoveryMessage = (skipped: string[]): string => `Completion is still pending: ${skipped.join("; ")}. A check that could not finish is not proof that your work is wrong. Keep working in this run: use the existing local tools to run the relevant tests and build, exercise the affected public entry points, and fix any actual failures within the user's goal. Do not hand those commands to the user when you can run them. If those checks already passed on the current work, use their recorded results; do not repeat them or change correct code just to create activity. Then call ${CODEX_TOOLS.update.name} again with the current completion report. Guardian will retry unfinished independent checks once, retaining usable results on unchanged work. If a check still cannot finish, Guardian will end unchecked rather than loop forever. Do not claim the goal is proved or ask the user to repair Guardian before doing the useful work you can do.`;
 
 const uncheckedMessage = (skipped: string[], checks: string): string => `Verification incomplete: this work is unchecked.\n\nSummarize what was accomplished for the user and briefly disclose which independent checks could not finish. Do not describe the work as independently verified. Independent check results on the last reviewed state: ${checks}. Guardian: recorded as complete but unchecked, not proved, because ${skipped.join("; ")}. Make clear that full independent verification is incomplete without reciting internal statuses or imposing a fixed reply format. Distinguish checks that ran from checks that did not. Do not claim that no independent check ran unless both the reviewer and evaluator failed to run.`;
@@ -977,7 +943,7 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     // The reviewer objected to this very report: that goes back as a round, like anything else that doesn't hold.
     if (seq.report.status === "complete" && latest && latest.reportTs === seq.report.ts && objected === latest) reviewer = objectionLines(latest);
     // A report that holds now but wasn't accepted when it was made (the project moved in between) is asked for
-    // again: only a report both goal keepers accept, at the moment it is made, completes the goal.
+    // again: completion is committed only for the report and project state checked at that moment.
     if (seq.report.status === "complete" && !unproved.length && !unclaimed.length && !extras.length && !reviewer.length) {
       const pending = [...seq.records].reverse().find((r) => r.kind === "goal.recovery" && r.goalHash === hash);
       notes.push(pending?.kind === "goal.recovery" && latest?.id === pending.reviewId
@@ -1063,18 +1029,16 @@ export async function runGoalStop(root: string, input: { conversationId?: string
     await end(root, seq, conversationId, hash, "limit", { by: admitted?.roundLimitByGuardian ? "guardian" : "deepseek", unproved, reason: `DeepSeek's cap of ${view.maxGoalRounds} rounds for one goal${admitted?.roundLimitByGuardian ? "; their resume refused at the cap, so Guardian recorded their round-limit block through their service" : ""}` }, input.tokens);
     return goalClosingMessage(contract.goal, contract.successCriteria, `the goal used all ${view.maxGoalRounds} of its rounds.`, unproved);
   }
-  // Codex's own scheduling is asked for its continuation turn. If its goal is in a state it doesn't continue from,
-  // the run stops; where its extension isn't installed, its prompt is rendered from its template as before.
+  // DeepSeek admits rounds; Codex supplies continuation instructions and its own usage/budget limits.
   const codexTurnNow = await codexContinuationTurn(root);
   partners.codex = codexTurnNow.ran ? { ran: true, continues: codexTurnNow.continues, ...(codexTurnNow.status ? { status: codexTurnNow.status } : {}) } : { ran: false, ...(codexTurnNow.reason ? { reason: codexTurnNow.reason } : {}) };
   await notePartners();
   if (codexTurnNow.stops) {
-    // DeepSeek's log has the goal active and Codex's store doesn't: the two goal keepers disagree, and Guardian
-    // doesn't settle that for them. The run ends unverified, and the agent is told.
-    const why = `Codex's scheduling started no continuation: its goal is ${codexTurnNow.status} while DeepSeek's is active`;
+    const why = `Codex's continuation stopped at its ${codexTurnNow.status} limit`;
+    await engine(root, contract, { type: "block", code: BUDGET_LIMIT_CODE, message: why }, contract.goal, false);
     await recordRefusal(root, hash, "continue", "codex", why, conversationId);
-    await end(root, seq, conversationId, hash, "unverified", { by: "codex", unproved, reason: why }, input.tokens);
-    return goalClosingMessage(contract.goal, contract.successCriteria, `${why}, so Guardian can't keep this goal going or record it as proved.`, unproved, "unverified");
+    await end(root, seq, conversationId, hash, "budget_limited", { by: "codex", unproved, reason: why }, input.tokens);
+    return goalClosingMessage(contract.goal, contract.successCriteria, why, unproved, "budget_limited");
   }
   // A goal keeper that didn't run is said, to the record above and to the agent: without it nothing can be proved.
   if (!codexTurnNow.ran) notes.push(`- Codex's goal code didn't run (${codexTurnNow.reason ?? "no reason given"}). Until it does, this goal can't be recorded as proved.`);

@@ -19,10 +19,9 @@ that runs all of it, unmodified, for Guardian.
 - The store's sqlite files live in `<workspace>/.cursor/goal-guardian/codex/`, kept out of git. Codex's
   runtime creates its other databases there too (state, logs, memories, queue); Guardian uses only the goals.
 - Guardian's own goal file is the master copy of the goal. Codex's store holds a copy, is told the same changes,
-  and keeps the usage and the budget; its handlers can refuse a change (`packages/core/src/goal/codexGoals.ts`).
+  and keeps the usage and the budget (`packages/core/src/goal/codexGoals.ts`). DeepSeek owns phase changes; Guardian notifies Codex after acceptance instead of requesting a second create/update tool approval. The wrapper still exposes those handlers for direct callers and its own tests.
   Its `complete` is a status change: it judges nothing, and Guardian's own checks decide whether a goal is done.
-  Guardian does not re-create Codex's goal behind the user's back: if the store has no goal, or a paused or
-  blocked one while the goal is active, the run is recorded as unverified until a real user message resyncs it.
+  Guardian does not re-create a missing Codex goal behind the user's back: a missing ledger leaves completion unverified until a real user message restores it. A stale ordinary phase is synchronized from DeepSeek before accounting; Codex's usage and budget stops are preserved.
 
 ```bash
 cargo build --release --locked

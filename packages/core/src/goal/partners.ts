@@ -1,9 +1,7 @@
 /**
- * The two goal keepers side by side. DeepSeek Harness's service (engine.ts) and Codex's goal extension
- * (codexGoals.ts) each run their own code, unmodified, and Guardian passes every event to both. Neither is in
- * charge of the other: a change to the goal happens only if both accept it, and if either says the run is over,
- * it is over. This file holds the parts of that joining that
- * aren't specific to one moment of the goal loop; the moments themselves are in loop.ts.
+ * Complementary goal integrations: DeepSeek owns phase/authority and round admission; Codex supplies
+ * usage budgets, goal-change context and continuation instructions. Accepted phase changes are copied
+ * into Codex's ledger as notifications, not submitted for a second state approval.
  */
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -80,15 +78,15 @@ export function codexSaid(out: CodexToolAnswer | null): unknown {
   return out.accepted ? (out.result ?? out.modelOutput) : { refused: out.refusal ?? "Codex's tool refused" };
 }
 
-/** Codex's statuses in which its scheduling starts no continuation turn. */
-const CODEX_STOPPED = new Set(["paused", "blocked", "complete", "budget_limited", "usage_limited"]);
+/** Codex owns budget/usage stops. DeepSeek owns ordinary goal phase stops. */
+const CODEX_STOPPED = new Set(["budget_limited", "usage_limited"]);
 
 export interface CodexContinuation {
   ran: boolean;
   reason?: string;
   /** Codex's scheduling started a continuation turn: its prompt and its goal_objective context are what it sent. */
   continues: boolean;
-  /** Codex's goal isn't in a state it continues from: by the joining rule, the run stops. */
+  /** Codex's independent usage/budget limit prevents another continuation. */
   stops: boolean;
   prompt: string | null;
   goalObjectiveContext: string | null;
