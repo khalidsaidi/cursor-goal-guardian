@@ -208,7 +208,7 @@ function buildReviews(records: AuditRecord[]): PanelViewModel["reviews"] {
 
 function buildImprove(records: AuditRecord[], usingImproved: boolean): PanelViewModel["improve"] {
   const saved = new Set(records.filter((r): r is GoalReviewRecord => r.kind === "goal.review" && r.caseSaved === true && Boolean(r.id)).map((r) => r.id!));
-  const labelled = [...saved].flatMap(id => { const targets = reviewFeedbackTargets(records, id); return targets.length ? [{ id, label: targets.some(t => t.label === "right") ? "right" as const : "wrong" as const }] : []; });
+  const labelled = [...saved].flatMap(id => { const targets = reviewFeedbackTargets(records, id); return targets.length ? [{ id, targets, label: targets.some(t => t.label === "right") ? "right" as const : "wrong" as const }] : []; });
   const runs = records.filter((r): r is ImproveRunRecord => r.kind === "improve.run");
   const last = runs[runs.length - 1];
   const applies = records.filter((r) => r.kind === "improve.apply" || r.kind === "improve.undo");

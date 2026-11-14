@@ -117,13 +117,18 @@ export async function labelledCases(root: string, records?: AuditRecord[]): Prom
   return out;
 }
 
-export function enoughToImprove(cases: Array<Pick<LabelledCase, "label"> & { id?: string; reviewCase?: Pick<ReviewCase, "id"> }>): boolean {
+/** One saved review can teach both retaining a useful catch and removing a false complaint. */
+function hasFeedbackLabel(c: Pick<LabelledCase,"label" | "targets">, label: ReviewLabel): boolean {
+  return c.targets?.length ? c.targets.some(t => t.label === label) : c.label === label;
+}
+
+export function enoughToImprove(cases: Array<Pick<LabelledCase, "label" | "targets"> & { id?: string; reviewCase?: Pick<ReviewCase, "id"> }>): boolean {
   if (cases.length < MIN_LABELLED) return false;
   const identified = cases.map((c) => ({ ...c, id: c.id ?? c.reviewCase?.id }));
   if (identified.some((c) => !c.id)) return false;
   return [true, false].every((heldOut) => {
     const group = identified.filter((c) => isHeldOut(c.id!) === heldOut);
-    return group.some((c) => c.label === "right") && group.some((c) => c.label === "wrong");
+    return group.some((c) => hasFeedbackLabel(c,"right")) && group.some((c) => hasFeedbackLabel(c,"wrong"));
   });
 }
 
@@ -132,7 +137,7 @@ export function learningBatch(cases: LabelledCase[], limit = 12): LabelledCase[]
   if (cases.length <= limit) return cases;
   const selected = new Set<string>();
   for (const heldOut of [true, false]) for (const label of ["right", "wrong"] as const) {
-    const match = [...cases].reverse().find((c) => isHeldOut(c.reviewCase.id) === heldOut && c.label === label);
+    const match = [...cases].reverse().find((c) => isHeldOut(c.reviewCase.id) === heldOut && hasFeedbackLabel(c,label));
     if (match) selected.add(match.reviewCase.id);
   }
   for (const c of [...cases].reverse()) {

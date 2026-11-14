@@ -15,7 +15,7 @@ async function fixture(){
  await fs.mkdir(getGuardianPaths(root).telemetryDir,{recursive:true});await writeContract(root,contract);
  const hash=goalHash(contract);await appendAudit(root,{ts:nowIso(),kind:"goal.set",goalHash:hash});
  const tree=verificationState(root)!;
- await appendAudit(root,{ts:nowIso(),kind:"goal.review",id:"review1",goalHash:hash,reportTs:nowIso(),policy:REVIEW_POLICY,tree,ran:true,seconds:1,fails:[{id:"b",evidence:"No b export exists"}],extra:[{file:"a.js",what:"unnecessary formatting objection"}],verdicts:[{id:"a",verdict:"holds",evidence:"a imports correctly"},{id:"b",verdict:"fails",evidence:"b is missing"}]});
+ await appendAudit(root,{ts:nowIso(),kind:"goal.review",id:"review1",goalHash:hash,reportTs:nowIso(),policy:REVIEW_POLICY,tree,ran:true,seconds:1,checks:[{id:"build",verdict:"holds",evidence:"local build completed"}],fails:[{id:"b",evidence:"No b export exists"}],extra:[{file:"a.js",what:"unnecessary formatting objection"}],verdicts:[{id:"a",verdict:"holds",evidence:"a imports correctly"},{id:"b",verdict:"fails",evidence:"b is missing"}]});
  return {root,contract,hash,tree};
 }
 describe("useful work carried into another chat",()=>{
@@ -23,7 +23,10 @@ describe("useful work carried into another chat",()=>{
   const {root}=await fixture();const work=await goalWorkContext(root);
   expect(work.last_review).toMatchObject({project_unchanged:true,items:[{id:"a",verdict:"holds"},{id:"b",verdict:"fails"}]});
   expect(work.next_steps.join(" ")).toContain("No b export exists");expect(work.verified_items).toEqual([]);
-  expect(await goalTurnContext(root)).toContain("Work carried forward");
+  const message=await goalTurnContext(root);
+  expect(message).toContain("Previously checked item a: a imports correctly");
+  expect(message).toContain("Recorded verification build (holds): local build completed");
+  expect(message).toContain("No b export exists");
  });
  it("marks changed work stale and respects corrections to individual objections",async()=>{
   const {root}=await fixture();await fs.writeFile(path.join(root,"a.js"),"export const a=2;\n");
@@ -31,6 +34,15 @@ describe("useful work carried into another chat",()=>{
   const work=await goalWorkContext(root);expect(work.last_review?.project_unchanged).toBe(false);
   expect(work.last_review?.findings.join(" ")).toContain("No b export");expect(work.last_review?.findings.join(" ")).not.toContain("formatting objection");
   expect(work.last_review?.feedback_requires_recheck).toBe(true);
+  const message=await goalTurnContext(root);
+  expect(message).toContain("No b export exists");
+  expect(message).not.toContain("unnecessary formatting objection");
+  expect(message).toContain("Recorded before changes or feedback; check relevance before reusing");
+ });
+ it("turns incomplete verification into a concrete continuation step",async()=>{
+  const {root,hash,tree}=await fixture();
+  await appendAudit(root,{ts:nowIso(),kind:"goal.review",id:"incomplete",goalHash:hash,reportTs:nowIso(),policy:REVIEW_POLICY,tree,ran:true,seconds:1,fails:[],extra:[],unanswered:["public_api"]});
+  expect(await goalTurnContext(root)).toContain("Finish the relevant check: No clear verdict for public_api");
  });
  it("supplies changed source beyond proof hints and discloses bounded evidence",async()=>{
   const {root}=await fixture();

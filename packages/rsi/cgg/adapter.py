@@ -88,8 +88,8 @@ class CggDomain(Domain):
 
     def smoke_ids(self, incumbent_per_task=None):
         ev = self.evolve_ids()
-        picks = [next((t for t in ev if TASKS[t]["label"] == lab), None) for lab in ("wrong", "right")]
-        return [t for t in picks if t] or ev[:1]
+        picks = [next((t for t in ev if any(f["label"] == lab for f in TASKS[t].get("feedback") or [{"label": TASKS[t]["label"]}])), None) for lab in ("wrong", "right")]
+        return list(dict.fromkeys(t for t in picks if t)) or ev[:1]
 
     # ---- Evaluate ----------------------------------------------------------
     def _one(self, root: Path, jdir: Path, tid: str, trial: int) -> None:

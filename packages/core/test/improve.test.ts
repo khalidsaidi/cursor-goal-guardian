@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendAudit, applyImprovement, autoImprove, candidatePath, defaultContract, estimateImprove, labelsFingerprint, recordReviewFeedback, goalHash, getGuardianPaths, harnessPath, improveReviewer, isHeldOut,
-  labelledCases, learningBatch, loadCases, materializeCase, nowIso, readAuditTail, replayCase, reviewLabels, reviewTemplate, saveCase, undoImprovement, writeHarness, REVIEW_PROMPT, REVIEW_BUDGET_MS, LEARNING_REVIEW_BUDGET_MS,
+  labelledCases, learningBatch, enoughToImprove, loadCases, materializeCase, nowIso, readAuditTail, replayCase, reviewLabels, reviewTemplate, saveCase, undoImprovement, writeHarness, REVIEW_PROMPT, REVIEW_BUDGET_MS, LEARNING_REVIEW_BUDGET_MS,
   type AuditRecord, type RsiPaths,
 } from "../src/index.js";
 
@@ -338,6 +338,18 @@ describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
     expect(result?.run).toMatchObject({ kept: false, reason: expect.stringContaining("already correct on every reserved example") });
     expect((await readAuditTail(root, 500)).some((r) => r.kind === "improve.progress" && r.stage.includes("searching"))).toBe(false);
   }, 300_000);
+
+  it("uses both kinds of feedback within one review when balancing learning", async () => {
+    const original=await labelledCases(await labelledWorkspace());
+    const mixed=original.map(c=>({...c,label:"right" as const,targets:[{key:"useful",finding:"missing export",label:"right" as const},{key:"nit",finding:"unnecessary complaint",label:"wrong" as const}]}));
+    expect(enoughToImprove(mixed)).toBe(true);
+    const recent=Array.from({length:24},(_,i)=>({...mixed[0]!,reviewCase:{...mixed[0]!.reviewCase,id:`mixed_${i}`}}));
+    const batch=learningBatch([...mixed,...recent]);
+    expect(enoughToImprove(batch)).toBe(true);
+    expect(batch).toHaveLength(12);
+    const onlyPositive=mixed.map(c=>({...c,targets:c.targets.filter(t=>t.label==="right")}));
+    expect(enoughToImprove(onlyPositive)).toBe(false);
+  });
 
   it("keeps a bounded recent batch with real catches and false alarms in both splits", async () => {
     const cases = await labelledCases(await labelledWorkspace());

@@ -33,6 +33,7 @@ export async function goalWorkContext(root: string, contract?: Contract, records
   const findings = review ? objectionEntries(review).filter(e => !rejected.has(e.index)).map(e => e.line) : [];
   const end = [...current].reverse().find(r => r.kind === "goal.end" && r.goalHash === hash);
   const verified = end?.kind === "goal.end" && end.outcome === "proved" && review?.ran && !review.unanswered?.length && !findings.length && unchanged && !corrected && end.tree === state ? end.verifiedItems ?? [] : [];
+  const unavailable = review ? [!review.ran ? review.reason ?? "Project review did not finish" : null, ...(review.unanswered ?? []).map(id => `No clear verdict for ${id}`), review.evaluator && !review.evaluator.ran ? review.evaluator.reason ?? "Extra evaluation did not finish" : null].filter((s): s is string => Boolean(s)) : [];
   const since = current[0]?.ts;
   const commands = (await readShellOutputs(root)).filter(o => !since || Date.parse(o.startedAt) >= Date.parse(since)).slice(-4).map(o => ({ command: o.command, failed: o.failed === true, recorded_at: o.ts }));
   return {
@@ -40,11 +41,12 @@ export async function goalWorkContext(root: string, contract?: Contract, records
     last_review: review ? {
       id: review.id ?? null, recorded_at: review.ts, project_unchanged: unchanged, feedback_requires_recheck: corrected,
       items: review.verdicts ?? [], checks: review.checks ?? [], findings,
-      unavailable: [!review.ran ? review.reason ?? "Project review did not finish" : null, ...(review.unanswered ?? []).map(id => `No clear verdict for ${id}`), review.evaluator && !review.evaluator.ran ? review.evaluator.reason ?? "Extra evaluation did not finish" : null].filter(Boolean),
+      unavailable,
     } : null,
     recorded_commands: commands,
-    next_steps: corrected ? ["Use the user's correction; recheck the affected work without repeating a rejected objection."]
-      : findings.length ? [unchanged ? "Address the concrete findings below within the user's current request." : "Inspect changes since the last review and recheck whether its findings still apply.", ...findings]
+    next_steps: corrected ? ["Use the user's correction; recheck the affected work without repeating a rejected objection.", ...findings, ...unavailable.map(s => `Finish the relevant check: ${s}`)]
+      : findings.length ? [unchanged ? "Address the concrete findings below within the user's current request." : "Inspect changes since the last review and recheck whether its findings still apply.", ...findings, ...unavailable.map(s => `Finish the relevant check: ${s}`)]
+      : unavailable.length ? unavailable.map(s => `Finish the relevant check: ${s}`)
       : verified.length ? ["Relevant completion checks already passed on this project state. Do not repeat them merely to restate the result."]
       : ["Continue the requested work from the current project. Reuse relevant recorded checks while their inputs remain unchanged."],
     guidance: "These are recorded observations, not new requirements or a substitute for the user's latest request. Old findings may be stale after edits. Do not redo completed work or rerun passing checks merely to fill in a report.",
@@ -55,7 +57,10 @@ export async function goalWorkMessage(root: string, contract?: Contract, records
   const work = await goalWorkContext(root, contract, records);
   if (!work.last_review && !work.recorded_commands.length) return [];
   const lines = ["Work carried forward from this goal:", work.last_review ? `Last review: ${work.last_review.project_unchanged ? "same project snapshot" : "project changed; findings need rechecking"}${work.last_review.feedback_requires_recheck ? "; user corrected this review" : ""}.` : "No independent review on this goal yet.",
-    ...work.next_steps.slice(0, 5), ...work.recorded_commands.slice(-3).map(c => `Recorded ${c.failed ? "failed" : "completed"} command: ${c.command}`),
+    ...work.next_steps.slice(0, 5),
+    ...(work.last_review?.items ?? []).filter(i => i.verdict === "holds").slice(0,3).map(i => `Previously checked item ${i.id}: ${i.evidence.slice(0,180)}${work.last_review?.project_unchanged && !work.last_review.feedback_requires_recheck ? " Reuse this result if its relevant inputs are unchanged." : " Recorded before changes or feedback; check relevance before reusing."}`),
+    ...(work.last_review?.checks ?? []).filter(c => c.verdict === "holds" || c.verdict === "not_applicable").slice(0,2).map(c => `Recorded verification ${c.id} (${c.verdict}): ${c.evidence.slice(0,180)}`),
+    ...work.recorded_commands.slice(-3).map(c => `Recorded ${c.failed ? "failed" : "completed"} command: ${c.command}`),
     "Full prior checks and findings are in get_goal.work. Use relevant results; do not repeat passing checks merely to restate them."];
   return [lines.join("\n").slice(0, 2400)];
 }

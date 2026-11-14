@@ -74,6 +74,14 @@ class CggDomainTest(unittest.TestCase):
         self.assertEqual(self.dom.heldout_ids(), ["c"])
         self.assertEqual(sorted(self.dom.smoke_ids()), ["a", "b"])
 
+    def test_smoke_uses_both_issue_labels_from_a_mixed_review_without_duplicate_replays(self):
+        from unittest.mock import patch
+        module=sys.modules[self.dom.__class__.__module__]
+        mixed={"a":{"label":"right","split":"evolve","feedback":[{"label":"right"},{"label":"wrong"}]},
+               "b":{"label":"right","split":"evolve","feedback":[{"label":"right"}]}}
+        with patch.object(module,"TASKS",mixed):
+            self.assertEqual(self.dom.smoke_ids(),["a"])
+
     def test_run_and_score_weigh_a_wrong_flag_double(self):
         runs = self.tmp / "runs"
         self.dom.run(self.repo, runs, "j", ["a", "b"], 1)
