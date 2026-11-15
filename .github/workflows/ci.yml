@@ -12,7 +12,7 @@ on:
         default: all
         options: [all, linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64, win32-arm64]
       native_run:
-        description: Earlier run with passed native Rust tests and unchanged Codex inputs (optional)
+        description: Earlier native build with unchanged Codex inputs; full host behavior checks still run (optional)
         type: string
         default: ''
 
