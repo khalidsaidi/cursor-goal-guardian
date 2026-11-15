@@ -4,100 +4,75 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
-  # Candidate native builds of Codex's goal runtime on the six configured architectures
-  # (Rust is not cross-compiled). The binary is uploaded so a release can pick it up per platform.
-  codex-goals:
+  platform:
+    name: Complete package (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: linux-x64 }
-          - { os: ubuntu-24.04-arm, target: linux-arm64 }
-          - { os: macos-15-intel, target: darwin-x64 }
-          - { os: macos-latest, target: darwin-arm64 }
-          - { os: windows-latest, target: win32-x64 }
-          - { os: windows-11-arm, target: win32-arm64 }
+          - { os: ubuntu-latest, target: linux-x64, exe: "" }
+          - { os: ubuntu-24.04-arm, target: linux-arm64, exe: "" }
+          - { os: macos-15-intel, target: darwin-x64, exe: "" }
+          - { os: macos-latest, target: darwin-arm64, exe: "" }
+          - { os: windows-latest, target: win32-x64, exe: ".exe" }
+          - { os: windows-11-arm, target: win32-arm64, exe: ".exe" }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
-        working-directory: packages/codex-goals
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/packages/codex-goals/target
+      GOAL_GUARDIAN_CODEX_GOALS: ${{ github.workspace }}/dist-bin/${{ matrix.target }}/goal-guardian-codex-goals${{ matrix.exe }}
     steps:
       - uses: actions/checkout@v4
+      - name: Allow long dependency paths on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: packages/codex-goals
-      - run: cargo build --release --locked
-      - run: cargo test --release --locked
-      - name: the binary keeps a goal and its budget
-        run: |
-          BIN=target/release/goal-guardian-codex-goals
-          HOME_DIR="$RUNNER_TEMP/codex-goals-home"
-          echo '{"op":"set","objective":"CI goal","token_budget":100}' | "$BIN" --home "$HOME_DIR" | grep '"status":"active"'
-          echo '{"op":"account","tokens":150,"seconds":1}' | "$BIN" --home "$HOME_DIR" | grep '"status":"budget_limited"'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: codex-goals-${{ matrix.target }}
-          path: |
-            packages/codex-goals/target/release/goal-guardian-codex-goals
-            packages/codex-goals/target/release/goal-guardian-codex-goals.exe
-          if-no-files-found: error
-
-  build-test:
-    env:
-      # Core binaries are tested without the separately built Codex runtime. This intentionally
-      # does not qualify complete goal handling or the full distributable on these targets.
-      GOAL_GUARDIAN_SKIP_CODEX_GOALS: "1"
-    strategy:
-      fail-fast: false
-      matrix:
-        # Candidate core binaries execute on the configured architecture runners.
-        # macos-15-intel is the supported x64 runner (macos-13 queues are
-        # chronically starved); macos-latest additionally executes the
-        # darwin-x64 binaries under Rosetta as a second, faster x64 proof.
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15-intel, macos-latest, windows-latest, windows-11-arm]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - run: corepack enable
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-      # bun compiles five targets; windows-arm64 builds via Node SEA instead
-      # (bun has no win-arm64 build, so the step is skipped there).
       - uses: oven-sh/setup-bun@v2
-        if: matrix.os != 'windows-11-arm'
+        if: matrix.target != 'win32-arm64'
       - run: pnpm install --frozen-lockfile
       - run: node scripts/check-versions.mjs
       - run: pnpm -r build
+      - name: Build the actual native goal runtime and hook/MCP programs
+        run: node scripts/compile-binaries.mjs --host-only
+      - name: Test the real Codex goal wrapper
+        run: cargo test --release --locked --manifest-path packages/codex-goals/Cargo.toml
       - run: pnpm -r exec tsc -p tsconfig.json --noEmit
       - run: pnpm -r test
-      # Free e2e scenarios keep the harness itself from rotting; billable
-      # agent scenarios are skipped automatically in CI (no cursor-agent,
-      # and the harness gates on GG_E2E_CONFIRM there).
       - run: pnpm --filter @goal-guardian/e2e test:e2e:offline
-      # A candidate VSIX for this machine, with pinned, checksum-verified Python: RRSI's
-      # self-improvement runs on that interpreter, so it has to start on every architecture.
-      - run: node scripts/package-extension.js
-      - name: bundled Python runs RRSI's imports
-        shell: bash
-        run: |
-          cd packages/cursor-goal-guardian-extension
-          if [ -x bin/python/python.exe ]; then PY=bin/python/python.exe; else PY=bin/python/bin/python3; fi
-          (cd rsi/rrsi && "../../$PY" -c "import rrsi.loop, rrsi.propose, rrsi.critic, rrsi.selection; print('rrsi imports ok')")
-      # Second x64 proof for macOS, independent of Intel-runner queues: the
-      # arm64 runner cross-compiles the darwin-x64 binaries and EXECUTES them
-      # under Rosetta — a real run of the shipped artifact, not just a build.
-      - name: darwin-x64 binaries under Rosetta
-        if: matrix.os == 'macos-latest'
-        run: |
-          node scripts/compile-binaries.mjs --target darwin-x64
-          file dist-bin/darwin-x64/goal-guardian-hook | grep x86_64
-          echo '{"hook_event_name":"beforeShellExecution","command":"git status","workspace_roots":["'"$PWD"'"]}' \
-            | ./dist-bin/darwin-x64/goal-guardian-hook | grep '"permission":"allow"'
+      - name: Build the complete platform VSIX
+        run: pnpm package:vsix --target ${{ matrix.target }}
+        env:
+          CGG_BUILD_PYTHON: ${{ steps.python.outputs.python-path }}
+      - name: Execute the contents of the VSIX, including ADK and RRSI
+        run: node scripts/verify-package.mjs packages/cursor-goal-guardian-extension/cursor-goal-guardian-${{ matrix.target }}.vsix
+        env:
+          CGG_BUILD_PYTHON: ${{ steps.python.outputs.python-path }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: complete-package-${{ matrix.target }}
+          path: |
+            packages/cursor-goal-guardian-extension/cursor-goal-guardian-${{ matrix.target }}.vsix
+            packages/cursor-goal-guardian-extension/cursor-goal-guardian-${{ matrix.target }}.vsix.verified.json
+          if-no-files-found: error

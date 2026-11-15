@@ -251,3 +251,14 @@ Live CI run `43752413567` exposed version drift introduced by the 1.0.1 extensio
 That run's Windows native Codex jobs failed while Cargo fetched an unused v8 patch's Chromium submodules into overlong paths; macOS Intel failed fetching the same unused patch's submodules over the network. The lockfile explicitly classified v8 as unused. Removed only that unused override and its unused lock entry, preserving the complete locked used-dependency graph. The Linux locked offline release build passes. This repairs the observed fetch cause without claiming a successful Windows/macOS build before a later CI result. Raw job logs are under `/home/khali/ggw-study/platform-pipeline-audit/`.
 
 The full-platform gap is evaluator bundling plus native-artifact integration and complete package execution on each target, not absence of the core build infrastructure. No all-platform release was qualified by this audit, and the remaining Open VSX authentication issue is unchanged.
+
+
+### Restoring the existing platform matrix
+
+The six targets were previously published on Open VSX; preserving their support is the objective. The temporary Linux-only publication guard is not a decision to drop them. The full-package gap is being repaired in the build and execution path, rather than addressed only through narrower wording.
+
+ADK's pinned dependencies now resolve for every target, packaging requires the native Codex runtime, and CI builds and executes each complete native VSIX. Windows reviewer launch uses command-shim/shebang support and transports instructions through a task file to avoid command-line quoting and length limits. Both Python model adapters also use task files on Windows and recognize the current `agent` executable name. Windows ARM64's SEA generator and target binary share the pinned Node version. Windows dependency checkout enables long paths.
+
+The extracted Linux package passed the new native integration check: goal creation/change/completion through the actual MCP and Codex programs, independent project-review transport, ADK evaluation, and RRSI model transport. A separate fixture test checks the requested exported behavior. The model is a stand-in; these checks use no paid Cursor calls and do not replace or restart the recorded real-model evidence. Other targets remain pending their native CI execution. Open VSX authentication remains unavailable.
+
+Local type checks and all functional unit checks passed. The parallel suite exceeded the existing Linux hook-latency budget; the same unchanged latency check passed in isolation. Both results are retained under `/home/khali/ggw-study/platform-parity/`; the budget was not weakened.

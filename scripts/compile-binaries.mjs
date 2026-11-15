@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outRoot = path.join(root, "dist-bin");
 const cacheDir = path.join(root, ".cache");
-const NODE_SEA_VERSION = "20.18.1";
+const NODE_SEA_VERSION = (await fs.readFile(path.join(root, ".node-version"), "utf8")).trim();
 
 const ENTRIES = [
   { entry: path.join(root, "packages", "hook", "src", "cli.ts"), name: "goal-guardian-hook" },
@@ -129,6 +129,10 @@ async function buildSea(dir) {
   const stage = path.join(cacheDir, "sea-stage");
   await fs.mkdir(stage, { recursive: true });
   const baseNode = await winArm64NodeExe();
+  // SEA blobs must come from the exact Node version used by the target executable.
+  const blobNode = hostTarget() === "win32-arm64" ? baseNode : process.execPath;
+  const blobVersion = spawnSync(blobNode, ["--version"], { encoding: "utf8" }).stdout?.trim();
+  if (blobVersion !== `v${NODE_SEA_VERSION}`) throw new Error(`Windows ARM64 SEA needs Node ${NODE_SEA_VERSION}; use the repository .node-version toolchain`);
 
   const { dshBundlePlugin } = await import("./dsh-bundle.mjs");
   for (const job of ENTRIES) {
@@ -147,10 +151,10 @@ async function buildSea(dir) {
     const blob = path.join(stage, `${job.name}.blob`);
     await fs.writeFile(
       seaConfig,
-      JSON.stringify({ main: bundle, output: blob, disableExperimentalSEAWarning: true }),
+      JSON.stringify({ main: bundle, output: blob, disableExperimentalSEAWarning: true, useCodeCache: false, useSnapshot: false }),
       "utf8",
     );
-    run(process.execPath, ["--experimental-sea-config", seaConfig]);
+    run(blobNode, ["--experimental-sea-config", seaConfig]);
 
     const outExe = path.join(dir, `${job.name}.exe`);
     await fs.copyFile(baseNode, outExe);

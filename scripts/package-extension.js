@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Package a platform-targeted VSIX carrying the self-contained native
 // binaries for exactly that platform. Target support here is build plumbing,
-// not qualification of the full product; ADK is currently bundled only on Linux x64:
+// not qualification of the full product; native package verification runs in CI:
 //
 //   node scripts/package-extension.js                    # host platform
 //   node scripts/package-extension.js --target win32-x64 # explicit target
@@ -16,6 +16,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 function run(cmd, args, cwd) {
+  // pnpm.cmd needs a shell on Windows; invoke its JS entry through Node instead.
+  if (cmd === "pnpm" && process.platform === "win32") {
+    const entry = process.env.npm_execpath;
+    if (!entry) throw new Error("On Windows, run packaging through pnpm package:vsix so its CLI entry is available.");
+    cmd = /\.exe$/i.test(entry) ? entry : process.execPath;
+    args = /\.exe$/i.test(entry) ? args : [entry, ...args];
+  }
   const res = spawnSync(cmd, args, { stdio: "inherit", cwd });
   if (res.status !== 0) process.exit(res.status ?? 1);
 }
@@ -40,7 +47,9 @@ run("pnpm", ["--filter", "cursor-goal-guardian-extension", "build"], root);
 // Always compile fresh — a stale dist-bin once shipped an hour-old binary.
 const compiled = path.join(root, "dist-bin", target);
 if (target === hostTarget()) run("node", [path.join(root, "scripts", "compile-binaries.mjs"), "--host-only"], root);
-else run("node", [path.join(root, "scripts", "compile-binaries.mjs")], root);
+else run("node", [path.join(root, "scripts", "compile-binaries.mjs"), "--target", target], root);
+const codexName = `goal-guardian-codex-goals${target.startsWith("win32") ? ".exe" : ""}`;
+if (!(await fs.access(path.join(compiled, codexName)).then(() => true, () => false))) throw new Error(`Cannot package ${target}: its native Codex goal runtime is missing`);
 await fs.rm(binDir, { recursive: true, force: true });
 await fs.mkdir(binDir, { recursive: true });
 for (const entry of await fs.readdir(compiled)) {
@@ -147,10 +156,16 @@ async function bundleRsi() {
 /**
  * Google ADK's evaluator: its own files unmodified (third_party/adk-python), Guardian's adapter, and the packages
  * ADK depends on, pinned in packages/evaluator/requirements.txt and installed as wheels for the target platform.
- * It runs on the same bundled Python. Only linux-x64 is wired for now; other targets ship without the evaluator,
- * which the code tolerates (the second check is recorded as skipped).
+ * It runs on the same bundled Python. Every target must carry the evaluator and compatible wheels.
  */
-const PIP_PLATFORMS = { "linux-x64": ["manylinux2014_x86_64", "manylinux_2_17_x86_64", "manylinux_2_28_x86_64"] };
+const PIP_PLATFORMS = {
+  "linux-x64": ["manylinux2014_x86_64", "manylinux_2_17_x86_64", "manylinux_2_28_x86_64"],
+  "linux-arm64": ["manylinux2014_aarch64", "manylinux_2_17_aarch64", "manylinux_2_28_aarch64"],
+  "darwin-x64": ["macosx_11_0_x86_64", "macosx_10_13_x86_64", "macosx_10_12_x86_64", "macosx_10_9_x86_64", "macosx_10_13_universal2"],
+  "darwin-arm64": ["macosx_11_0_arm64", "macosx_10_13_universal2"],
+  "win32-x64": ["win_amd64"],
+  "win32-arm64": ["win_arm64"],
+};
 
 async function bundleEvaluator() {
   const home = path.join(extDir, "evaluator");
@@ -158,18 +173,15 @@ async function bundleEvaluator() {
   // What an earlier second check left in a development tree.
   await fs.rm(path.join(extDir, "monitor"), { recursive: true, force: true });
   const platforms = PIP_PLATFORMS[target];
-  if (!platforms) {
-    console.log(`evaluator: not bundled for ${target} yet`);
-    return;
-  }
+  if (!platforms) throw new Error(`No evaluator dependency platforms configured for ${target}`);
   const skip = (src) => !/(^|[\\/])(__pycache__|tests|tools|\.site)([\\/]|$)/.test(src);
   const adapter = path.join(root, "packages", "evaluator", "cgg_evaluator");
   await fs.cp(adapter, path.join(home, "cgg_evaluator"), { recursive: true, filter: (src) => skip(path.relative(adapter, src)) });
   const vendored = path.join(root, "third_party", "adk-python");
   await fs.cp(path.join(vendored, "src"), path.join(home, "adk"), { recursive: true, filter: (src) => !/(^|[\\/])__pycache__([\\/]|$)/.test(src) });
   await fs.copyFile(path.join(vendored, "LICENSE"), path.join(home, "adk", "LICENSE"));
-  run("python3", [
-    "-m", "pip", "install", "--quiet", "--no-input", "--no-deps", "--only-binary=:all:", "--implementation", "cp", "--python-version", "3.12",
+  run(process.env.CGG_BUILD_PYTHON ?? (process.platform === "win32" ? "python" : "python3"), [
+    "-m", "pip", "install", "--quiet", "--no-input", "--no-deps", "--only-binary=:all:", "--implementation", "cp", "--python-version", "3.12", "--abi", "cp312",
     ...platforms.flatMap((p) => ["--platform", p]),
     "--target", path.join(home, "site-packages"), "-r", path.join(root, "packages", "evaluator", "requirements.txt"),
   ], root);

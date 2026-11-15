@@ -27,7 +27,7 @@ def agent_command() -> str | None:
     configured = os.environ.get("GOAL_GUARDIAN_REVIEWER")
     if configured:
         return configured if os.path.isfile(configured) and os.access(configured, os.X_OK) else None
-    for name in ("cursor-agent", "cursor-agent.cmd", "cursor-agent.exe"):
+    for name in ("cursor-agent", "cursor-agent.cmd", "cursor-agent.exe", "agent", "agent.cmd", "agent.exe"):
         found = shutil.which(name)
         if found:
             return found
@@ -64,7 +64,7 @@ def generate(prompt, system=None, max_retries=3, json_only=False, model=None,
     last = None
     for attempt in range(max_retries):
         with tempfile.TemporaryDirectory(prefix="gg-rsi-") as scratch:
-            if len(text) > ARGV_LIMIT:
+            if os.name == "nt" or len(text) > ARGV_LIMIT:
                 Path(scratch, "task.md").write_text(text, encoding="utf-8")
                 ask = ("Read task.md in this folder and do exactly what it says. "
                        "Your whole reply is the answer it asks for, nothing else.")

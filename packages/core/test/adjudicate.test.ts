@@ -46,7 +46,8 @@ async function reviewer(review: unknown, claims: unknown): Promise<{ file: strin
   const file = await script(`
 const fs = require("fs");
 const a = process.argv.slice(2);
-const p = a[a.indexOf("-p") + 1];
+let p = a[a.indexOf("-p") + 1];
+if (p.startsWith("Read .cursor/goal-guardian/review-task.md")) p = fs.readFileSync(".cursor/goal-guardian/review-task.md", "utf8");
 const say = (text) => process.stdout.write(JSON.stringify({ type: "result", result: text }) + "\\n");
 if (p.includes("The claims:")) {
   fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(p) + "\\n");

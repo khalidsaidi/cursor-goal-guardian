@@ -26,10 +26,12 @@
     "@deepseek-ai/dsh-tool-executor-native": "0.2.2-rc.1",
     "@deepseek-ai/dsh-tool-goal": "0.2.2-rc.1",
     "@deepseek-ai/dsh-tools": "0.2.2-rc.1",
+    "cross-spawn": "7.0.6",
     "minimatch": "^9.0.3",
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/cross-spawn": "6.0.6",
     "@vitest/coverage-v8": "^2.0.0"
   }
 }

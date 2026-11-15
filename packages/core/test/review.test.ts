@@ -208,14 +208,18 @@ describe("running a review", () => {
     await fs.mkdir(path.join(root, "node_modules", "dep"), { recursive: true });
     const seen = path.join(await tmp("gg-seen-"), "seen.json");
     process.env.GOAL_GUARDIAN_REVIEWER = await stub(`const fs = require("fs");
-fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ cwd: process.cwd(), files: fs.readdirSync("."), a: fs.readFileSync("a.js", "utf8"), reviewing: process.env.GOAL_GUARDIAN_REVIEWING, args: process.argv.slice(2) }));
+fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ cwd: process.cwd(), files: fs.readdirSync("."), a: fs.readFileSync("a.js", "utf8"), reviewing: process.env.GOAL_GUARDIAN_REVIEWING, args: process.argv.slice(2), task: fs.existsSync(".cursor/goal-guardian/review-task.md") ? fs.readFileSync(".cursor/goal-guardian/review-task.md", "utf8") : null }));
 process.stdout.write(JSON.stringify({ result: ${JSON.stringify(JSON.stringify(OBJECTS))} }));`);
     const outcome = await runReview(root, { goal: "Add CSV export", successCriteria: [{ id: "sc_1", text: "t" }] });
     expect(outcome).toMatchObject({ ran: true, fails: [{ id: "sc_1" }], extra: [{ file: "util.js" }] });
-    const view = JSON.parse(await fs.readFile(seen, "utf8")) as { cwd: string; files: string[]; a: string; reviewing: string; args: string[] };
+    const view = JSON.parse(await fs.readFile(seen, "utf8")) as { cwd: string; files: string[]; a: string; reviewing: string; args: string[]; task: string | null };
     expect(path.resolve(view.cwd)).not.toBe(path.resolve(root));
     expect(view.files).toEqual(expect.arrayContaining(["a.js", "new.js", "node_modules"]));
-    expect(view.files).not.toContain(".cursor");
+    if (process.platform === "win32") {
+      expect(view.task).toContain("Add CSV export");
+      expect(view.task).toContain("You are a reviewer");
+      expect(view.args[view.args.indexOf("-p") + 1]).toMatch(/^Read \.cursor/);
+    } else expect(view.files).not.toContain(".cursor");
     expect(view.a).toBe("changed\n");
     expect(view.reviewing).toBe("1");
     expect(view.args).toEqual(expect.arrayContaining(["-p", "--output-format", "json", "--workspace"]));

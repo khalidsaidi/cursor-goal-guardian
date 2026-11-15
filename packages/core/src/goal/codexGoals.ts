@@ -8,7 +8,9 @@
  * Nothing here blocks or throws. Where the binary isn't installed every call answers `ran: false`; the goal loop
  * then can't end a run as proved and records it as unverified.
  */
-import { spawn } from "node:child_process";
+import { spawn as nodeSpawn } from "node:child_process";
+import crossSpawn from "cross-spawn";
+const spawn = crossSpawn as typeof nodeSpawn;
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
