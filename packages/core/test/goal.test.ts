@@ -305,7 +305,7 @@ describe("the goal loop: how a run ends", () => {
     expect(msg).toContain("that was the last of the 20 follow-ups Cursor allows for one message");
     expect(await ends(root)).toMatchObject([{ outcome: "limit", by: "cursor" }]);
     expect(await stop(root, GOAL_MAX_ROUNDS + 1)).toBeNull();
-  });
+  }, 30_000);
 
   it("every round carries DeepSeek's round prompt and Codex's continuation prompt, as those projects send them", async () => {
     const root = await ws();

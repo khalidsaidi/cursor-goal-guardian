@@ -45,7 +45,7 @@ describe("the originals, as they are", () => {
     // Run the vendored files themselves (types stripped) and compare with what Guardian says.
     const run = async (...file: string[]): Promise<Record<string, (...args: unknown[]) => Array<{ text: string }>>> => {
       const js = esbuild.transformSync(vendored(...file), { loader: "ts", format: "esm" }).code;
-      const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "gg-orig-")), "m.mjs");
+      const tmp = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gg-orig-"))), "m.mjs");
       fs.writeFileSync(tmp, js);
       return import(/* @vite-ignore */ pathToFileURL(tmp).href);
     };

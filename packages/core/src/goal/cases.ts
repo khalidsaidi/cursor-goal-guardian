@@ -161,7 +161,7 @@ export async function materializeCase(root: string, c: ReviewCase): Promise<{ di
   // Installed dependencies are linked from the project, as for a live review.
   for (const dep of DEP_DIRS) {
     const src = path.join(root, dep);
-    if (fs.existsSync(src) && !fs.existsSync(path.join(dir, dep))) await fsp.symlink(fs.realpathSync(src), path.join(dir, dep), "dir").catch(() => undefined);
+    if (fs.existsSync(src) && !fs.existsSync(path.join(dir, dep))) await fsp.symlink(fs.realpathSync(src), path.join(dir, dep), process.platform === "win32" ? "junction" : "dir").catch(() => undefined);
   }
   await fsp.appendFile(path.join(dir, ".git", "info", "exclude"), DEP_DIRS.map((d) => `/${d}\n`).join("")).catch(() => undefined);
   return { dir, scratch };

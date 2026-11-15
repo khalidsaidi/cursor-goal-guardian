@@ -58,7 +58,7 @@ describe("a review's case", () => {
     expect(sh(root, "status", "--porcelain", "--ignored", ".cursor")).not.toContain("cases/rev_1/case.json\n?? ");
     const copy = await materializeCase(root, c!);
     made.push(copy!.scratch);
-    expect(await fs.readFile(path.join(copy!.dir, "a.js"), "utf8")).toBe("one\ntwo\n");
+    expect((await fs.readFile(path.join(copy!.dir, "a.js"), "utf8")).replace(/\r\n/g, "\n")).toBe("one\ntwo\n");
     expect(await fs.readFile(path.join(copy!.dir, "new.txt"), "utf8")).toBe("fresh\n");
     expect([...(await fs.readFile(path.join(copy!.dir, "blob.bin")))]).toEqual([0, 255, 1, 254]);
     expect(sh(copy!.dir, "diff", "HEAD", "--stat")).toContain("a.js");

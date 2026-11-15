@@ -1,6 +1,6 @@
 import { finishReport } from "./helpers/recovery.js";
 import { VERIFIED_CHECKS } from "./helpers/review.js";
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -119,6 +119,16 @@ describe("the reviewer's instructions", () => {
 });
 
 describe("running a review", () => {
+  it("finds the current agent name when the editor PATH omits its install directory", async () => {
+    const home = await tmp("gg-cli-home-");
+    const bin = path.join(home, ".local", "bin");
+    await fs.mkdir(bin, { recursive: true });
+    const command = path.join(bin, process.platform === "win32" ? "agent.exe" : "agent");
+    await fs.writeFile(command, "fixture"); await fs.chmod(command, 0o755);
+    delete process.env.GOAL_GUARDIAN_REVIEWER; process.env.PATH = "";
+    const homeMock = vi.spyOn(os, "homedir").mockReturnValue(home);
+    try { expect(resolveReviewer()).toBe(command); } finally { homeMock.mockRestore(); }
+  });
   it.runIf(process.platform === "win32")("preserves a long multiline request through a Windows command shim", async () => {
     const root = await repo();
     const goal = 'Preserve "quoted" text, %PATH%, !name!, & pipes | carets ^ and 日本語\n' + "Long user context. ".repeat(2500);
@@ -197,10 +207,11 @@ describe("running a review", () => {
   it("allows a new consumer-probe link without accepting replacement of submitted inputs", async () => {
     const root = await repo();
     const contract = { goal: "Add CSV export", successCriteria: [{ id: "sc_1", text: "t" }] };
-    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`require("fs").symlinkSync(".", "consumer-package"); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
-    expect(await runReview(root, contract)).toMatchObject({ ran: true });
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`require("fs").symlinkSync(".", "consumer-package", ${JSON.stringify(process.platform === "win32" ? "junction" : "dir")}); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
+    const probe = await runReview(root, contract);
+    expect(probe, probe.reason).toMatchObject({ ran: true });
     await expect(fs.lstat(path.join(root, "consumer-package"))).rejects.toThrow();
-    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`const fs=require("fs"); fs.unlinkSync("a.js"); fs.symlinkSync(".", "a.js"); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`const fs=require("fs"); fs.unlinkSync("a.js"); fs.symlinkSync(".", "a.js", ${JSON.stringify(process.platform === "win32" ? "junction" : "dir")}); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
     expect(await runReview(root, contract)).toMatchObject({ ran: false, reason: expect.stringContaining("a.js") });
   });
 
@@ -235,6 +246,16 @@ process.stdout.write(JSON.stringify({ result: ${JSON.stringify(JSON.stringify(OB
     expect(view.reviewing).toBe("1");
     expect(view.args).toEqual(expect.arrayContaining(["-p", "--output-format", "json", "--workspace"]));
     await expect(fs.access(view.cwd)).rejects.toThrow(); // the copy is gone afterwards
+  });
+
+  it("reviews a repository opened through a directory alias", async () => {
+    const root = await repo();
+    const alias = path.join(await tmp("gg-project-alias-"), "project");
+    await fs.symlink(root, alias, process.platform === "win32" ? "junction" : "dir");
+    const copy = await makeReviewCopy(alias);
+    expect(copy).not.toBeNull();
+    made.push(copy!.scratch);
+    expect(await fs.readFile(path.join(copy!.dir, "a.js"), "utf8")).toBe("one\n");
   });
 
   it("can't copy a folder that is only part of a repository", async () => {

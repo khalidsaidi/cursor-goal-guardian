@@ -36,7 +36,8 @@ async function fixture() {
   const reviewer = path.join(dir, "reviewer.cjs");
   // Execute the actual project tests in the review copy. Findings reflect behavior, not report metadata.
   await fs.writeFile(reviewer, `#!/usr/bin/env node
-const fs=require('fs'),cp=require('child_process');const a=process.argv.slice(2),p=a[a.indexOf('-p')+1]||'',w=a[a.indexOf('--workspace')+1];
+const fs=require('fs'),cp=require('child_process');const a=process.argv.slice(2),w=a[a.indexOf('--workspace')+1];let p=a[a.indexOf('-p')+1]||'';
+if(p.startsWith('Read .cursor/goal-guardian/review-task.md'))p=fs.readFileSync('.cursor/goal-guardian/review-task.md','utf8');
 fs.appendFileSync(${JSON.stringify(reviewLog)},'x');
 const r=cp.spawnSync(process.execPath,['test.cjs',...(p.includes('The claims:')?['more']:[])],{cwd:w,encoding:'utf8'});const ok=r.status===0,e=ok?'behavior passed':'Behavior test failed: '+(r.stdout+r.stderr).slice(-200);
 if(p.includes('The claims:')) {const ids=p.split(String.fromCharCode(10)).filter(l=>l.startsWith('- ')&&l.includes(' (')).map(l=>l.slice(2).split(' ')[0]); console.log(JSON.stringify({claims:ids.map(id=>({id,verdict:ok?'dismissed':'confirmed',evidence:e}))}));}
@@ -45,7 +46,7 @@ else console.log(JSON.stringify({items:[{id:'sc_1',verdict:ok?'holds':'fails',ev
   const adapter = JSON.parse(process.env.GOAL_GUARDIAN_EVALUATOR!);
   const evaluator = path.join(dir, "evaluator.cjs");
   await fs.writeFile(evaluator, `#!/usr/bin/env node
-const fs=require('fs'),cp=require('child_process');fs.appendFileSync(${JSON.stringify(evaluatorLog)},'x');const input=fs.readFileSync(0);fs.writeFileSync(${JSON.stringify(evaluationInput)},input);const r=cp.spawnSync(${JSON.stringify(adapter.python)},process.argv.slice(2),{input,encoding:'utf8',env:process.env});process.stdout.write(r.stdout||'');process.exit(r.status??1);
+const fs=require('fs'),cp=require('child_process');fs.appendFileSync(${JSON.stringify(evaluatorLog)},'x');const input=fs.readFileSync(0);fs.writeFileSync(${JSON.stringify(evaluationInput)},input);const r=cp.spawnSync(process.execPath,[${JSON.stringify(adapter.python)},...process.argv.slice(2)],{input,encoding:'utf8',env:process.env});process.stdout.write(r.stdout||'');process.exit(r.status??1);
 `); await fs.chmod(evaluator, 0o755);
   process.env.GOAL_GUARDIAN_EVALUATOR = JSON.stringify({ ...adapter, python: evaluator });
   const calls = (file: string) => syncFs.existsSync(file) ? syncFs.readFileSync(file, "utf8").length : 0;
@@ -119,7 +120,8 @@ describe("outcome-focused completion", () => {
     await recordUserPrompt(f.root, currentRequest, "c", "agent");
     const reviewer = path.join(path.dirname(f.root), "scope-reviewer.cjs");
     await fs.writeFile(reviewer, `#!/usr/bin/env node
-const cp=require('child_process'),a=process.argv.slice(2),p=a[a.indexOf('-p')+1]||'',w=a[a.indexOf('--workspace')+1];
+const cp=require('child_process'),fs=require('fs'),a=process.argv.slice(2),w=a[a.indexOf('--workspace')+1];let p=a[a.indexOf('-p')+1]||'';
+if(p.startsWith('Read .cursor/goal-guardian/review-task.md'))p=fs.readFileSync('.cursor/goal-guardian/review-task.md','utf8');
 const actual=cp.spawnSync(process.execPath,['test.cjs'],{cwd:w,encoding:'utf8'});
 const current=p.includes(${JSON.stringify('Latest user request for this turn:\n' + currentRequest)});
 console.log(JSON.stringify({items:[{id:'sc_1',verdict:actual.status===0?'holds':'fails',evidence:actual.stdout+actual.stderr},{id:'sc_2',verdict:current?'holds':'unclear',evidence:current?'Required the actual public module and ran its behavior tests':'Only the original first-part scope was supplied'}],extra:[],checks:[{id:'build',verdict:'not_applicable',evidence:'plain CommonJS module'},{id:'public_api',verdict:'holds',evidence:'required index.cjs in behavior tests'},{id:'behavior',verdict:'holds',evidence:'actual behavior tests passed'}]}));

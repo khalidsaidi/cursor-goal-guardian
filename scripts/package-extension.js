@@ -88,6 +88,16 @@ async function bundlePython() {
   // The archive's top folder is python/: it lands at bin/python.
   run("tar", ["-xzf", archive, "-C", binDir], root);
   await prunePython(path.join(binDir, "python"));
+  if (target.startsWith("win32")) {
+    // The Codex executable imports this CRT too. Windows searches beside that executable,
+    // not inside Python's subfolder; reuse the already bundled, target-matched runtime.
+    const pythonRoot = path.join(binDir, "python");
+    const crt = (await fs.readdir(pythonRoot)).find(name => name.toLowerCase() === "vcruntime140.dll");
+    if (!crt) throw new Error(`The pinned ${target} Python runtime has no vcruntime140.dll`);
+    for (const name of await fs.readdir(pythonRoot)) {
+      if (/^vcruntime140(?:_1)?\.dll$/i.test(name)) await fs.copyFile(path.join(pythonRoot, name), path.join(binDir, name));
+    }
+  }
 }
 
 /**

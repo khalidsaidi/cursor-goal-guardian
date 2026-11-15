@@ -257,8 +257,7 @@ export function resolveReviewer(): string | null {
     }
   }
   // Hooks launched by the editor often get a PATH without ~/.local/bin.
-  const fallback = path.join(os.homedir(), ".local", "bin", "cursor-agent");
-  return isExecutable(fallback) ? fallback : null;
+  return names.map(name => path.join(os.homedir(), ".local", "bin", name)).find(isExecutable) ?? null;
 }
 
 function git(args: string[], cwd: string): Promise<{ ok: boolean; stdout: string }> {
@@ -274,7 +273,13 @@ function git(args: string[], cwd: string): Promise<{ ok: boolean; stdout: string
  */
 export async function makeReviewCopy(root: string): Promise<{ dir: string; scratch: string } | null> {
   const top = await git(["rev-parse", "--show-toplevel"], root);
-  if (!top.ok || path.resolve(top.stdout.trim()) !== path.resolve(root)) return null;
+  if (!top.ok) return null;
+  try {
+    const [requestedRoot, gitRoot] = await Promise.all([fsp.realpath(root), fsp.realpath(top.stdout.trim())]);
+    if (path.relative(requestedRoot, gitRoot) !== "") return null;
+  } catch {
+    return null;
+  }
   const listed = await git(["ls-files", "-co", "--exclude-standard", "-z"], root);
   const files = listed.stdout.split("\0").filter(Boolean);
   if (!listed.ok || files.length > MAX_FILES) return null;
@@ -299,7 +304,7 @@ export async function makeReviewCopy(root: string): Promise<{ dir: string; scrat
     // Installed dependencies are linked, not copied, and kept out of the reviewer's `git status`.
     for (const dep of DEP_DIRS) {
       const src = path.join(root, dep);
-      if (fs.existsSync(src) && !fs.existsSync(path.join(dir, dep))) await fsp.symlink(fs.realpathSync(src), path.join(dir, dep), "dir").catch(() => undefined);
+      if (fs.existsSync(src) && !fs.existsSync(path.join(dir, dep))) await fsp.symlink(fs.realpathSync(src), path.join(dir, dep), process.platform === "win32" ? "junction" : "dir").catch(() => undefined);
     }
     await fsp.appendFile(path.join(dir, ".git", "info", "exclude"), DEP_DIRS.map((d) => `/${d}\n`).join("")).catch(() => undefined);
     return { dir, scratch };
@@ -370,11 +375,15 @@ function runAgent(command: string, prompt: string, dir: string, scratch: string,
 
 /** Preserve the submitted inputs: a repair made only in the review copy cannot certify the real project. */
 async function reviewInputs(dir: string): Promise<Map<string, string> | null> {
-  const listed = await git(["ls-files", "-co", "--exclude-standard", "-z"], dir);
-  if (!listed.ok) return null;
   const inputs = new Map<string, string>();
   try {
-    for (const rel of new Set(listed.stdout.split("\0").filter(Boolean))) {
+    // Git for Windows walks directory junctions as directories. Record root links themselves
+    // and exclude their descendants, so a consumer probe cannot look like new source files.
+    const links = fs.readdirSync(dir).filter(name => fs.lstatSync(path.join(dir, name), { throwIfNoEntry: false })?.isSymbolicLink());
+    const listed = await git(["ls-files", "-co", "--exclude-standard", "-z", ...(links.length ? ["--", ".", ...links.map(name => `:(exclude,literal)${name}`)] : [])], dir);
+    if (!listed.ok) return null;
+    const names = new Set([...listed.stdout.split("\0").filter(Boolean), ...links.filter(name => name !== ".cursor" && !DEP_DIRS.includes(name))]);
+    for (const rel of names) {
       if (rel.startsWith(".cursor/")) continue;
       const file = path.join(dir, rel), stat = fs.lstatSync(file, { throwIfNoEntry: false });
       if (!stat || stat.isDirectory()) continue;

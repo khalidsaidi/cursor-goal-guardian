@@ -66,7 +66,8 @@ process.stdout.write(JSON.stringify(out) + "\\n");
 
 /** A reviewer that checked and says every item it was asked about holds. */
 export const STANDIN_REVIEWER = exe("reviewer", `
-const a = process.argv.slice(2); const prompt = a[a.indexOf("-p") + 1] || "";
+const a = process.argv.slice(2); let prompt = a[a.indexOf("-p") + 1] || "";
+if (prompt.startsWith("Read .cursor/goal-guardian/review-task.md")) prompt = require("fs").readFileSync(".cursor/goal-guardian/review-task.md", "utf8");
 const ids = [...prompt.matchAll(/^- ([A-Za-z0-9_]+): /gm)].map((m) => m[1]);
 process.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify({ items: ids.map((id) => ({ id, verdict: "holds", evidence: "checked" })), extra: [], checks: ${JSON.stringify(VERIFIED_CHECKS)} }) }) + "\\n");`);
 

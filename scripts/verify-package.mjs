@@ -27,6 +27,7 @@ try{
  const hook=path.join(ext,'bin','goal-guardian-hook'+exe),mcp=path.join(ext,'bin','goal-guardian-mcp'+exe),codex=path.join(ext,'bin','goal-guardian-codex-goals'+exe);
  const python=path.join(ext,'bin','python',process.platform==='win32'?'python.exe':'bin/python3');
  for(const f of [hook,mcp,codex,python]){assert((await fs.stat(f)).isFile(),f);if(process.platform!=='win32')await fs.chmod(f,0o755);}
+ if(process.platform==='win32')assert((await fs.stat(path.join(ext,'bin','vcruntime140.dll'))).isFile(),'The Codex CRT must be beside its executable');
  // Deliberately use the installed component layout, not source-tree evaluator/Codex overrides.
  const env={...process.env};
  for(const k of Object.keys(env))if(k.startsWith('GOAL_GUARDIAN_')||k.startsWith('CGG_'))delete env[k];

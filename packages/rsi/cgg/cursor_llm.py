@@ -27,12 +27,13 @@ def agent_command() -> str | None:
     configured = os.environ.get("GOAL_GUARDIAN_REVIEWER")
     if configured:
         return configured if os.path.isfile(configured) and os.access(configured, os.X_OK) else None
-    for name in ("cursor-agent", "cursor-agent.cmd", "cursor-agent.exe", "agent", "agent.cmd", "agent.exe"):
+    names = ("cursor-agent", "cursor-agent.cmd", "cursor-agent.exe", "agent", "agent.cmd", "agent.exe")
+    for name in names:
         found = shutil.which(name)
         if found:
             return found
-    fallback = Path.home() / ".local" / "bin" / "cursor-agent"
-    return str(fallback) if fallback.is_file() else None
+    home_bin = Path.home() / ".local" / "bin"
+    return next((str(home_bin / name) for name in names if (home_bin / name).is_file()), None)
 
 
 def answer_text(stdout: str) -> str | None:

@@ -78,6 +78,7 @@ describe("the goal keepers' own code decides", () => {
     await fsp.writeFile(bin,`#!/usr/bin/env node
 const fs=require('fs'),path=require('path'),a=process.argv.slice(2);
 let p=a[a.indexOf('-p')+1]||'';if(p.startsWith('Read task.md'))p=fs.readFileSync(path.join(a[a.indexOf('--workspace')+1],'task.md'),'utf8');
+if(p.startsWith('Read .cursor/goal-guardian/review-task.md'))p=fs.readFileSync(path.join(a[a.indexOf('--workspace')+1],'.cursor/goal-guardian/review-task.md'),'utf8');
 const corrected=p.includes('User feedback on earlier review findings:')&&p.includes('demands an uppercase CSV filename')&&p.includes('"judgment":"wrong"');
 console.log(JSON.stringify({type:'result',result:JSON.stringify({items:[{id:'sc_1',verdict:corrected?'holds':'fails',evidence:corrected?'requested export works':'demands an uppercase CSV filename'}],extra:[],checks:[{id:'build',verdict:'holds',evidence:'build works'},{id:'public_api',verdict:'holds',evidence:'exports work'},{id:'behavior',verdict:'fails',evidence:'genuine empty-row handling defect remains'}]})}));
 `);await fsp.chmod(bin,0o755);process.env.GOAL_GUARDIAN_REVIEWER=bin;
@@ -353,7 +354,7 @@ describe("finishing the work after a failed check", () => {
 const fs=require("fs"), cp=require("child_process");
 const count=${JSON.stringify(count)};const n=fs.existsSync(count)?Number(fs.readFileSync(count,"utf8")):0;fs.writeFileSync(count,String(n+1));
 if (${failFirst} && n===0) process.exit(72);
-const input=fs.readFileSync(0,"utf8");const r=cp.spawnSync(${JSON.stringify(command)},process.argv.slice(2),{input,encoding:"utf8",env:process.env});process.stdout.write(r.stdout||"");process.exit(r.status??1);
+const input=fs.readFileSync(0,"utf8");const r=cp.spawnSync(process.execPath,[${JSON.stringify(command)},...process.argv.slice(2)],{input,encoding:"utf8",env:process.env});process.stdout.write(r.stdout||"");process.exit(r.status??1);
 `);
     await fsp.chmod(file, 0o755);
     return { file, calls: () => Number(fs.readFileSync(count, "utf8")) };
