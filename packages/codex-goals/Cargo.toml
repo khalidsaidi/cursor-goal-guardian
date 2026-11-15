@@ -29,6 +29,11 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-uti
 anyhow = "1"
 serde_json = "1"
 
+# Codex's Windows PTY uses std::ffi::c_void; winapi must use the same definition.
+# Enable its std feature in this wrapper without changing the upstream source.
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.9", features = ["std"] }
+
 # The same replacements Codex's own workspace makes (codex-rs/Cargo.toml [patch.crates-io]); a git dependency
 # doesn't bring them along.
 [patch.crates-io]

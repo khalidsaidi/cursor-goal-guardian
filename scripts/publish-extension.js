@@ -1,38 +1,63 @@
 #!/usr/bin/env node
-// Publishes the validated Linux x64 release to Open VSX (Cursor's registry).
-// Each target carries its own self-contained native binaries.
-import { spawnSync } from "node:child_process";
+// Publish complete native packages, either verified locally or downloaded from CI.
+import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
+import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(path.join(root, "packages/core/package.json"));
+const { sync: spawn } = require("cross-spawn");
+const extDir = path.join(root, "packages/cursor-goal-guardian-extension");
+const targets = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"];
+const host = `${os.platform()}-${os.arch()}`;
+const flag = (name, fallback) => {
+  const index = process.argv.indexOf(name);
+  if (index === -1) return fallback;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith("--")) throw new Error(`${name} needs a value`);
+  return value;
+};
+const requested = flag("--target", host);
+const selected = requested === "all" ? targets : [requested];
+if (selected.some(target => !targets.includes(target))) throw new Error(`Unknown target: ${requested}`);
+const artifacts = flag("--artifacts", null);
+if (!artifacts && selected.some(target => target !== host)) {
+  throw new Error("Cross-platform publishing needs --artifacts DIR containing the VSIX files and native CI verification receipts. Use --target all to publish the full matrix.");
+}
+const version = JSON.parse(await fs.readFile(path.join(extDir, "package.json"), "utf8")).version;
+function run(command, args, cwd = root) {
+  const result = spawn(command, args, { stdio: "inherit", cwd, windowsHide: true });
+  if (result.status !== 0) throw new Error(`Command failed: ${command} (exit ${result.status ?? "unavailable"})`);
+}
+if (!artifacts) {
+  run(process.execPath, [path.join(root, "scripts/package-extension.js"), "--target", host]);
+  run(process.execPath, [path.join(root, "scripts/verify-package.mjs"), path.join(extDir, `cursor-goal-guardian-${host}.vsix`)]);
+}
+const packages = [];
+// Validate every selected file before publishing any of them.
+for (const target of selected) {
+  const archive = path.resolve(artifacts ?? extDir, `cursor-goal-guardian-${target}.vsix`);
+  const receipt = JSON.parse(await fs.readFile(archive + ".verified.json", "utf8"));
+  const digest = createHash("sha256").update(await fs.readFile(archive)).digest("hex");
+  const components = ["native_codex", "goal_loop", "project_review_transport", "adk_evaluation", "rrsi_transport"];
+  if (receipt.target !== target || receipt.version !== version || receipt.sha256 !== digest ||
+      components.some(name => receipt.components?.[name] !== true) || (artifacts && !receipt.source_commit)) {
+    throw new Error(`Missing or mismatched complete-package verification for ${target}`);
+  }
+  packages.push({ archive, target, source: receipt.source_commit });
+}
+if (artifacts && new Set(packages.map(pkg => pkg.source)).size !== 1) {
+  throw new Error("The selected platform packages come from different source commits");
+}
+if (process.argv.includes("--check")) {
+  console.log(`Complete-package verification matches ${version}: ${selected.join(", ")}`);
+  process.exit(0);
+}
 const token = process.env.OVSX_TOKEN ?? process.env.OVSX_PAT;
-if (!token) {
-  console.error("Set OVSX_TOKEN (or OVSX_PAT) to an Open VSX publishing token. Never put it in source control.");
-  process.exit(1);
-}
-
-function run(cmd, args, cwd) {
-  const res = spawnSync(cmd, args, { stdio: "inherit", cwd });
-  if (res.status !== 0) process.exit(res.status ?? 1);
-}
-
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(scriptDir, "..");
-const extDir = path.join(root, "packages", "cursor-goal-guardian-extension");
-
-const requested = process.argv.includes("--target") ? process.argv[process.argv.indexOf("--target") + 1] : "linux-x64";
-if (requested !== "linux-x64") {
-  console.error("This release is validated for linux-x64 only. Older platform artifacts are historical.");
-  process.exit(1);
-}
-const TARGETS = [requested];
-
-run("node", [path.join(root, "scripts", "compile-binaries.mjs"), "--target", requested], root);
-for (const target of TARGETS) {
-  run("node", [path.join(root, "scripts", "package-extension.js"), "--target", target], root);
-  run(
-    "pnpm",
-    ["dlx", "ovsx", "publish", `cursor-goal-guardian-${target}.vsix`, "--target", target, "-p", token],
-    extDir,
-  );
+if (!token) throw new Error("Set OVSX_TOKEN (or OVSX_PAT) to an Open VSX publishing token. Never put it in source control.");
+for (const { archive, target } of packages) {
+  run("pnpm", ["dlx", "ovsx", "publish", archive, "--target", target, "-p", token]);
 }

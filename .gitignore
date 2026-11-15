@@ -19,6 +19,7 @@ coverage/
 
 # VS Code extension package
 *.vsix
+*.vsix.verified.json
 
 # Generated panel demo recordings/screenshots
 artifacts/panel-demo/
