@@ -278,7 +278,7 @@ async function labelledWorkspace(): Promise<string> {
 
 describe("Guardian's RRSI domain", () => {
   it("passes its own Python checks against a temp checkout and a fake agent", () => {
-    const out = execFileSync(PYTHON, ["-m", "unittest", "tests/test_cgg_domain.py"], {
+    const out = execFileSync(PYTHON, ["-m", "unittest", "tests/test_cgg_domain.py", "tests/test_model_budget.py"], {
       cwd: path.join(REPO_ROOT, "packages", "rsi"),
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -305,8 +305,9 @@ describe("one improvement try with Google's RRSI, start to finish", () => {
     process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
     const result = await improveReviewer(root, rsiPaths());
     const log = await fs.readFile(path.join(getGuardianPaths(root).dir, "rsi", "rrsi.log"), "utf8").catch(() => "");
+    const baselineLog = await fs.readFile(path.join(getGuardianPaths(root).dir, "rsi/runs/cgg/logs/baseline.log"), "utf8").catch(() => "");
     expect(result.status, log.slice(-3000)).toBe("done");
-    expect(result.run, `${result.run?.reason}\n${log.slice(-3000)}\n${await fs.readFile(path.join(getGuardianPaths(root).dir,"rsi/runs/cgg/jobs/heldout_before/rev_0/trial0.json"),"utf8").catch(()=>"no rev0")}`).toMatchObject({ kept: true });
+    expect(result.run, `${result.run?.reason}\n${log.slice(-3000)}\n${baselineLog.slice(-5000)}\n${await fs.readFile(path.join(getGuardianPaths(root).dir,"rsi/runs/cgg/jobs/heldout_before/rev_0/trial0.json"),"utf8").catch(()=>"no rev0")}`).toMatchObject({ kept: true });
     const evaluation=JSON.parse(await fs.readFile(path.join(getGuardianPaths(root).dir,"rsi/runs/cgg/jobs/base/eval.json"),"utf8"));
     expect(evaluation.C).toBe(160); // Real RRSI aggregation receives the native-envelope usage.
     expect(result.run!.new!.correct).toBeGreaterThan(result.run!.old!.correct);

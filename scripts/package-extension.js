@@ -86,7 +86,9 @@ async function bundlePython() {
   const got = await digest();
   if (got !== sha256) throw new Error(`${file}: checksum ${got} does not match the pinned ${sha256}`);
   // The archive's top folder is python/: it lands at bin/python.
-  run("tar", ["-xzf", archive, "-C", binDir], root);
+  // Git Bash may put GNU tar first; it treats a Windows drive letter as a remote host.
+  const tar = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\Windows", "System32", "tar.exe") : "tar";
+  run(tar, ["-xzf", archive, "-C", binDir], root);
   await prunePython(path.join(binDir, "python"));
   if (target.startsWith("win32")) {
     // The Codex executable imports this CRT too. Windows searches beside that executable,
