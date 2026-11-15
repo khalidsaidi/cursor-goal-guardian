@@ -107,7 +107,7 @@ def ask_agent(text: str) -> str:
             "Do not use 'unknown' as the verdict. Judge independently of any agent's completion claim.")
     with tempfile.TemporaryDirectory(prefix="gg-eval-") as scratch:
         if os.name == "nt" or len(text) > ARGV_LIMIT:
-            Path(scratch, "task.md").write_text(text, encoding="utf-8")
+            Path(scratch, "task.md").write_text(text, encoding="utf-8", newline="\n")
             ask = ("Read task.md in this folder and do exactly what it says. "
                    "Your whole reply is the answer it asks for, nothing else.")
         else:

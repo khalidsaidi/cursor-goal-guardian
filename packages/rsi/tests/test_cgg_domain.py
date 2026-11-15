@@ -75,6 +75,20 @@ class CggDomainTest(unittest.TestCase):
         sys.path.remove(str(self.repo))
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    def test_liveness_check_preserves_a_running_process_and_detects_its_exit(self):
+        from model_budget import _process_alive
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                 **({"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}))
+        try:
+            self.assertTrue(_process_alive(child.pid))
+            child.terminate()
+            child.wait(timeout=10)
+            self.assertFalse(_process_alive(child.pid))
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=10)
+
     def test_splits_and_smoke_ids(self):
         self.assertEqual(sorted(self.dom.evolve_ids()), ["a", "b"])
         self.assertEqual(self.dom.heldout_ids(), ["c"])

@@ -51,6 +51,7 @@ jobs:
           workspaces: packages/codex-goals
           shared-key: codex-goals
           cache-on-failure: true
+          cache-workspace-crates: true
       - uses: oven-sh/setup-bun@v2
         if: matrix.target != 'win32-arm64'
       - run: pnpm install --frozen-lockfile

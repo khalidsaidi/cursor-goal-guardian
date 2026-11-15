@@ -65,7 +65,7 @@ def generate(prompt, system=None, max_retries=3, json_only=False, model=None,
     for attempt in range(max_retries):
         with tempfile.TemporaryDirectory(prefix="gg-rsi-") as scratch:
             if os.name == "nt" or len(text) > ARGV_LIMIT:
-                Path(scratch, "task.md").write_text(text, encoding="utf-8")
+                Path(scratch, "task.md").write_text(text, encoding="utf-8", newline="\n")
                 ask = ("Read task.md in this folder and do exactly what it says. "
                        "Your whole reply is the answer it asks for, nothing else.")
             else:

@@ -11,6 +11,35 @@ def _write(file, data):
     temporary.replace(file)
 
 
+def _process_alive(pid):
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+    # Signal 0 is CTRL_C_EVENT on Windows, not a portable liveness query.
+    # Wait on a process handle without delivering any console event.
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        return ctypes.get_last_error() != 87  # An inaccessible process may still be alive.
+    try:
+        return kernel.WaitForSingleObject(handle, 0) != 0  # WAIT_OBJECT_0 means exited.
+    finally:
+        kernel.CloseHandle(handle)
+
+
 def _lock(file):
     lock = Path(str(file) + ".lock")
     started = time.monotonic()
@@ -25,12 +54,7 @@ def _lock(file):
                 pid = int(owner.read_text()) if owner.exists() else None
                 dead = False
                 if pid:
-                    try:
-                        os.kill(pid, 0)
-                    except ProcessLookupError:
-                        dead = True
-                    except PermissionError:
-                        pass
+                    dead = not _process_alive(pid)
                 elif time.time() - lock.stat().st_mtime > 1:
                     dead = True
                 if dead:

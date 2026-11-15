@@ -74,7 +74,9 @@ describe("a review's case", () => {
     expect(saved?.currentRequest).toBe(constrained.currentRequest);
     const reviewer = path.join(await tmp("gg-constraint-reviewer-"), "agent");
     await fs.writeFile(reviewer, `#!/usr/bin/env node
-const cp=require('child_process'),a=process.argv.slice(2),p=a[a.indexOf('-p')+1]||'',w=a[a.indexOf('--workspace')+1];
+const cp=require('child_process'),fs=require('fs'),a=process.argv.slice(2),w=a[a.indexOf('--workspace')+1];
+let p=a[a.indexOf('-p')+1]||'';
+if(p.startsWith('Read .cursor/goal-guardian/review-task.md'))p=fs.readFileSync('.cursor/goal-guardian/review-task.md','utf8');
 if(!p.includes('Latest user request for this turn:'+String.fromCharCode(10)+'Continue the original goal and finish the remaining work.'))process.exit(2);
 const changed=cp.execFileSync('git',['diff','HEAD','--','a.js'],{cwd:w,encoding:'utf8'}).length>0;
 const extra=p.includes('Do not change a.js.')&&changed?[{file:'a.js',what:'Changed the file the user required unchanged'}]:[];
