@@ -184,6 +184,10 @@ async function addCodexGoals(target, dir) {
     await fs.copyFile(from, out);
     if (!target.startsWith("win32")) await fs.chmod(out, 0o755);
   };
+  if (process.env.CGG_USE_CACHED_CODEX === "1") {
+    await copy(prebuilt);
+    return console.log(`codex-goals: reused the explicitly selected native artifact for ${target}`);
+  }
   if (process.env.GOAL_GUARDIAN_SKIP_CODEX_GOALS) return console.log(`codex-goals: skipped for ${target} (GOAL_GUARDIAN_SKIP_CODEX_GOALS)`);
   if (target === hostTarget()) {
     if (spawnSync("cargo", ["--version"], { timeout: 10_000 }).status !== 0) {

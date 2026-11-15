@@ -11,6 +11,10 @@ on:
         type: choice
         default: all
         options: [all, linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64, win32-arm64]
+      native_run:
+        description: Earlier run with passed native Rust tests and unchanged Codex inputs (optional)
+        type: string
+        default: ''
 
 jobs:
   platform:
@@ -46,7 +50,9 @@ jobs:
         with:
           python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
+        if: inputs.native_run == ''
       - uses: Swatinem/rust-cache@v2
+        if: inputs.native_run == ''
         with:
           workspaces: packages/codex-goals
           shared-key: codex-goals
@@ -57,6 +63,21 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: node scripts/check-versions.mjs
       - run: pnpm -r build
+      - name: Check the source and native test result before reusing Codex
+        if: inputs.native_run != ''
+        run: node scripts/check-native-reuse.mjs '${{ inputs.native_run }}' '${{ matrix.target }}'
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        if: inputs.native_run != ''
+        with:
+          name: native-codex-${{ matrix.target }}
+          path: .cache/codex-goals/${{ matrix.target }}
+          run-id: ${{ inputs.native_run }}
+          github-token: ${{ github.token }}
+      - name: Select the checked native artifact
+        if: inputs.native_run != ''
+        run: echo 'CGG_USE_CACHED_CODEX=1' >> "$GITHUB_ENV"
       - name: Build the actual native goal runtime and hook/MCP programs
         run: node scripts/compile-binaries.mjs --host-only
       - uses: actions/upload-artifact@v4
@@ -65,6 +86,7 @@ jobs:
           path: dist-bin/${{ matrix.target }}/goal-guardian-codex-goals${{ startsWith(matrix.target, 'win32-') && '.exe' || '' }}
           if-no-files-found: error
       - name: Test the real Codex goal wrapper
+        if: inputs.native_run == ''
         run: cargo test --release --locked --manifest-path packages/codex-goals/Cargo.toml
       - run: pnpm -r exec tsc -p tsconfig.json --noEmit
       - run: pnpm test
