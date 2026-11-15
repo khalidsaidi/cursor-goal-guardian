@@ -1,10 +1,16 @@
 # Release decision: current evidence and remaining work
 
-Updated 2026-11-13 against `13dbc76`, after the user-authorized narrow learning connection check. This is the release checklist, not a new benchmark plan.
+Updated 2026-11-15 against `9348a66`, carrying forward the agreed release evidence and completed leverage work. This is the release checklist, not a new benchmark plan.
 
 ## Target
 
 Remember the user's goal and keep Cursor working on it; independently check unfinished or meaningfully unrequested work; improve the reviewer from feedback through RRSI. Codex and DeepSeek goal code, CGG's reviewer, ADK and RRSI remain the intended components. Help ordinary agents finish; do not police honesty.
+
+## Current decision: leverage pass closed
+
+The capability audit identified the complementary consumers of the included goal, review, evaluation and learning code and repaired the relevant missing connections. Local/package checks cover those repairs; subsequent native Cursor checks exercise current review and explicit-feedback behavior, and confirm the new corrections remain eligible learning input. The earlier real-model RRSI prompt search and the already completed installation/next-review check continue to count. A fresh winning RRSI search is not an additional release requirement. Recent statements emphasizing its absence must not be interpreted as reopening that agreed gate. The Linux/WSL release decision stands; no further paid validation is scheduled by this pass.
+
+A source check of the earlier bytes.js held-out example confirms an actual useful historical learning change: the learned prompt removed complaints about supporting input validation and its tests. The requested public helper works on the inspected ordinary inputs, and the recorded tests contain genuine helper assertions. Record: `/home/khali/ggw-study/ext/source-confirmed-useful-learning.json`. The saved Mocha dependency is now absent, so this source check does not claim a fresh full-suite pass. It also does not claim every historical label was valid or every useful catch preserved. The earlier native installation evidence, current native feedback evidence and historical RRSI search establish different connections; their limits remain explicit without requiring another whole-chain winning run.
 
 ## Completed evidence: do not restart these gates
 
