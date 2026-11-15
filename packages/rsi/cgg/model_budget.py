@@ -5,10 +5,23 @@ import time
 from pathlib import Path
 
 
+def _file_operation(action):
+    # Windows readers briefly deny rename/delete while a handle is open. Keep the
+    # same lock and retry that filesystem operation; never reserve another call.
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            return action()
+        except OSError as error:
+            if getattr(error, "winerror", None) not in (5, 32, 33) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+
+
 def _write(file, data):
     temporary = file.with_suffix(file.suffix + ".tmp-" + str(os.getpid()))
     temporary.write_text(json.dumps(data))
-    temporary.replace(file)
+    _file_operation(lambda: temporary.replace(file))
 
 
 def _process_alive(pid):
@@ -46,7 +59,7 @@ def _lock(file):
     while True:
         try:
             lock.mkdir()
-            (lock / "owner").write_text(str(os.getpid()))
+            _file_operation(lambda: (lock / "owner").write_text(str(os.getpid())))
             return lock
         except FileExistsError:
             try:
@@ -58,8 +71,8 @@ def _lock(file):
                 elif time.time() - lock.stat().st_mtime > 1:
                     dead = True
                 if dead:
-                    owner.unlink(missing_ok=True)
-                    lock.rmdir()
+                    _file_operation(lambda: owner.unlink(missing_ok=True))
+                    _file_operation(lock.rmdir)
                     continue
             except (OSError, ValueError):
                 pass
@@ -93,5 +106,5 @@ def reserve_call():
             _write(daily, day)
     finally:
         for lock in reversed(locks):
-            (lock / "owner").unlink(missing_ok=True)
-            lock.rmdir()
+            _file_operation(lambda: (lock / "owner").unlink(missing_ok=True))
+            _file_operation(lock.rmdir)

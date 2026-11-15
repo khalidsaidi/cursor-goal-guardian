@@ -5,12 +5,36 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 DOMAIN = Path(__file__).resolve().parent.parent / "cgg"
 
 class BudgetTest(unittest.TestCase):
+    def test_transient_windows_sharing_does_not_leak_lock_or_charge_twice(self):
+        sys.path.insert(0, str(DOMAIN))
+        import model_budget
+        with tempfile.TemporaryDirectory() as directory:
+            budget = Path(directory) / "budget.json"
+            budget.write_text(json.dumps({"limit": 3, "used": 0}))
+            original_unlink, original_replace = Path.unlink, Path.replace
+            blocked = set()
+            def sharing_once(operation, file, *args, **kwargs):
+                if operation not in blocked:
+                    blocked.add(operation)
+                    error = PermissionError("controlled Windows sharing violation")
+                    error.winerror = 32
+                    raise error
+                return (original_unlink if operation == "unlink" else original_replace)(file, *args, **kwargs)
+            with patch.dict(os.environ, {"CGG_MODEL_BUDGET": str(budget), "CGG_DAILY_MODEL_BUDGET": ""}), \
+                 patch.object(Path, "unlink", lambda file, *a, **kw: sharing_once("unlink", file, *a, **kw)), \
+                 patch.object(Path, "replace", lambda file, *a, **kw: sharing_once("replace", file, *a, **kw)):
+                model_budget.reserve_call()
+            self.assertEqual(blocked, {"unlink", "replace"})
+            self.assertEqual(json.loads(budget.read_text())["used"], 1)
+            self.assertFalse(Path(str(budget) + ".lock").exists())
+
     def test_workers_share_one_allowance(self):
         with tempfile.TemporaryDirectory() as directory:
             budget = Path(directory) / "budget.json"

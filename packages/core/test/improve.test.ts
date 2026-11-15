@@ -377,7 +377,8 @@ describe("Guardian improving its reviewer by itself", () => {
     const lease = path.join(getGuardianPaths(root).dir, "improvement.lock");
     await fs.writeFile(lease, dead);
     await appendAudit(root, { ts: nowIso(), kind: "improve.start", id: "interrupted" });
-    expect((await autoImprove(root, rsiPaths()))?.run?.kept).toBe(true);
+    const recovered = await autoImprove(root, rsiPaths());
+    expect(recovered?.run?.kept, JSON.stringify(recovered)).toBe(true);
     await expect(fs.access(lease)).rejects.toThrow();
   }, 300_000);
 
@@ -441,8 +442,9 @@ describe("Guardian improving its reviewer by itself", () => {
     await appendAudit(root, { ts: nowIso(), kind: "goal.control", goalHash: goalHash(contract), operation: "resume", actor: "user" });
     expect((await running)?.run).toMatchObject({ kept:false, yielded:true });
     const reviewerPid=Number(await fs.readFile(process.env.CGG_TEST_AGENT_MARKER,"utf8"));
-    await new Promise(r=>setTimeout(r,100));
-    expect(()=>process.kill(reviewerPid,0)).toThrow();
+    await expect.poll(() => {
+      try { process.kill(reviewerPid, 0); return true; } catch { return false; }
+    }, { timeout: 5000, interval: 50 }).toBe(false);
     const base = path.join(getGuardianPaths(root).dir,"learning");
     const pending = JSON.parse(await fs.readFile(path.join(base,"pending.json"),"utf8"));
     const witness=path.join(getGuardianPaths(root).dir,"rsi/resume-witness");
