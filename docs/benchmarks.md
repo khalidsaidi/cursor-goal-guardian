@@ -22,4 +22,4 @@ A headless Cursor invocation can contain several model turns. Invocation allowan
 
 The Command Center offers Off, Light and Standard for automatic learning. Background learning yields to active work and shares a rolling workspace allowance across attempts. Unqualified candidates and allowance exhaustion leave the current reviewer in place. Optional goal token budgets are accounted for by Codex's goal store; they are separate from learning's invocation allowance.
 
-Current platform validation is Linux x64, including WSL Ubuntu. Detailed measurement provenance remains in the [maintainer release record](release-status.md). Earlier benchmark tables are preserved in Git history, not presented as current package measurements.
+The historical timing evidence is from Linux/WSL. Native package checks on other targets do not transfer those timings or measure real-model performance. Detailed measurement provenance remains in the [maintainer release record](release-status.md). Earlier benchmark tables are preserved in Git history, not presented as current package measurements.

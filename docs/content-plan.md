@@ -14,7 +14,7 @@ Help an ordinary Cursor agent finish the user's goal. Lead with remembered goals
 
 The root README introduces the product. The extension README is the store guide. The extension manifest supplies the short listing description, keywords and command labels. Interface copy is in the extension sources and core panel view model; generated chat skills/rules come from core's rule generator. Component READMEs explain the actual adapters. NOTICE credits upstream code and adaptations.
 
-The configured public distribution is Open VSX; the homepage is the GitHub README. Published versions, release notes and repository metadata must agree with the release being shipped. Do not label older platform packages as support for the current Linux x64 build.
+The configured public distribution is Open VSX; the homepage is the GitHub README. Published versions, release notes and repository metadata must agree with the release being shipped. Use the checked artifacts for the current version on each platform; do not present older packages as validation of a new build.
 
 ## Visual policy
 

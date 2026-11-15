@@ -1,6 +1,6 @@
 # Release decision: current evidence and remaining work
 
-Updated 2026-11-15 for the 1.0.1 public-material refresh following `49fee2b`, carrying forward the agreed release evidence and completed leverage work. This is the release checklist, not a new benchmark plan.
+Updated 2026-11-15 for the 1.0.2 platform restoration and public-material refresh, carrying forward the agreed release evidence and completed leverage work. This is the release checklist, not a new benchmark plan.
 
 ## Target
 
@@ -11,6 +11,14 @@ Remember the user's goal and keep Cursor working on it; independently check unfi
 The capability audit identified the complementary consumers of the included goal, review, evaluation and learning code and repaired the relevant missing connections. Local/package checks cover those repairs; subsequent native Cursor checks exercise current review and explicit-feedback behavior, and confirm the new corrections remain eligible learning input. The earlier real-model RRSI prompt search and the already completed installation/next-review check continue to count. A fresh winning RRSI search is not an additional release requirement. Recent statements emphasizing its absence must not be interpreted as reopening that agreed gate. The Linux/WSL release decision stands; no further paid validation is scheduled by this pass.
 
 A source check of the earlier bytes.js held-out example confirms an actual useful historical learning change: the learned prompt removed complaints about supporting input validation and its tests. The requested public helper works on the inspected ordinary inputs, and the recorded tests contain genuine helper assertions. Record: `/home/khali/ggw-study/ext/source-confirmed-useful-learning.json`. The saved Mocha dependency is now absent, so this source check does not claim a fresh full-suite pass. It also does not claim every historical label was valid or every useful catch preserved. The earlier native installation evidence, current native feedback evidence and historical RRSI search establish different connections; their limits remain explicit without requiring another whole-chain winning run.
+
+## Current platform qualification: complete native packages
+
+[Native run 43776451346](https://github.com/khalidsaidi/cursor-goal-guardian/actions/runs/43776451346) passed for Linux x64/ARM64, macOS x64/ARM64 and Windows x64/ARM64 at `b71d286ab105449519bf04cab65a2c01d1c1a5ca`. Each host passed the current unit and offline integration suites, built its full 1.0.2 VSIX and executed the extracted goal loop, native Codex runtime, project review, ADK and RRSI transport. The previously built native Codex programs were reused only after checking unchanged Rust inputs and prior successful source tests. The Windows sharing-conflict regression also passed directly on Windows and Linux and is included in the native Python checks.
+
+These are stand-in model checks; real Cursor/model evidence remains scoped to Linux/WSL and is carried forward above. No paid Cursor calls were made for the public-material or platform-restoration work. Linux runtimes require glibc 2.39+ and OpenSSL 3. Final public copy is incorporated into the checked archives with byte comparison of every non-document entry; receipts retain the original native verification digest and identify the copy revision. Release staging and evidence: `/home/khali/ggw-study/platform-parity/release-1.0.2/`.
+
+Open VSX still exposes 1.0.0 as checked after native qualification. Publishing authentication remains unavailable; the existing request for a saved token file path is pending. This is a distribution blocker, not a reason to restart model studies or remove the restored platform targets.
 
 ## Completed evidence: do not restart these gates
 
@@ -233,7 +241,7 @@ The final build, core/hook/MCP/extension tests and packaged offline end-to-end c
 The publisher now defaults to the validated Linux x64 target instead of publishing an unsupported six-platform matrix. The public installation advice checks version and target and allows registry publication to lag the GitHub package. The live Open VSX listing was inspected and still carries the older 1.0.0 description/platform packages. No Open VSX token is configured in the Windows/WSL environment or GitHub secrets; live registry publication therefore remains pending authentication. GitHub publishing and final remote verification are tracked below when performed. Do not mark the entire public-material objective complete while the live listing remains stale.
 
 
-### Publication state
+### Publication state after the 1.0.1 refresh
 
 Repository changes were committed as `5c13eef` and pushed to main. Every changed file was fetched from the public raw GitHub endpoint at that revision and matched local content. GitHub's description, topics and homepage were updated. Release `v1.0.1` is published with the Linux x64 VSIX and checksum; GitHub's asset digest matches the verified archive. The old `v0.1.0` release now clearly identifies itself as historical. Release notes and downloads: https://github.com/khalidsaidi/cursor-goal-guardian/releases/tag/v1.0.1 . Evidence is under `/home/khali/ggw-study/public-material-publication/`.
 

@@ -6,7 +6,7 @@ CGG helps an ordinary coding agent finish what you asked for. It remembers the g
 
 ![Cursor Goal Guardian](packages/cursor-goal-guardian-extension/images/banner.png)
 
-**Current release scope: Linux x64, including Cursor connected to WSL Ubuntu.** Other platforms have older published packages; they are not validation of this build.
+**Native package targets: Windows, macOS and Linux, on x64 and ARM64.** WSL projects use the Linux package. Real Cursor/model evidence comes from Linux/WSL; native package checks use a stand-in model. Linux builds require glibc 2.39+ and OpenSSL 3 (Ubuntu 24.04 or compatible).
 
 ## Three parts, one purpose
 
@@ -18,12 +18,12 @@ These components have distinct jobs. CGG does not run Codex or DeepSeek as anoth
 
 ## Start using it
 
-1. Install the **Linux x64 1.0.1 VSIX** from [GitHub releases](https://github.com/khalidsaidi/cursor-goal-guardian/releases). The [Open VSX listing](https://open-vsx.org/extension/khalidsaidi/cursor-goal-guardian-extension) may lag: check its version and target before installing; older 1.0.0 packages are not this release.
+1. Install the **1.0.2 VSIX matching your extension host’s operating system and architecture** from [GitHub releases](https://github.com/khalidsaidi/cursor-goal-guardian/releases). The [Open VSX listing](https://open-vsx.org/extension/khalidsaidi/cursor-goal-guardian-extension) may lag: check its version and target before installing; older packages are not this release.
 2. Open a trusted project folder in Cursor. Connect Guardian from its panel; the goal, finish conditions and boundaries are optional at setup.
 3. Enable the project's **goal-guardian** MCP server in Cursor's settings when prompted.
 4. Ask your agent for the work as you normally would. The request becomes the goal. Use `/guardian` for a short briefing or `/guardian-goal` to steer it.
 
-Completion review uses `cursor-agent` signed in to your Cursor account. The Linux package bundles its other runtimes; it does not require a separate Google Cloud account or a Google model API key.
+Completion review uses Cursor CLI (`agent` or `cursor-agent`) signed in to your Cursor account. Each platform package bundles its other runtimes; it does not require a separate Google Cloud account or a Google model API key.
 
 ![Current panel example](packages/cursor-goal-guardian-extension/images/store/s5-session.png)
 
@@ -68,7 +68,7 @@ See [verification](docs/verification.md), [performance and usage](docs/benchmark
 - Desktop continuation needs Cursor's stop hook and a trusted workspace. The tested headless CLI does not supply that hook; CLI results do not demonstrate desktop continuation.
 - Some ignored-path shell changes are not observed. Multiple stop hooks and Cursor changes can affect follow-ups.
 - CGG does not protect its records against deliberate tampering. Its purpose is helping a normal agent finish the work.
-- This build has been built and run on Linux x64. Older Windows/macOS artifacts and historical tests are not current cross-platform support.
+- Native package checks exercise the goal loop, review, ADK and RRSI on each target with a stand-in model. Real Cursor/model evidence comes from Linux/WSL; these package checks do not measure model accuracy or desktop delivery on every OS.
 
 ## For contributors
 

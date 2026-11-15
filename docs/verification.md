@@ -4,7 +4,7 @@ CGG is intended to help a normal Cursor agent finish the user's goal. Verificati
 
 ## Current platform scope
 
-The current implementation has been built and run on Linux x64, including WSL Ubuntu connected to desktop Cursor. Earlier Windows/macOS artifacts and old platform matrices are not validation of this build.
+The native package matrix covers Windows, macOS and Linux on x64 and ARM64. Each platform job executes its complete VSIX with a stand-in model, including goal continuation/completion, independent-review transport, ADK and RRSI. Real Cursor/model evidence comes from Linux/WSL. Package integration and model behavior are different evidence; older artifacts do not qualify a new build.
 
 ## Real Cursor evidence
 
@@ -21,7 +21,7 @@ Historical whole-case flag counts do not establish that every label was valid or
 
 ## Local integration and packaging evidence
 
-Local tests with stand-ins cover current goal coordination, captured work and check reuse, specific chat/panel feedback, RRSI selection guards and attribution, held-out qualification, adoption/undo, foreground yielding and shared allowances. The Linux x64 VSIX has also been built, installed and exercised through packaged offline end-to-end checks.
+Local tests with stand-ins cover current goal coordination, captured work and check reuse, specific chat/panel feedback, RRSI selection guards and attribution, held-out qualification, adoption/undo, foreground yielding and shared allowances. Complete platform VSIX checks execute the actual bundled components. Controlled learning tests exercise search, held-out qualification, adoption, recovery, foreground yielding and allowances on their native hosts. The Linux x64 release is also installed and checked in WSL Cursor.
 
 These checks verify software connections and controls. They are distinct from real-model behavior evidence and do not establish an additional real-user accuracy improvement.
 
@@ -30,7 +30,7 @@ These checks verify software connections and controls. They are distinct from re
 - Correct completion or review accuracy for every future task.
 - Improvement from naturally accumulated user feedback in ordinary projects.
 - A fresh full feedback → RRSI search → automatic adoption sequence completed in one native Cursor run.
-- Current Windows, macOS or ARM support.
+- Real Cursor desktop delivery on every supported OS and architecture.
 - A general quality, speed or code-use percentage.
 
-The agreed Linux/WSL release evidence is complete; a new winning prompt is not an additional release gate. Detailed provenance, revisions and limitations live in the [maintainer release record](release-status.md). Earlier versions of this document remain available in Git history.
+The recorded real-model evidence is carried forward alongside native package validation; a new winning prompt is not an additional release gate. Detailed provenance, revisions and limitations live in the [maintainer release record](release-status.md). Earlier versions of this document remain available in Git history.

@@ -15,4 +15,4 @@ python3 -m pip install --no-deps --only-binary=:all: --target .site -r requireme
 python3 -m unittest discover -s tests
 ```
 
-The retained upstream source is selected for this evaluator, not ADK's entire agent/workflow/deployment ecosystem. Hosted Vertex AI evaluation is not used. Current build/run validation is Linux x64. See [verification](../../docs/verification.md), [design](../../docs/goal-design.md) and [NOTICE](../../NOTICE).
+The retained upstream source is selected for this evaluator, not ADK's entire agent/workflow/deployment ecosystem. Hosted Vertex AI evaluation is not used. Native package checks execute the evaluator with its bundled Python and target-compatible dependencies. Real Cursor/model behavior evidence comes from Linux/WSL. See [verification](../../docs/verification.md), [design](../../docs/goal-design.md) and [NOTICE](../../NOTICE).

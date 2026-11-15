@@ -21,6 +21,6 @@ cargo build --release --locked
 cargo test --release --locked
 ```
 
-The packaging script includes a compatible native binary. This build has been built and run on Linux x64. CI source or cached artifacts for other targets are not evidence of current cross-platform validation. Without the required runtime, goal integration is unverified rather than recorded as a checked completion.
+The packaging script includes a compatible native binary. Native CI builds the executable per target, or reuses an earlier tested executable after checking its Rust inputs are unchanged. The complete platform package then exercises that runtime through CGG’s real hook and MCP programs. Without the required runtime, goal integration is unverified rather than recorded as a checked completion.
 
 Upstream licenses, notices, source scope and adaptations are recorded in [NOTICE](../../NOTICE). See the [design](../../docs/goal-design.md) for the complete responsibility split.

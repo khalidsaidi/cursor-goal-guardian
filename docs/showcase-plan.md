@@ -20,4 +20,4 @@ The main store page links the explanatory animations, setup view and session pan
 
 ## Accuracy
 
-Show Linux/WSL as the current release scope. Do not show old permit systems, retired tools, universal platform/test-count claims, automatic honesty judgments or unconditional learned improvements. The panel may display a checked completion only as illustrative example data; that image is not proof of a real task result.
+Show the Windows, macOS and Linux package targets, with x64 and ARM64 variants. Keep real Cursor/model evidence scoped to Linux/WSL and label native integration checks as using a stand-in model. Do not show old permit systems, retired tools, universal platform/test-count claims, automatic honesty judgments or unconditional learned improvements. The panel may display a checked completion only as illustrative example data; that image is not proof of a real task result.

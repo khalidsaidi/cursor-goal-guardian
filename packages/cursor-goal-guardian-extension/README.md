@@ -6,7 +6,7 @@
 
 Ask your agent for the work as usual. CGG remembers the goal across chats, sends the agent back with unfinished work, and gives completion a separate check. It helps a normal agent finish; it is not an honesty detector.
 
-**This release is for Linux x64, including Cursor connected to WSL Ubuntu.** Older packages for other platforms do not establish support for this build.
+**Native packages target Windows, macOS and Linux, on x64 and ARM64.** Choose the target of Cursor’s extension host; WSL projects use Linux. Real Cursor/model evidence is from Linux/WSL; native package checks use a stand-in model. Linux builds require glibc 2.39+ and OpenSSL 3 (Ubuntu 24.04 or compatible).
 
 ## What CGG adds
 
@@ -20,12 +20,12 @@ Ask your agent for the work as usual. CGG remembers the goal across chats, sends
 
 ## Get started
 
-1. Open a trusted project folder in Cursor and install the Linux x64 extension.
+1. Open a trusted project folder in Cursor and install the extension matching its host OS and architecture.
 2. Open the Guardian panel and click **Connect Guardian**. You can fill the goal, finish conditions and boundaries now, or leave them empty.
 3. Open Cursor's MCP settings and enable the project's **goal-guardian** server. Use **Open MCP Settings** if the connection notification is shown; remote workspaces may need this step opened manually.
 4. Ask your agent for the work. CGG captures that request as the goal; a listed set of finish conditions becomes its checklist. Instructions after the list are retained.
 
-Completion review needs `cursor-agent` installed and signed in to the Cursor account you want to use. The package bundles CGG's other runtimes. No separate Google Cloud account or Google model key is required.
+Completion review needs Cursor CLI (`agent` or `cursor-agent`) installed and signed in to the Cursor account you want to use. The package bundles CGG's other runtimes. No separate Google Cloud account or Google model key is required.
 
 ![Connect Guardian](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s9-setup.png)
 

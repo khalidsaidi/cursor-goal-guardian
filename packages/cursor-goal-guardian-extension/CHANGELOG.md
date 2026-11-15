@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.0.2 (in preparation)
+## 1.0.2
 
-- Restore complete native package builds for the existing Windows, macOS and Linux targets on x64 and ARM64. Native qualification is in progress.
+- Restore complete native package builds for the existing Windows, macOS and Linux targets on x64 and ARM64. Complete packages execute in native platform checks with a stand-in model.
 - Include ADK and the Codex goal runtime in every platform package.
 - Preserve long, multiline and non-English requests through Windows reviewer, evaluator and learning calls.
 - Execute complete native packages before publication and publish those checked artifacts.
@@ -16,6 +16,6 @@
 - Bound background learning, yield to active work, retain compatible progress and offer Off, Light and Standard controls.
 - Refresh the public guides, listing, interface wording and illustrated tour around helping a normal agent finish the user's work.
 
-This release is built and validated for Linux x64, including WSL Ubuntu. Reviews can be wrong or incomplete; background learning is not a promise of improvement from every correction. See the verification guide for the evidence and its limits.
+Version 1.0.1 was built and validated for Linux x64, including WSL Ubuntu. Reviews can be wrong or incomplete; background learning is not a promise of improvement from every correction. See the verification guide for the evidence and its limits.
 
-Earlier entries are preserved in the [historical changelog](https://github.com/khalidsaidi/cursor-goal-guardian/blob/main/docs/history/changelog-before-1.0.1.md). Older platform artifacts and historical counts do not describe this release.
+Earlier entries are preserved in the [historical changelog](https://github.com/khalidsaidi/cursor-goal-guardian/blob/main/docs/history/changelog-before-1.0.1.md). Older platform artifacts and historical counts do not describe the current release.
