@@ -72,12 +72,8 @@ class CggDomain(Domain):
     briefs = {"analyst": briefs.ANALYST, "digester": briefs.DIGESTER,
               "proposer": briefs.PROPOSER, "critic": briefs.CRITIC}
     critic_patterns = _leak_patterns()
-    component_signals = [
-        ("verdict_rules", [r"holds|fails|verdict"]),
-        ("extra_rules", [r"extra|didn't ask|not asked|scope"]),
-        ("checks", [r"run|test|check"]),
-        ("output_format", [r"JSON|json"]),
-    ]
+    # RRSI's vocabulary is fixed (components.K). This domain evolves one consumed prompt file.
+    component_signals = [("prompt", [r"(?m)^diff --git a/domains/cgg/harness/reviewer\.md b/domains/cgg/harness/reviewer\.md$"])]
 
     # ---- task sets ---------------------------------------------------------
     def evolve_ids(self):
@@ -145,11 +141,43 @@ class CggDomain(Domain):
                     rewards.append(0.0)
                     continue
                 rewards.append(judged)
-                counts[label] += 1
-                if r["flagged"]:
-                    counts["right_caught" if label == "right" else "wrong_flagged"] += 1
-            per[t] = TaskResult(rewards=rewards, weights=[WEIGHT[label]] * k, tokens=[(self._rec(runs_dir, job, t, i) or {}).get("tokens") for i in range(k)], missing=missing, extra={"label": label})
+                targets = TASKS[t].get("feedback") or []
+                if targets:
+                    for target in targets:
+                        judged_label = target["label"]
+                        counts[judged_label] += 1
+                        if r["feedback_matches"].get(target["key"]) is True:
+                            counts["right_caught" if judged_label == "right" else "wrong_flagged"] += 1
+                else:
+                    counts[label] += 1
+                    if r["flagged"]:
+                        counts["right_caught" if label == "right" else "wrong_flagged"] += 1
+            trials = [self._rec(runs_dir, job, t, i) or {} for i in range(k)]
+            targets = TASKS[t].get("feedback") or []
+            weight = sum(WEIGHT[target["label"]] for target in targets) if targets else WEIGHT[label]
+            per[t] = TaskResult(rewards=rewards, weights=[weight] * k, tokens=[r.get("tokens") for r in trials], missing=missing,
+                                extra={"label": label, "feedback_matches": [r.get("feedback_matches") for r in trials]})
         return per, counts
+
+    def guards(self, incumbent, candidate):
+        """Use RRSI's native non-compensatory checks: average gains cannot pay for losing a useful issue."""
+        violations = []
+        for tid, before in incumbent.per_task.items():
+            useful = [t for t in TASKS.get(tid, {}).get("feedback") or [] if t["label"] == "right"]
+            if not useful:
+                continue
+            old = before.extra.get("feedback_matches")
+            after = candidate.per_task.get(tid)
+            new = after.extra.get("feedback_matches") if after else None
+            if old is None:
+                violations.append(f"{tid}: useful-finding attribution is missing from the reference evaluation")
+                continue
+            for target in useful:
+                caught_before = sum(isinstance(r, dict) and r.get(target["key"]) is True for r in old) / max(1, incumbent.k)
+                caught_after = sum(isinstance(r, dict) and r.get(target["key"]) is True for r in new or []) / max(1, candidate.k)
+                if caught_after + 1e-12 < caught_before:
+                    violations.append(f"{tid}/{target['key']}: a useful finding the current reviewer caught was lost or unclear")
+        return violations
 
     # ---- evidence ----------------------------------------------------------
     def load_trial(self, runs_dir, job, task_id, trial):

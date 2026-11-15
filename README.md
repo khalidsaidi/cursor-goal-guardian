@@ -36,7 +36,7 @@ nobody can cheaply reconstruct what the session was for.
    work. Check reuse depends on the actual project and recorded results, not report wording. A check that still cannot finish leaves completion unchecked. Disagreements between the two checks get a fresh project check
    before an objection goes back to the agent.
 4. **Learns from feedback.** RRSI searches for reviewer-prompt changes from your
-   verdicts on specific findings. A new complaint cannot stand in for a useful catch that was lost. Compatible replay results and search history are reused; stable project-specific checking guidance can be learned. CGG evaluates candidates before adoption and keeps the current reviewer
+   verdicts on specific findings, from the panel or explicit chat feedback. A new complaint cannot stand in for a useful catch that was lost. Compatible replay results and search history are reused; stable project-specific checking guidance can be learned. RRSI's own search guards preserve observed useful catches, and its history tracks prompt edits under its actual component categories. CGG evaluates candidates before adoption and keeps the current reviewer
    when no candidate qualifies. Earlier real-model lab work demonstrated prompt learning
    with a tradeoff; automatic installation and use were checked separately with a reused candidate.
 
@@ -192,7 +192,7 @@ validation, or validation of learning from real user feedback.
 - **Time:** measured on the built programs, median of 15: 64 ms on a plain command, 120 ms
   on your first message, 370 ms on the first edit (when the goal is recorded), 163 ms on a
   later message with a goal open, and 554 ms when the agent stops and is sent back.
-- **Model calls:** a review is one reviewer call, about five evaluator calls, and one more
+- **Model calls:** a review is one reviewer call, one evaluator sample by default, and one more
   reviewer call when the reviewer and evaluator disagree, all on your Cursor plan. Each send-back is
   an agent turn.
 
@@ -203,7 +203,7 @@ packages/
   core/         @goal-guardian/core: goal file and record, goal loop, recorded evidence, reviewer,
                 adapters for the code below
   mcp/          MCP server: get_goal, create_goal, update_goal, goal_command,
-                guardian_change_goal
+                guardian_change_goal, guardian_review_feedback
   hook/         Cursor hook
   cursor-goal-guardian-extension/
                 the Cursor extension (panel, setup)

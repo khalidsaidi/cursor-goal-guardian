@@ -17,3 +17,5 @@ on a study rig and against a stand-in agent. This folder is our side:
   - `model_budget.py`: the allowance shared across concurrent search and replay workers.
   - `harness/`: filled at run time with the workspace's current `reviewer.md`.
 - `tests/`: the domain against a temp workspace and a fake `cursor-agent`, and one RRSI smoke run.
+
+The domain also supplies RRSI's native non-compensatory `guards`: removing false complaints cannot pay for losing a useful finding on the search cases. Its `TaskResult.extra` retains specific issue observations, and counts/weights describe the actual user judgments. The consumed reviewer file is classified under RRSI's real `prompt` category, so edit history and credit counts remain usable. Stable supported workspace knowledge is allowed consistently in the constitution and role briefs. Background search remains bounded; its single-round mode does not exercise multi-round stagnation-triggered exploration. No claim is made that all RRSI modes run in that mode.

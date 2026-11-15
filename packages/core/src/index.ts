@@ -20,6 +20,7 @@ export * from "./goal/guard.js";
 export * from "./goal/harness.js";
 export * from "./goal/cases.js";
 export * from "./goal/improve.js";
+export * from "./goal/feedback.js";
 export * from "./goal/evaluate.js";
 export * from "./goal/originals.js";
 export * from "./goal/prompts.js";

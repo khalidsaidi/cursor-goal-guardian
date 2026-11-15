@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { writeContract } from "@goal-guardian/core";
+import { appendAudit,goalHash,readContractSafe,readAuditTail,nowIso,writeContract } from "@goal-guardian/core";
 import { makeWorkspace, readAudit, auditOfKind, type TestWorkspace } from "cursor-goal-guardian-testkit";
 import { recordUserPrompt } from "@goal-guardian/core";
 
@@ -43,7 +43,7 @@ describe("tool surface", () => {
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name).sort();
     // Codex's get_goal and update_goal by their own names, and Guardian's own tool for a redirected goal.
-    expect(names).toEqual(["create_goal", "get_goal", "goal_command", "guardian_change_goal", "update_goal"]);
+    expect(names).toEqual(["create_goal", "get_goal", "goal_command", "guardian_change_goal", "guardian_review_feedback", "update_goal"]);
     expect(names).not.toContain("guardian_issue_permit");
     expect(names).not.toContain("guardian_check_step");
     expect(names).not.toContain("guardian_commit_result");
@@ -63,6 +63,19 @@ describe("get_goal", () => {
     expect(goal.status).toBe("active");
     expect(goal.token_budget).toBeNull();
   });
+});
+
+describe("guardian_review_feedback",()=>{
+ it("exposes finding indexes and records explicit user chat feedback through the live MCP tool",async()=>{
+  const contract=await readContractSafe(ws.root);
+  await appendAudit(ws.root,{ts:nowIso(),kind:"goal.review",id:"chat-review",goalHash:goalHash(contract),reportTs:nowIso(),ran:true,seconds:1,fails:[{id:"sc_1",evidence:"requires uppercase CSV filenames"}],extra:[]});
+  const words="The review's uppercase CSV filename complaint is wrong.";
+  await recordUserPrompt(ws.root,words,"c1","agent");
+  const state=await callJson("get_goal");
+  expect(state.goal).toMatchObject({work:{last_review:{id:"chat-review",feedback_targets:[{index:0,source:"reviewer"}]}}});
+  expect(await callJson("guardian_review_feedback",{review_id:"chat-review",finding_index:0,judgment:"wrong",user_words:words})).toMatchObject({accepted:true});
+  expect((await readAuditTail(ws.root,100)).filter(r=>r.kind==="review.feedback")).toMatchObject([{reviewId:"chat-review",source:"chat",userWords:words}]);
+ });
 });
 
 describe("guardian_change_goal", () => {

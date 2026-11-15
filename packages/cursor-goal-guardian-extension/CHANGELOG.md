@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Connect explicit chat feedback to the existing current-review and RRSI records, retaining the user's reason and preserving the original goal when accepted work was unfinished.
+- Use RRSI's own search guards to retain useful findings on search cases, valid prompt-edit attribution, and judgment-level score weights/counts.
+- Align the learning constitution with supported project-specific guidance.
+
+
 - Carry prior checks and concrete findings into the goal view and returning-agent context; scope them to the current goal and mark stale work.
 - Supply ADK with changed-source observations and explicit evidence limits; retain uncertainty as incomplete verification.
 - Learn from the specific findings the user judged, preserve useful catches, and retain compatible replay/search knowledge and supported project guidance.
@@ -29,7 +34,11 @@ Built and run on Linux x64 only so far.
 The earlier study figures below predate this verification policy; they are not measurements of these changes.
 
 
-### Other projects' goal code runs beside Guardian's own
+### Historical integration notes
+
+The following notes describe earlier builds. Tool lists, engine responsibilities and model-call defaults below are superseded by the Unreleased changes and current README.
+
+#### Other projects' goal code runs beside Guardian's own
 
 The goal's words and "done when" items stay in Guardian's own goal file, and Guardian's own checks still come first when the agent is sent back and when "done" is accepted. Two projects' goal code now runs beside it, unmodified, with credit in `NOTICE`; each is consulted on every round and can refuse a change, and the goal's phase is read from DeepSeek Harness's record:
 

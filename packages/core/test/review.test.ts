@@ -121,7 +121,7 @@ describe("the reviewer's instructions", () => {
 describe("running a review", () => {
   it("reports genuine provider usage and leaves missing usage unknown", async () => {
     const root=await repo();
-    for(const [usage,want] of [[{input_tokens:100,output_tokens:20},120],[{total_tokens:81},81],[{},undefined]] as const){
+    for(const [usage,want] of [[{input_tokens:100,output_tokens:20},120],[{total_tokens:81},81],[{inputTokens:23272,outputTokens:1423,cacheReadTokens:47872,cacheWriteTokens:0,reasoningTokens:711},72567],[{inputTokens:100,outputTokens:20,cacheReadTokens:40,cacheWriteTokens:10},170],[{totalTokens:191,inputTokens:100,outputTokens:20},191],[{},undefined]] as const){
       process.env.GOAL_GUARDIAN_REVIEWER=await stub(`console.log(JSON.stringify({type:"result",usage:${JSON.stringify(usage)},result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
       const out=await runReview(root,{goal:"Check export",successCriteria:[{id:"sc_1",text:"Export works"}]});
       expect(out.ran).toBe(true);expect(out.tokens).toBe(want);

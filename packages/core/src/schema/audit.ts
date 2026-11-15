@@ -318,6 +318,8 @@ export const reviewFeedbackRecordSchema = z
     index: z.number().int().nonnegative(),
     /** right and wrong judge an objection; missed says a review that passed should have objected. */
     label: z.enum(["right", "wrong", "missed"]),
+    userWords: z.string().optional(),
+    source: z.enum(["chat", "panel"]).optional(),
   })
   .strict();
 

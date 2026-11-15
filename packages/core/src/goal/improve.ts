@@ -39,7 +39,7 @@ export interface LabelledCase {
   source: "user" | "fixed" | "overruled" | "missed";
   targets?: FeedbackTarget[];
 }
-export interface FeedbackTarget { key: string; finding: string; label: ReviewLabel; }
+export interface FeedbackTarget { key: string; finding: string; label: ReviewLabel; userWords?: string; }
 
 /** Keep what the user actually judged. A wrong objection does not label the whole project correct. */
 export function reviewFeedbackTargets(records: AuditRecord[], reviewId: string): FeedbackTarget[] {
@@ -50,15 +50,15 @@ export function reviewFeedbackTargets(records: AuditRecord[], reviewId: string):
   for (const r of records) if (r.kind === "review.feedback" && r.reviewId === reviewId) feedback.set(r.index, r);
   return [...feedback].flatMap(([index, f]) => {
     const finding = entries.get(index);
-    return finding && f.label !== "missed" ? [{ key: `finding_${index}`, finding, label: f.label }] : [];
+    return finding && f.label !== "missed" ? [{ key: `finding_${index}`, finding, label: f.label, ...(f.userWords ? {userWords:f.userWords} : {}) }] : [];
   });
 }
 
 /** New labelled cases needed since the last try before Guardian tries again by itself. */
 export const NEW_LABELS_PER_RUN = 4;
 
-export async function recordReviewFeedback(root: string, reviewId: string, index: number, label: ReviewLabel | "missed"): Promise<void> {
-  await appendAudit(root, { ts: nowIso(), kind: "review.feedback", reviewId, index, label });
+export async function recordReviewFeedback(root: string, reviewId: string, index: number, label: ReviewLabel | "missed", context: {userWords?:string; source?:"chat"|"panel"} = {}): Promise<void> {
+  await appendAudit(root, { ts: nowIso(), kind: "review.feedback", reviewId, index, label, ...context });
 }
 
 /**

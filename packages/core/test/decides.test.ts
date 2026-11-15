@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendAudit, defaultContract, getGuardianPaths, goalHash, goalPhaseOf, nowIso, readAuditTail, readContractSafe, readShellOutputs, recordShellOutput, recordUserPrompt,
-  resumeMissedGoal, reviewEvidence, runGoalStop, runGoalTool, submitGoalReport, engineGoal, recordReviewFeedback, loadCases, replayCase, REVIEW_PROMPT,
+  resumeMissedGoal, reviewEvidence, runGoalStop, runGoalTool, submitGoalReport, engineGoal, recordChatReviewFeedback, recordReviewFeedback, loadCases, replayCase, REVIEW_PROMPT,
 } from "../src/index.js";
 import { STANDIN_EVALUATOR } from "./helpers/setup.js";
 
@@ -99,6 +99,19 @@ const fs=require('fs');let s='';process.stdin.on('data',b=>s+=b);process.stdin.o
     const saved=(await loadCases(root)).at(-1)!;
     expect(saved.reviewFeedback).toMatchObject([{judgment:"wrong",finding:expect.stringContaining("uppercase CSV filename")}]);
     expect(await replayCase(root,saved.id,REVIEW_PROMPT)).toMatchObject({ran:true,fails:[{id:"behavior",evidence:"genuine empty-row handling defect remains"}]});
+  });
+
+  it("a user's explicit missed-work chat feedback reopens the original completed goal",async()=>{
+    const root=await repo();await work(root);
+    expect(await submitGoalReport(root,report)).toMatchObject({accepted:true,outcome:"proved"});
+    const id=String((await kinds(root,"goal.review")).at(-1)!.id);
+    const words="That wasn’t done.";
+    await recordUserPrompt(root,words,"c1","agent");
+    const feedback=await recordChatReviewFeedback(root,{reviewId:id,index:0,label:"missed",userWords:words});
+    expect(feedback,JSON.stringify(feedback)).toMatchObject({accepted:true,resumed:true});
+    expect(await phase(root)).toBe("active");
+    expect((await readContractSafe(root)).goal).toBe("Add CSV export");
+    expect((await kinds(root,"review.feedback")).at(-1)).toMatchObject({label:"missed",source:"chat",userWords:words});
   });
 
   it("overlapping completion reports run the independent checks only once", async () => {

@@ -12,6 +12,7 @@ import { registerGetGoal } from "./tools/getGoal.js";
 import { registerUpdateGoal } from "./tools/updateGoal.js";
 import { registerChangeGoal } from "./tools/changeGoal.js";
 import { registerCreateGoal } from "./tools/createGoal.js";
+import { registerReviewFeedback } from "./tools/reviewFeedback.js";
 import { registerGoalCommand } from "./tools/goalCommand.js";
 import { theirTool } from "./tools/theirs.js";
 import { engineToolDefinitions, loadCodexToolSpecs } from "@goal-guardian/core";
@@ -34,6 +35,7 @@ void loadCodexToolSpecs()
     registerUpdateGoal(server, theirTool(theirs, "update_goal"));
     registerGoalCommand(server);
     registerChangeGoal(server);
+    registerReviewFeedback(server);
     return server.connect(new StdioServerTransport());
   })
   .then(() => {

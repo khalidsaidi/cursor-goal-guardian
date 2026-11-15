@@ -219,7 +219,7 @@ const ws = a[a.indexOf("--workspace") + 1];
 if (prompt.startsWith("Read task.md")) prompt = fs.readFileSync(path.join(ws, "task.md"), "utf8");
 if(process.env.CGG_TEST_AGENT_MARKER) fs.writeFileSync(process.env.CGG_TEST_AGENT_MARKER,String(process.pid));
 if(process.env.CGG_TEST_AGENT_DELAY) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(process.env.CGG_TEST_AGENT_DELAY));
-const say = (o) => process.stdout.write(JSON.stringify({ type: "result", result: JSON.stringify(o) }) + "\\n");
+const say = (o) => process.stdout.write(JSON.stringify({ type: "result", usage: {inputTokens:100,outputTokens:20,cacheReadTokens:40,cacheWriteTokens:0}, result: JSON.stringify(o) }) + "\\n");
 if (prompt.includes("You are a harness engineer agent")) {
   const log = prompt.slice(prompt.lastIndexOf("=== INTERACTION LOG ==="));
   if (!log.includes('"action": "edit_file"')) say({ action: "edit_file", path: "reviewer.md", old: "Stay in this folder.", new: "QUIET: only object to what an item needs.\\nStay in this folder." });
@@ -301,6 +301,8 @@ describe.skipIf(posixOnly)("one improvement try with Google's RRSI, start to fin
     const log = await fs.readFile(path.join(getGuardianPaths(root).dir, "rsi", "rrsi.log"), "utf8").catch(() => "");
     expect(result.status, log.slice(-3000)).toBe("done");
     expect(result.run, `${result.run?.reason}\n${log.slice(-3000)}\n${await fs.readFile(path.join(getGuardianPaths(root).dir,"rsi/runs/cgg/jobs/heldout_before/rev_0/trial0.json"),"utf8").catch(()=>"no rev0")}`).toMatchObject({ kept: true });
+    const evaluation=JSON.parse(await fs.readFile(path.join(getGuardianPaths(root).dir,"rsi/runs/cgg/jobs/base/eval.json"),"utf8"));
+    expect(evaluation.C).toBe(160); // Real RRSI aggregation receives the native-envelope usage.
     expect(result.run!.new!.correct).toBeGreaterThan(result.run!.old!.correct);
     expect(result.run!.diff).toContain("+ QUIET");
     expect(result.run!.hypotheses.join(" ")).toContain("overruled");

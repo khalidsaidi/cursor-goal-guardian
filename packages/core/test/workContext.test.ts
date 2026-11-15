@@ -52,9 +52,21 @@ describe("useful work carried into another chat",()=>{
   await appendAudit(root,{ts:nowIso(),kind:"review.feedback",reviewId:"review1",index:0,label:"right"});
   records=await import("../src/audit/log.js").then(m=>m.readGoalRecords(root));
   expect(goalReviewFeedback(records,hash)).toMatchObject([{judgment:"right"}]);
+  await appendAudit(root,{ts:nowIso(),kind:"goal.end",goalHash:hash,conversationId:"prior",outcome:"proved"});
   await appendAudit(root,{ts:nowIso(),kind:"goal.engine",event:{type:"goal/change",data:{operation:"create"}}});
   records=await import("../src/audit/log.js").then(m=>m.readGoalRecords(root));
   expect(goalReviewFeedback(records,hash)).toEqual([]);
+ });
+ it("retains review work when DeepSeek is first initialized for an existing goal",async()=>{
+  const {root}=await fixture();
+  await appendAudit(root,{ts:nowIso(),kind:"goal.engine",event:{type:"goal/change",data:{operation:"create"}}});
+  expect((await goalWorkContext(root)).last_review?.id).toBe("review1");
+ });
+ it("does not mistake a temporary first-part stop for a different goal",async()=>{
+  const {root,hash}=await fixture();
+  await appendAudit(root,{ts:nowIso(),kind:"goal.end",goalHash:hash,conversationId:"c1",outcome:"set_aside"});
+  await appendAudit(root,{ts:nowIso(),kind:"goal.engine",event:{type:"goal/change",data:{operation:"create"}}});
+  expect((await goalWorkContext(root)).last_review?.id).toBe("review1");
  });
  it("keeps a recent correction when feedback exceeds the context bound",async()=>{
   const {root,hash,tree}=await fixture();

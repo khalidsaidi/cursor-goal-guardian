@@ -155,7 +155,7 @@ it rewrites Guardian's goal file, the file is put back. One exception: when your
 "done when" lines at all, the agent may write them; once there are any, it can't add more.
 
 **What it costs.** Each send-back is an agent turn on your Cursor plan. A review is one
-more agent call for the reviewer, about five short ones for the evaluator, and one more
+more agent call for the reviewer, one evaluator sample by default, and one more
 when the two checkers disagree. On Linux, the moment the agent stops and is sent back
 takes about 0.55 seconds of Guardian's own time, and a message of yours about 0.16. The
 download is 171 MB and unpacks to 440 MB.
@@ -239,3 +239,5 @@ runs and what is adapted.
   Google Research (Apache-2.0).
 
 Automatic learning yields to active work and shares a rolling workspace allowance across attempts. In **Goal Guardian → Automatic learning…**, choose Off, Light or Standard. Feedback remains saved when learning is off. Compatible checks and search history are reused; learning is evaluated against the specific findings you judged.
+
+Explicit chat corrections to identified review findings can feed the same learning records as the panel buttons. Vague remarks and the agent's own disagreement do not supply learning labels. The current check receives your reason; later learning preserves observed useful catches during search and checks candidates on held-out work before adoption.

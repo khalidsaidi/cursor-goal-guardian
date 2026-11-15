@@ -11,10 +11,19 @@ import { readShellOutputs } from "./record.js";
 /** Identical words can start a new goal: old receipts must not become its progress. */
 export function currentGoalRecords(records: AuditRecord[], hash: string): AuditRecord[] {
   let start = 0;
+  let sawEngineGoal = false;
+  let ended = false;
   for (let i = 0; i < records.length; i += 1) {
     const r = records[i]!;
     const event = r.kind === "goal.engine" ? r.event as { type?: string; data?: { operation?: string } } | undefined : undefined;
-    if ((r.kind === "goal.set" && r.goalHash === hash) || (event?.type === "goal/change" && event.data?.operation === "create")) start = i;
+    if (r.kind === "goal.set" && r.goalHash === hash) { start = i; sawEngineGoal = false; ended = false; }
+    if (r.kind === "goal.end" && r.goalHash === hash && ["proved", "unchecked"].includes(r.outcome)) ended = true;
+    if (event?.type === "goal/change") {
+      // A legacy/panel goal can be reviewed before DeepSeek is first materialized at completion.
+      // That initial create belongs to the same work; a replacement after an engine goal or close does not.
+      if (event.data?.operation === "create" && (sawEngineGoal || ended)) { start = i; ended = false; }
+      sawEngineGoal = true;
+    }
   }
   return records.slice(start);
 }
@@ -23,17 +32,17 @@ export function currentGoalRecords(records: AuditRecord[], hash: string): AuditR
 export function goalReviewFeedback(records: AuditRecord[], hash: string): ReviewUserFeedback[] {
   const current = currentGoalRecords(records,hash);
   const reviews = current.filter((r): r is GoalReviewRecord => r.kind === "goal.review" && r.goalHash === hash && Boolean(r.id)).slice(-3);
-  const latest = new Map<string, {reviewId:string; index:number; label:"right"|"wrong"}>();
+  const latest = new Map<string, {reviewId:string; index:number; label:"right"|"wrong"; userWords?:string}>();
   for (const r of current) {
     if (r.kind !== "review.feedback" || r.label === "missed" || !reviews.some(review=>review.id === r.reviewId)) continue;
     const key = `${r.reviewId}/${r.index}`;
     latest.delete(key); // A changed judgment belongs among the most recent feedback, too.
-    latest.set(key,{reviewId:r.reviewId,index:r.index,label:r.label});
+    latest.set(key,{reviewId:r.reviewId,index:r.index,label:r.label,...(r.userWords ? {userWords:r.userWords} : {})});
   }
   return [...latest.values()].slice(-8).flatMap(f => {
     const review = reviews.find(r=>r.id === f.reviewId)!;
     const entry = objectionEntries(review).find(e=>e.index === f.index);
-    return entry ? [{finding:entry.line,judgment:f.label}] : [];
+    return entry ? [{finding:entry.line,judgment:f.label,...(f.userWords ? {userWords:f.userWords} : {})}] : [];
   });
 }
 
@@ -59,6 +68,7 @@ export async function goalWorkContext(root: string, contract?: Contract, records
     last_review: review ? {
       id: review.id ?? null, recorded_at: review.ts, project_unchanged: unchanged, feedback_requires_recheck: corrected,
       items: review.verdicts ?? [], checks: review.checks ?? [], findings,
+      feedback_targets: objectionEntries(review).map(e=>({index:e.index,source:e.source,finding:e.line})),
       unavailable,
     } : null,
     recorded_commands: commands,

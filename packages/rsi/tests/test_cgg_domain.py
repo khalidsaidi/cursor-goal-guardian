@@ -82,6 +82,53 @@ class CggDomainTest(unittest.TestCase):
         with patch.object(module,"TASKS",mixed):
             self.assertEqual(self.dom.smoke_ids(),["a"])
 
+    def test_reviewer_text_edits_use_rrsis_actual_component_vocabulary(self):
+        from rrsi.components import normalize, K
+        diff = "diff --git a/domains/cgg/harness/reviewer.md b/domains/cgg/harness/reviewer.md\n--- a/domains/cgg/harness/reviewer.md\n+++ b/domains/cgg/harness/reviewer.md\n@@ -1 +1 @@\n-Report every failing verdict.\n+Report demonstrated failures with concrete evidence.\n"
+        for declared in ["prompt", None, "checks"]:
+            component=normalize(declared,diff,self.dom.component_signals)
+            self.assertIn(component,K)
+            self.assertEqual(component,"prompt")
+        from rrsi.history import History
+        history=History(self.tmp/"attribution.jsonl")
+        history.append_candidate(0,"A",[{"id":"C1","component":normalize("prompt",diff,self.dom.component_signals),"hypothesis":"focus on requested behavior"}],"ACCEPTED",0.1,0,True,0.8,None,"patch")
+        self.assertIn("prompt",history.tried())
+        self.assertEqual(history.incumbent_component_counts()["prompt"],1)
+
+    def _feedback_evaluation(self, job, caught, complained):
+        from rrsi.evaluate import aggregate
+        runs=self.tmp/"guard-runs"
+        file=runs/"jobs"/job/"a"/"trial0.json"
+        file.parent.mkdir(parents=True,exist_ok=True)
+        file.write_text(json.dumps({"ran":True,"flagged":True,"feedback_matches":{"catch":caught,"complaint":complained}}))
+        per,counts=self.dom.score(runs,job,["a"],1)
+        return aggregate(job,1,per,counts)
+
+    def test_rrsi_selection_cannot_trade_a_known_useful_catch_for_removing_false_complaints(self):
+        from unittest.mock import patch
+        from rrsi.config import RRSIConfig
+        from rrsi.selection import Candidate, select_round
+        module=sys.modules[self.dom.__class__.__module__]
+        tasks={"a":{"label":"right","split":"evolve","feedback":[{"key":"catch","label":"right"},{"key":"complaint","label":"wrong"}]}}
+        with patch.object(module,"TASKS",tasks):
+            from rrsi.evaluate import EvalResult
+            before=EvalResult.from_json(self._feedback_evaluation("before",True,True).to_json())
+            self.assertEqual(before.per_task["a"].weights,[3.0])
+            self.assertEqual(before.extra,{"right":1,"right_caught":1,"wrong":1,"wrong_flagged":1})
+            loses_catch=self._feedback_evaluation("tradeoff",False,False)
+            self.assertEqual(loses_catch.extra["right_caught"],0) # An unrelated flag is not this useful issue.
+            self.assertGreater(loses_catch.S,before.S) # Averages alone would reward this trade.
+            candidate=Candidate("A",[{"component":"prompt"}],ev=loses_catch)
+            winner,decisions=select_round([candidate],before,before.S,0,RRSIConfig(),{},guard_fn=self.dom.guards)
+            self.assertIsNone(winner)
+            self.assertIn("useful",decisions[0].reason)
+            better=self._feedback_evaluation("better",True,False)
+            candidate=Candidate("B",[{"component":"prompt"}],ev=better)
+            winner,_=select_round([candidate],before,before.S,0,RRSIConfig(),{},guard_fn=self.dom.guards)
+            self.assertIs(winner,candidate)
+            unknown=self._feedback_evaluation("unknown",None,False)
+            self.assertTrue(self.dom.guards(before,unknown))
+
     def test_run_and_score_weigh_a_wrong_flag_double(self):
         runs = self.tmp / "runs"
         self.dom.run(self.repo, runs, "j", ["a", "b"], 1)

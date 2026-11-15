@@ -112,7 +112,7 @@ export function reviewTemplate(root?: string): string {
 }
 
 /** The recorded objective and the human request active during this completion check. */
-export interface ReviewUserFeedback { finding: string; judgment: "right" | "wrong"; }
+export interface ReviewUserFeedback { finding: string; judgment: "right" | "wrong"; userWords?: string; }
 export type ReviewContract = Pick<Contract, "goal" | "successCriteria"> & Partial<Pick<Contract, "constraints">> & { currentRequest?: string; reviewFeedback?: ReviewUserFeedback[] };
 
 /** Current user guidance is shared by the checkers, outside the learned reviewer template. */
@@ -405,7 +405,13 @@ export async function reviewIn(dir: string, scratch: string, prompt: string, bud
   for (const line of run.stdout.trim().split("\n")) {
     try {
       const usage = JSON.parse(line).usage;
-      const total = usage?.total_tokens ?? (typeof usage?.input_tokens === "number" && typeof usage?.output_tokens === "number" ? usage.input_tokens + usage.output_tokens : undefined);
+      // Native Cursor returns camelCase uncached input plus separate cache-read/write counts.
+      // Reasoning tokens are already part of output, so do not add them a second time.
+      const total = usage?.total_tokens ?? usage?.totalTokens
+        ?? (typeof usage?.input_tokens === "number" && typeof usage?.output_tokens === "number" ? usage.input_tokens + usage.output_tokens
+          : typeof usage?.inputTokens === "number" && typeof usage?.outputTokens === "number"
+            ? usage.inputTokens + usage.outputTokens + (typeof usage.cacheReadTokens === "number" ? usage.cacheReadTokens : 0) + (typeof usage.cacheWriteTokens === "number" ? usage.cacheWriteTokens : 0)
+            : undefined);
       if (typeof total === "number" && Number.isFinite(total) && total > 0) tokens = total;
     } catch { /* diagnostic lines carry no usage */ }
   }
