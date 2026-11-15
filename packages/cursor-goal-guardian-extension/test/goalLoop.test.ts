@@ -92,19 +92,19 @@ describe("goal loop panel lines", () => {
   it("shows nothing before any run, and the round while one is going", () => {
     expect(renderSections(vm([])).goal).not.toContain("Goal: agent");
     const goal = renderSections(vm([{ ts: at(3), kind: "goal.round", ...base, round: 2, idle: false, unproved: ["sc_1 (x): no proof given"], unclaimed: [], extras: [] }])).goal;
-    expect(goal).toContain("Goal: agent sent back (round 2)");
+    expect(goal).toContain("Continuing the goal: the agent has the next steps (round 2)");
     expect(goal).toContain("sc_1 (x): no proof given");
   });
 
   it("a proved goal shows its receipts, what each changed file was for, and any extra left for the user", () => {
     const goal = renderSections(vm([{ ts: at(1), kind: "goal.end", ...base, outcome: "proved", proved: [{ criterion: "sc_1", command: "mvn verify", quote: "BUILD SUCCESS" }, { criterion: "sc_2", file: "doc.md", contains: "--csv" }], extras: ["README.md"], changes: [{ file: "src/export.ts", serves: "sc_1" }, { file: "test/export.test.ts", serves: "sc_1" }, { file: "doc.md", serves: "sc_2" }, { file: "README.md", serves: "extra" }], reviewer: ["Reviewer: sc_2 isn't done: the flag is documented but never parsed"], goalFileEdited: true }])).goal;
-    expect(goal).toMatch(/Goal proved on Guardian(&#39;|&#x27;|')s record/);
+    expect(goal).toMatch(/Work needs attention: an earlier completion still has review findings/);
     expect(goal).toMatch(/sc_1: ran mvn verify, printed (&quot;|")BUILD SUCCESS/);
     expect(goal).toMatch(/sc_2: doc\.md contains (&quot;|")--csv/);
     expect(goal).toContain("Changed for sc_1: src/export.ts, test/export.test.ts");
     expect(goal).toContain("Changed for sc_2: doc.md");
-    expect(goal).toContain("Not for any done-when item, your call: README.md");
-    expect(goal).toMatch(/Reviewer(&#39;|&#x27;|')s opinion: sc_2 isn(&#39;|&#x27;|')t done: the flag is documented but never parsed/);
+    expect(goal).toContain("Possible unrelated work to review: README.md");
+    expect(goal).toMatch(/Review finding: sc_2 isn(&#39;|&#x27;|')t done: the flag is documented but never parsed/);
     expect(goal).toContain("edited Guardian");
   });
 
@@ -139,7 +139,7 @@ describe("goal loop panel lines", () => {
   it("every other ending says plainly that it isn't proved, and escapes what the agent wrote", () => {
     const end = (outcome: "blocked" | "limit", extra: Record<string, unknown>) => renderSections(vm([{ ts: at(1), kind: "goal.end", ...base, outcome, ...extra } as AuditRecord])).goal;
     expect(end("blocked", { reason: "needs <key>" })).toContain("needs &lt;key&gt;");
-    expect(end("limit", { unproved: ["sc_1: nope"] })).toContain("Goal not proved: the rounds ran out");
+    expect(end("limit", { unproved: ["sc_1: nope"] })).toContain("Goal still open: continuation limit reached");
   });
 });
 
@@ -201,7 +201,7 @@ describe("the reviewer on the panel, and improving it", () => {
     expect(goal).toContain('data-cmd="review.right:rev_a:0"');
     expect(goal).toContain('data-cmd="review.wrong:rev_a:0"');
     expect(goal).not.toContain('data-cmd="review.wrong:rev_a:1"');
-    expect(goal).toContain("you said: reviewer was wrong");
+    expect(goal).toContain("you marked this unnecessary");
   });
 
   it("improves by itself, with no button: it says what it is doing and what it costs, then what it did, with an Undo", () => {
@@ -213,14 +213,14 @@ describe("the reviewer on the panel, and improving it", () => {
     }
     const waiting = renderSections(vm(records)).goal;
     expect(waiting).not.toContain("review.improve");
-    expect(waiting).toContain("8 reviews have a verdict");
+    expect(waiting).toContain("8 reviews have specific feedback");
     records.push({ ts: at(5), kind: "improve.start", id: "improve_1", auto: true, reviews: 22, searchCallsMax: 174 } as AuditRecord);
     const running = renderSections(vm(records)).goal;
-    expect(running).toContain("Guardian is improving its reviewer with RRSI from your verdicts.");
+    expect(running).toContain("Guardian is testing a reviewer update with RRSI from your feedback.");
     expect(running).toContain("About 22 reviews and up to 174 more calls to your Cursor model.");
     records.push({ ts: at(2), kind: "improve.run", id: "improve_1", kept: true, reason: "4 right against 2 now on 4 cases it never saw", train: 5, heldOut: 4, old: { correct: 2, catches: 1 }, new: { correct: 4, catches: 1 }, lostCatches: 0, seconds: 300, calls: 9, hypotheses: ["extras the user wanted"], diff: "+ QUIET" } as AuditRecord);
     const kept = renderSections(vm(records)).goal;
-    expect(kept).toContain("Guardian improved its reviewer from your verdicts: 4 right against 2 now");
+    expect(kept).toContain("A reviewer update passed the checks on your feedback: 4 right against 2 now");
     expect(kept).toContain("+ QUIET");
     records.push({ ts: at(1), kind: "improve.apply", runId: "improve_1", auto: true } as AuditRecord);
     const applied = renderSections(vm(records, true)).goal;
@@ -243,11 +243,11 @@ describe("the reviewer on the panel, and improving it", () => {
   it("says plainly when a goal is complete but unchecked, disputed, or unverified", () => {
     const end = (outcome: "unchecked" | "disputed" | "unverified", rest: Record<string, unknown> = {}): AuditRecord => ({ ts: at(5), kind: "goal.end", conversationId: "c", goalHash: "h", outcome, ...rest }) as AuditRecord;
     const unchecked = renderSections(vm([end("unchecked", { skipped: ["the reviewer didn't run: cursor-agent isn't installed"] })])).goal;
-    expect(unchecked).toContain("Goal complete but unchecked, not proved");
+    expect(unchecked).toContain("Work reported complete; independent checks are incomplete");
     expect(unchecked).toContain("Not independently checked: the reviewer didn&#39;t run: cursor-agent isn&#39;t installed");
-    expect(renderSections(vm([end("disputed", { reviewer: ["Reviewer: sc_1 isn't done: a placeholder"] })])).goal).toContain("Goal disputed, not proved: the review still objects");
-    expect(vm([end("disputed")]).status).toEqual({ lamp: "warn", word: "disputed" });
+    expect(renderSections(vm([end("disputed", { reviewer: ["Reviewer: sc_1 isn't done: a placeholder"] })])).goal).toContain("Work needs attention: review findings remain");
+    expect(vm([end("disputed")]).status).toEqual({ lamp: "warn", word: "needs attention" });
     expect(vm([end("unverified", { reason: "Codex's goal program isn't installed" })]).status).toEqual({ lamp: "warn", word: "unverified" });
-    expect(renderSections(vm([end("unverified", { reason: "Codex's goal program isn't installed" })])).goal).toContain("a goal keeper&#39;s code didn&#39;t run");
+    expect(renderSections(vm([end("unverified", { reason: "Codex's goal program isn't installed" })])).goal).toContain("Goal tracking could not finish: check the setup");
   });
 });

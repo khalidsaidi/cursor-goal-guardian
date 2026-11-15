@@ -167,13 +167,13 @@ function goalStatus(phase: PanelViewModel["goalPhase"], run: PanelViewModel["goa
   if (phase === "none") return { lamp: "idle", word: "no goal" };
   if (phase === "paused") return { lamp: "idle", word: "paused" };
   // An older record: proved with the review's objection still attached. Newer ones end as "disputed" outright.
-  if (phase === "complete" && run?.outcome === "proved" && run.reviewer.length) return { lamp: "warn", word: "disputed" };
+  if (phase === "complete" && run?.outcome === "proved" && run.reviewer.length) return { lamp: "warn", word: "needs attention" };
   // Both goal keepers accepted it, but a check didn't run: complete, and not proved.
   if (phase === "complete" && run?.outcome === "unchecked") return { lamp: "warn", word: "unchecked" };
-  if (phase === "complete") return run?.outcome === "proved" ? { lamp: "on", word: "proved" } : { lamp: "idle", word: "closed" };
-  if (run?.outcome === "disputed") return { lamp: "warn", word: "disputed" };
+  if (phase === "complete") return run?.outcome === "proved" ? { lamp: "on", word: "complete" } : { lamp: "idle", word: "closed" };
+  if (run?.outcome === "disputed") return { lamp: "warn", word: "needs attention" };
   if (run?.outcome === "unverified") return { lamp: "warn", word: "unverified" };
-  if (run?.outcome === "budget_limited") return { lamp: "warn", word: "over budget" };
+  if (run?.outcome === "budget_limited") return { lamp: "warn", word: "budget reached" };
   // Their rule accepts a block at once in a turn the user's message opened: nothing checked the agent's word.
   if (run?.outcome === "blocked") return { lamp: "warn", word: run.atAgentsWord ? "blocked (unverified)" : "blocked" };
   if (run?.outcome === "stalled" || run?.outcome === "limit") return { lamp: "warn", word: "stalled" };

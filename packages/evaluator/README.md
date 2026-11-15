@@ -1,38 +1,18 @@
-# packages/evaluator: Guardian's adapter for Google ADK's evaluator
+# CGG's Google ADK evaluator adapter
 
-The second check at "done" is Google's Agent Development Kit (github.com/google/adk-python, Apache-2.0): its
-`RubricBasedMultiTurnTrajectoryEvaluator`, vendored unmodified in `third_party/adk-python`, judges Guardian's record
-of the agent's run against the user's own "done when" items. It never sees the project itself, only what Guardian
-gives it, so it can object to something the agent later fixed: when it objects to something Guardian's reviewer did
-not, the reviewer checks that claim against the real project before it counts
-(`packages/core/src/goal/review.ts`). Built and run on Linux x64 only so far. This folder is our side:
+CGG's own reviewer checks the project. This adapter supplies a complementary check: Google's open-source ADK `RubricBasedMultiTurnTrajectoryEvaluator` evaluates the recorded work against the user's finish conditions and meaningful unrequested-work rubric.
 
-- `cgg_evaluator/cli.py`: one run in (JSON on stdin), one JSON line out. It builds one ADK `Invocation` from the user's
-  request, each recorded command or edit as a tool call with its response (as `InvocationEvents`, the form ADK shows
-  its judge), the evidence Guardian adds from the project (the real `git status` and diff, and each cited proof,
-  with anything missing marked absent), and the agent's own completion report as the final response. The rubrics
-  are the user's "done when" items, word for word, plus one of Guardian's, saying the agent changed nothing the
-  request doesn't need and that tests, types, docs and comments for the requested work are not extra. Guardian
-  also prepends one line telling the judge not to delegate. ADK's judge prompt and aggregation remain unchanged. Guardian sets ADK's `num_samples` option to one by default. The judge model is a `BaseLlm`
-  registered with ADK's own registry that asks the user's Cursor model through `cursor-agent`, in ask mode.
-- `requirements.txt`: the 17 packages ADK's evaluator loads, pinned. ADK is built on pydantic and google-genai, so the
-  standard library alone isn't enough (unlike RRSI): they are installed as wheels next to the bundled Python when the
-  extension is packaged, about 19 MB on linux-x64 as shipped (the whole evaluator folder is 20 MB). Nothing is installed on the user's machine.
-- `tools/vendor.py`: copies the ADK files the evaluator loads from a checkout into `third_party/adk-python`.
-- `tests/`: the adapter against a fake `cursor-agent`, on an interpreter with only `--site` added.
+ADK receives the request, recorded command/edit events and responses, completion report, and project observations CGG supplies: status/diff, relevant changed-source excerpts, cited evidence and explicit limits where content is absent or truncated. It cannot read the project itself. A focused project check can resolve a finding when the reviewer and evaluator disagree.
 
-```bash
-python3 -m pip install --no-deps --only-binary=:all: --target .site -r requirements.txt   # once, for development
-echo '{"user_query": "...", "items": [{"id": "sc_1", "text": "..."}], "conversation": [...], "report": "..."}' \
-  | python3 cgg_evaluator/cli.py
+`cgg_evaluator/cli.py` translates JSON input into ADK's invocation/event model and rubric configuration. A registered ADK model transport calls the user's `cursor-agent` in ask mode. Upstream judge prompts, parsing and aggregation remain ADK's; CGG supplies the rubrics, evidence and transport. The default is one evaluator sample; environment options can change sampling/concurrency. Inconclusive checks are not clean passes.
+
+The adapter returns whether it ran, per-rubric scores/rationales, call count, elapsed time and a reason when it cannot run. The CLI JSON protocol and pinned dependencies are documented by the source and `requirements.txt`. The package bundles the interpreter and wheels; normal users do not need a Google Cloud account or separate Google model key.
+
+For local adapter development:
+
+```sh
+python3 -m pip install --no-deps --only-binary=:all: --target .site -r requirements.txt
 python3 -m unittest discover -s tests
 ```
 
-Out: `ran`, `reason` when it didn't, `overall` (share of rubrics met), `rubrics` (`id`, `property`, `score` 0 or 1,
-`rationale` in the judge's words), `calls`, `seconds`.
-
-Not used from ADK: its `MultiTurnTrajectoryQuality` and `MultiTurnTaskSuccess` evaluators hand the judging to Vertex
-AI's hosted evaluation and need a Google Cloud project, so they can't run on the user's own Cursor model.
-
-Cost: one model call per extra check by default. Studies can set `CGG_EVALUATOR_SAMPLES` and
-`CGG_EVALUATOR_PARALLEL` through ADK's own sampling and concurrency options.
+The retained upstream source is selected for this evaluator, not ADK's entire agent/workflow/deployment ecosystem. Hosted Vertex AI evaluation is not used. Current build/run validation is Linux x64. See [verification](../../docs/verification.md), [design](../../docs/goal-design.md) and [NOTICE](../../NOTICE).

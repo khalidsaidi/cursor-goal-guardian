@@ -1,8 +1,7 @@
 {
   "mcpServers": {
     "goal-guardian": {
-      "command": "node",
-      "args": ["/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-mcp.mjs"],
+      "command": "/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-mcp",
       "env": {
         "GOAL_GUARDIAN_WORKSPACE_ROOT": "/ABSOLUTE/PATH/TO/THE/PROJECT/WORKSPACE"
       }

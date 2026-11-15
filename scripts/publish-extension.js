@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-// Publishes the platform-targeted VSIXs to Open VSX only (Cursor's registry).
+// Publishes the validated Linux x64 release to Open VSX (Cursor's registry).
 // Each target carries its own self-contained native binaries.
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const token = process.env.OVSX_TOKEN;
+const token = process.env.OVSX_TOKEN ?? process.env.OVSX_PAT;
 if (!token) {
-  console.error("Missing OVSX_TOKEN env var.");
+  console.error("Set OVSX_TOKEN (or OVSX_PAT) to an Open VSX publishing token. Never put it in source control.");
   process.exit(1);
 }
 
@@ -20,7 +20,12 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
 const extDir = path.join(root, "packages", "cursor-goal-guardian-extension");
 
-const TARGETS = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"];
+const requested = process.argv.includes("--target") ? process.argv[process.argv.indexOf("--target") + 1] : "linux-x64";
+if (requested !== "linux-x64") {
+  console.error("This release is validated for linux-x64 only. Older platform artifacts are historical.");
+  process.exit(1);
+}
+const TARGETS = [requested];
 
 run("node", [path.join(root, "scripts", "compile-binaries.mjs")], root);
 for (const target of TARGETS) {

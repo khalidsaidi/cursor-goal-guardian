@@ -1,15 +1,17 @@
 ---
-description: Goal Guardian session protocol — keeps agent work anchored to the declared goal
+description: Goal Guardian — remember the request, finish the remaining work and check the result
 alwaysApply: true
 ---
 
-This workspace uses Goal Guardian. It never blocks you.
-The user steers through chat; Guardian keeps the record. Follow this protocol:
+This workspace uses Goal Guardian to help you finish the user's goal. It advises; it cannot block you.
+The user steers through chat. Reuse the recorded goal, work and checks so you can finish efficiently:
 
-1. **The user's request is the goal.** Guardian records it word for word when you first change
-   something; you don't write it and never reword it. Only if the request lists no 'done when' items,
-   add 2–4 with the `goal-guardian` MCP tool `guardian_change_goal` (add_criteria). Never interrogate
-   the user about goals.
+1. **Start requested project work with a goal.** If no goal is on record and the user asks you to
+   implement, fix or otherwise change the project, call `create_goal` before inspecting or editing.
+   Quote their request; Guardian retains the full recorded message. Questions alone don't create goals.
+   Guardian also captures the request on the first change as a fallback. Never reword the goal.
+   Only if the request lists no 'done when' items, add 2–4 with `guardian_change_goal` (add_criteria).
+   Never interrogate the user about goals.
 2. **A limit in one message ends with that message.** "Just item 1 for now" means do that, call
    `update_goal` with status `set_aside` quoting the limit, and stop this time. It never binds a
    later message.
@@ -19,18 +21,24 @@ The user steers through chat; Guardian keeps the record. Follow this protocol:
 4. Do what the goal asks and nothing more.
 5. If something stands in the way of one item, such as a broken tool, try another way to check it and
    keep going on the rest. Tell the user about it when you close. Ask only when nothing is left to do.
-6. When every 'done when' item is done, call `update_goal` with status `complete` and your proof.
-   Guardian checks it against its own record and sends you back with what doesn't hold. When the
-   record agrees, an independent reviewer and an evaluator check the work and may send objections
-   back: fix what holds up, and answer what doesn't with evidence. The goal is complete only when
-   both goal keepers' own code (Codex's and DeepSeek Harness's) accept that report. If the answer
-   says `unchecked`, say in your closing message that the work wasn't independently checked; if it
-   says `disputed` or `unverified`, tell the user why and stop. Never remove finished work to make
-   it fit the record: if they disagree, tell the user and ask.
+6. When every 'done when' item is done, call `update_goal` with status `complete`.
+   Guardian uses its recorded command results and actual project changes; copied output quotes
+   and file labels are optional, not extra work to complete. Its reviewer and ADK check the finished
+   work. Fix missing requirements, demonstrated bugs, broken tests/builds or meaningful unrelated
+   changes. Leave harmless formatting, wording and supporting types/docs alone unless the user
+   explicitly required otherwise. Reuse passing checks while the relevant work is unchanged.
+   DeepSeek owns goal status and rounds; Codex supplies budgets and continuation instructions.
+   Accepted changes notify Codex without another approval. Use get_goal.work for prior checks and findings. If verification could not finish, follow the recovery instructions and keep
+   doing useful work. For `unchecked`, name which checks ran and which could not finish. For
+   `disputed` or `unverified`, tell the user the concrete reason and stop. Never remove finished
+   work merely to satisfy report bookkeeping.
 7. When the user changes direction ('actually, let's...'), call `guardian_change_goal` with their
    words in `user_words`: those words become the goal. Only the user changes the goal.
 8. When the user asks about progress or 'where were we', answer from `get_goal`, not memory. Stay
    within any boundaries the user set.
+9. If the user explicitly judges a CGG finding right or wrong, save it with guardian_review_feedback
+   using their actual latest words and the finding from get_goal.work. A vague reply is not a label.
+   Do not ask them to rate the review. Keep working on what they requested.
 
 The goal tools are DeepSeek Harness's own (`get_goal`, `create_goal`, `update_goal`). Its goal policy, word for word:
 

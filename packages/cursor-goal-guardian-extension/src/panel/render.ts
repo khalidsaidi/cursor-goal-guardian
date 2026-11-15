@@ -25,8 +25,8 @@ function renderWelcome(vm: PanelViewModel): string {
   return `
     <div class="welcome">
       <div class="lamp-row"><span class="lamp idle"></span><span class="status-word">standing by</span></div>
-      <p>Guardian rides along while you work with your agent: it remembers the goal
-      and sends the agent back if it stops before the goal is done.</p>
+      <p>Guardian keeps your goal with the project, helps the agent finish what remains,
+      and checks the finished work. You can correct its review.</p>
 
       <div class="su">
         <label class="su-label" for="su-goal">What are you working toward?</label>
@@ -54,15 +54,15 @@ function renderWelcome(vm: PanelViewModel): string {
 }
 
 const GOAL_RUN_WORD: Record<NonNullable<PanelViewModel["goalRun"]>["outcome"], string> = {
-  working: "Goal: agent sent back",
-  proved: "Goal proved: both goal keepers accepted it and both checks passed",
-  unchecked: "Goal complete but unchecked, not proved",
-  disputed: "Goal disputed, not proved: the review still objects",
-  unverified: "Goal unverified, not proved: a goal keeper's code didn't run",
+  working: "Continuing the goal: the agent has the next steps",
+  proved: "Work complete: independent checks passed",
+  unchecked: "Work reported complete; independent checks are incomplete",
+  disputed: "Work needs attention: review findings remain",
+  unverified: "Goal tracking could not finish: check the setup",
   blocked: "Goal blocked",
-  set_aside: "Goal set aside in that chat",
+  set_aside: "Goal kept for later in that chat",
   stalled: "Goal stalled: the agent stopped making progress",
-  limit: "Goal not proved: the rounds ran out",
+  limit: "Goal still open: continuation limit reached",
   budget_limited: "Goal stopped: its token budget is used up",
   stopped: "Goal run stopped",
 };
@@ -82,12 +82,12 @@ function renderGoalRun(vm: PanelViewModel): string {
   ].filter(Boolean);
   const spent = parts.length ? ` (${parts.join(", ")})` : "";
   const disputed = g.outcome === "proved" && g.reviewer.length > 0;
-  const head = `${disputed ? "Goal proved on Guardian's record, but the review still objects" : GOAL_RUN_WORD[g.outcome]}${g.round ? ` (round ${g.round})` : spent}`;
+  const head = `${disputed ? "Work needs attention: an earlier completion still has review findings" : GOAL_RUN_WORD[g.outcome]}${g.round ? ` (round ${g.round})` : spent}`;
   const lines = [
     ...g.detail,
     ...g.changes.filter((c) => c.serves !== "extra").map((c) => `Changed for ${c.serves}: ${c.files.join(", ")}`),
-    ...g.extras.map((f) => `Not for any done-when item, your call: ${f}`),
-    ...(vm.reviews.length ? [] : g.reviewer.map((l) => `Reviewer's opinion: ${l.replace(/^Reviewer: /, "")}`)),
+    ...g.extras.map((f) => `Possible unrelated work to review: ${f}`),
+    ...(vm.reviews.length ? [] : g.reviewer.map((l) => `Review finding: ${l.replace(/^Reviewer: /, "")}`)),
     ...(g.outcome === "unchecked" ? [] : g.skipped.map((s) => `Not independently checked: ${s}`)),
     ...(g.changedSinceReview ? ["The last review objected, and the agent changed the project after it. That final state wasn't reviewed again."] : []),
     ...(g.goalFileEdited ? ["The agent edited Guardian's goal files during this run."] : []),
@@ -96,7 +96,7 @@ function renderGoalRun(vm: PanelViewModel): string {
   const missed = g.passedReview
     ? g.saidMissed
       ? `<p class="review-line"><span class="review-said">you said: this wasn't done. The goal is reopened so Cursor can finish it.</span></p>`
-      : `<p class="review-line">The review found nothing wrong with this. <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>`
+      : `<p class="review-line">The independent review reported no remaining findings. <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>`
     : "";
   return `<p class="review-line">${escapeHtml(head)}</p>${lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("")}${missed}`;
 }
@@ -110,9 +110,9 @@ function renderReviews(vm: PanelViewModel): string {
     const lines = r.lines.map((line, i) => {
       const said = r.feedback[i];
       const buttons = said
-        ? `<span class="review-said">${said === "right" ? "you said: right call" : "you said: reviewer was wrong"}</span>`
-        : `<button class="link" data-cmd="review.right:${escapeHtml(r.id)}:${r.indexes?.[i] ?? i}">Right call</button> <button class="link" data-cmd="review.wrong:${escapeHtml(r.id)}:${r.indexes?.[i] ?? i}">Reviewer was wrong</button>`;
-      return `<p class="review-line">${escapeHtml(`Reviewer's opinion: ${line.replace(/^Reviewer: /, "")}`)} ${buttons}</p>`;
+        ? `<span class="review-said">${said === "right" ? "you marked this useful" : "you marked this unnecessary"}</span>`
+        : `<button class="link" data-cmd="review.right:${escapeHtml(r.id)}:${r.indexes?.[i] ?? i}">Useful finding</button> <button class="link" data-cmd="review.wrong:${escapeHtml(r.id)}:${r.indexes?.[i] ?? i}">Unnecessary complaint</button>`;
+      return `<p class="review-line">${escapeHtml(`Review finding: ${line.replace(/^Reviewer: /, "")}`)} ${buttons}</p>`;
     });
     const label = r.label && r.label.source !== "user" ? `<p class="review-line">Counted as ${r.label.label === "right" ? "a right call" : "a wrong call"}: ${SOURCE_WORD[r.label.source]}.</p>` : "";
     const dismissed = r.dismissed.map((line) => `<p class="review-line">${escapeHtml(line)}</p>`);
@@ -131,27 +131,27 @@ function renderImprove(vm: PanelViewModel): string {
   const out: string[] = [];
   const latest = im.latest;
   const cost = im.cost?.callLimit !== undefined ? " Background learning stops at its usage limit." : im.cost ? ` About ${im.cost.reviews} reviews and up to ${im.cost.searchCallsMax} more calls to your Cursor model.` : "";
-  if (im.running) out.push(`<p class="review-line">${escapeHtml(`Guardian is improving its reviewer with RRSI from your verdicts.${im.stage ? ` ${im.stage}.` : ""}${cost}`)}</p>`);
+  if (im.running) out.push(`<p class="review-line">${escapeHtml(`Guardian is testing a reviewer update with RRSI from your feedback.${im.stage ? ` ${im.stage}.` : ""}${cost}`)}</p>`);
   else if (latest?.kept) {
     out.push(
-      `<p class="review-line">${escapeHtml(`Guardian improved its reviewer from your verdicts: ${latest.reason}.${latest.applied ? " It is in use now." : " It isn't in use."}${cost}`)}</p>`,
+      `<p class="review-line">${escapeHtml(`A reviewer update passed the checks on your feedback: ${latest.reason}.${latest.applied ? " It is in use now." : " It isn't in use."}${cost}`)}</p>`,
       ...latest.hypotheses.map((h) => `<p class="review-line">${escapeHtml(`Idea tested: ${h}`)}</p>`),
       `<pre class="review-diff">${escapeHtml(latest.diff)}</pre>`,
       ...(latest.applied ? [] : [`<div class="goal-controls"><button class="link" data-cmd="review.apply:${escapeHtml(latest.id)}">Use it again</button></div>`]),
     );
-  } else if (latest) out.push(`<p class="review-line">${escapeHtml(`Guardian tried to improve its reviewer and kept the current one: ${latest.reason}.${cost}`)}</p>`);
-  else if (im.labelled) out.push(`<p class="review-line">${escapeHtml(`${im.labelled} review${im.labelled === 1 ? " has" : "s have"} a verdict. With enough examples to learn from and check an improvement, Guardian tries in the background within its usage limit.`)}</p>`);
-  if (im.usingImproved) out.push(`<p class="review-line">This workspace uses its improved reviewer. <button class="link" data-cmd="review.undo">Undo</button></p>`);
+  } else if (latest) out.push(`<p class="review-line">${escapeHtml(`Guardian checked a reviewer update and kept the current one: ${latest.reason}.${cost}`)}</p>`);
+  else if (im.labelled) out.push(`<p class="review-line">${escapeHtml(`${im.labelled} review${im.labelled === 1 ? " has" : "s have"} specific feedback. With enough examples to learn from and check an improvement, Guardian tries in the background within its usage limit.`)}</p>`);
+  if (im.usingImproved) out.push(`<p class="review-line">This workspace uses a qualified reviewer update. <button class="link" data-cmd="review.undo">Undo</button></p>`);
   return out.join("");
 }
 
-/** Yours alone: the agent can't resume a pause or close the goal. */
+/** User controls; agent completion is checked through the goal tools. */
 function renderGoalControls(vm: PanelViewModel): string {
   if (vm.hooksDisabled) {
     return `<p class="review-line">Cursor runs Guardian's hooks only in a trusted workspace, so the goal can't be checked here. Trust this workspace to turn it on.</p>`;
   }
   if (vm.goalPhase === "paused") {
-    return `<p class="review-line">Goal paused. The agent won't be sent back until you resume. Resuming starts the agent in a new chat.</p><div class="goal-controls"><button class="link" data-cmd="goal.resume">Resume goal</button></div>`;
+    return `<p class="review-line">Goal paused. Resume when you want the agent to continue; the panel opens a new chat.</p><div class="goal-controls"><button class="link" data-cmd="goal.resume">Resume goal</button></div>`;
   }
   if (vm.goalPhase !== "active") return "";
   if (!vm.goalRun || vm.goalRun.outcome !== "working") {

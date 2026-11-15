@@ -3,42 +3,42 @@
   "hooks": {
     "beforeShellExecution": [
       {
-        "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\""
+        "command": "\"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook\""
       }
     ],
     "beforeMCPExecution": [
       {
-        "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\""
+        "command": "\"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook\""
       }
     ],
     "afterFileEdit": [
       {
-        "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\""
+        "command": "\"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook\""
       }
     ],
     "beforeSubmitPrompt": [
       {
-        "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\""
+        "command": "\"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook\""
       }
     ],
     "afterShellExecution": [
       {
-        "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\""
+        "command": "\"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook\""
       }
     ],
     "postToolUse": [
       {
-        "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\""
+        "command": "\"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook\""
       }
     ],
     "postToolUseFailure": [
       {
-        "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\""
+        "command": "\"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook\""
       }
     ],
     "stop": [
       {
-        "command": "node \"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook.cjs\"",
+        "command": "\"/ABSOLUTE/PATH/TO/EXTENSION/bin/goal-guardian-hook\"",
         "loop_limit": 21
       }
     ]

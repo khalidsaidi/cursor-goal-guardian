@@ -22,7 +22,7 @@ export class StatusBar {
       return;
     }
     this.item.text = `$(target) Goal: ${vm.status.word}`;
-    this.item.tooltip = `Goal Guardian — goal: ${vm.status.word}`;
+    this.item.tooltip = `Goal Guardian — ${vm.status.word}`;
     this.item.show();
   }
 }

@@ -4,8 +4,8 @@ import { workspaceRoot } from "../workspace.js";
 import { theirField } from "./theirs.js";
 
 /**
- * create_goal, under both projects' descriptions: Codex's own handler and DeepSeek Harness's own tool (through its
- * tool pipeline) each run the call. Guardian's rule comes first: the objective has to be the user's own words.
+ * create_goal preserves the upstream descriptions. DeepSeek owns creation and authority; the accepted
+ * goal synchronizes Codex accounting. CGG retains the user's recorded request.
  */
 export function registerCreateGoal(server: McpServer, def: EngineToolDefinition): void {
   server.registerTool(

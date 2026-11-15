@@ -66,9 +66,9 @@ describe("panel view model", () => {
     // Proved on the record with the review still objecting to that state is not a clean "proved".
     const disputed = baseInputs();
     disputed.goalRecords = [{ ts: at(5), kind: "goal.end", conversationId: "c", goalHash: goalHash(disputed.contract), outcome: "proved", reviewer: ["Reviewer: sc_1 isn't done: a placeholder test"] }];
-    expect(buildPanelViewModel(disputed).status).toEqual({ lamp: "warn", word: "disputed" });
+    expect(buildPanelViewModel(disputed).status).toEqual({ lamp: "warn", word: "needs attention" });
     expect(word([end("stalled")])).toEqual({ lamp: "warn", word: "stalled" });
-    expect(word([{ ts: at(5), kind: "goal.end", conversationId: "c", goalHash: "h", outcome: "budget_limited", reason: "1100 of 1000 tokens used" }])).toEqual({ lamp: "warn", word: "over budget" });
+    expect(word([{ ts: at(5), kind: "goal.end", conversationId: "c", goalHash: "h", outcome: "budget_limited", reason: "1100 of 1000 tokens used" }])).toEqual({ lamp: "warn", word: "budget reached" });
     expect(word([end("limit")])).toEqual({ lamp: "warn", word: "stalled" });
     const inputs = baseInputs();
     inputs.contract.goal = "";

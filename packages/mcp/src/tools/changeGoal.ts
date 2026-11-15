@@ -9,7 +9,7 @@ export function registerChangeGoal(server: McpServer): void {
     "guardian_change_goal",
     {
       description:
-        "Change the goal when the user changes it, add 'done when' items when the goal has none at all, or set the goal's token budget when the user explicitly asks for one. Guardian records the user's first request by itself, so don't call this to declare it.",
+        "Change the goal when the user changes it, add 'done when' items when the goal has none at all, or set the goal's token budget when the user explicitly asks for one. Use create_goal to start requested project work; automatic capture is the fallback. Keep working after recording a change.",
       inputSchema: {
         user_words: z.string().optional().describe("The user's new goal, quoted exactly from their latest message. These words become the goal; only the user changes it."),
         add_criteria: z

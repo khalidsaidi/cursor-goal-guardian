@@ -380,7 +380,8 @@ export const goalEndRecordSchema = z
     conversationId: z.string(),
     goalHash: z.string(),
     /**
-     * proved: both goal keepers accepted the completion and both checks ran clean. unchecked: both accepted, but a
+     * proved: completion checks ran clean, DeepSeek accepted completion and Codex accounting synchronized.
+     * unchecked: the phase closed, but a
      * check didn't run or the last state wasn't reviewed. disputed: the review still objects to the very state
      * reported, after its reviews ran out. unverified: a goal keeper's own code didn't run, so nothing could be accepted.
      */

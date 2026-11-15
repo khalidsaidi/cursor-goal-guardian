@@ -4,7 +4,7 @@ import { applyImprovement, autoImprove, controlGoal, lastActiveConversation, rea
 
 export type GoalCommand = "goal.pause" | "goal.resume" | "goal.done" | "goal.work";
 
-export const WORK_PROMPT = "Work on the goal. Look at where the project stands now, then keep going until it's proved.";
+export const WORK_PROMPT = "Work on the goal. Reuse relevant prior work and checks, finish what remains, and verify the result.";
 
 /** Starts the agent on the goal in a new chat, sent at once. If Cursor's command has gone away, fills in a chat instead. */
 async function startAgent(): Promise<void> {

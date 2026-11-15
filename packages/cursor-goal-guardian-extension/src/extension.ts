@@ -32,7 +32,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       else if (command === "editGoal") {
         if (!root) return;
         const contract = await readContractSafe(root);
-        const goal = await vscode.window.showInputBox({ title: "Goal", value: contract.goal, prompt: "One unambiguous sentence." });
+        const goal = await vscode.window.showInputBox({ title: "Goal", value: contract.goal, prompt: "What should the agent finish? Keep any important boundaries." });
         if (goal !== undefined) await writeContract(root, { ...contract, goal });
       } else await vscode.commands.executeCommand(`goalGuardian.${command}`);
       await controller.refresh();

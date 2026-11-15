@@ -23,7 +23,7 @@ describe("10 [deterministic] disk artifacts flow into the panel view model", () 
       const vm = buildPanelViewModel({ setUp: true, contract, records: await readAudit(ws.root), now: new Date() });
 
       expect(vm.setUp).toBe(true);
-      expect(vm.status).toEqual({ lamp: "on", word: "proved" });
+      expect(vm.status).toEqual({ lamp: "on", word: "complete" });
       expect(vm.successCriteria.map((c) => c.done)).toEqual([true, false]);
       await ws.cleanup();
     } catch (err) {

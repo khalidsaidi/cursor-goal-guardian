@@ -7,7 +7,7 @@ export function registerGetGoal(server: McpServer, theirs: EngineToolDefinition)
   server.registerTool(
     CODEX_TOOLS.get.name,
     {
-      description: `${CODEX_TOOLS.get.description}\n\nDeepSeek Harness: ${theirs.description}\n\nGuardian: the "their" field is DeepSeek's own get_goal answer, and "codex" is Codex's own, from its real handler. Use goal as the authoritative view; goal.work carries prior checks, findings and next steps. Partner answers are diagnostics. The goal is the user's own request, recorded word for word, with its 'done when' items and their ids. Usage and any token budget come from Codex's own goal store.`,
+      description: `${CODEX_TOOLS.get.description}\n\nDeepSeek Harness: ${theirs.description}\n\nGuardian: the "their" field is DeepSeek's own get_goal answer, and "codex" is Codex's own, from its real handler. Use goal as the authoritative view; goal.work carries prior checks, findings and next steps. Partner answers are diagnostics. Give the user a brief useful answer; when they asked to continue, use this context and keep working. The goal is the user's own request, retained from the recorded request, with its 'done when' items and their ids. Usage and any token budget come from Codex's own goal store.`,
       inputSchema: {},
     },
     async () => {

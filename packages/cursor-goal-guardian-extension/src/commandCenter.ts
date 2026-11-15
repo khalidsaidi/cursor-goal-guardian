@@ -21,8 +21,8 @@ export async function openCommandCenter(deps: CommandCenterDeps): Promise<void> 
     { label: "$(pencil) Update goal…", description: contract.goal || "no goal declared", action: "goal" },
     { label: "$(graph) Open the session panel", action: "panel" },
     { label: "$(files) Open a guardian file…", action: "files" },
-    { label: "$(settings-gear) Automatic learning…", description: "control background usage", action: "learning" },
-    { label: "$(trash) Remove Guardian from this workspace…", description: "deletes everything it created", action: "remove" },
+    { label: "$(settings-gear) Automatic learning…", description: "choose how much background learning may use", action: "learning" },
+    { label: "$(trash) Remove Guardian from this workspace…", description: "remove project files, hooks and chat skills", action: "remove" },
   ];
 
   const picked = await vscode.window.showQuickPick(items, { title: "Goal Guardian" });
@@ -30,7 +30,7 @@ export async function openCommandCenter(deps: CommandCenterDeps): Promise<void> 
 
   switch (picked.action) {
     case "goal": {
-      const goal = await vscode.window.showInputBox({ title: "Goal", value: contract.goal, prompt: "One unambiguous sentence." });
+      const goal = await vscode.window.showInputBox({ title: "Goal", value: contract.goal, prompt: "What should the agent finish? Keep any important boundaries." });
       if (goal === undefined) return;
       await writeContract(deps.root, { ...contract, goal });
       break;

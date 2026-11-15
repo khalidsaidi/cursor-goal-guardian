@@ -1,0 +1,16 @@
+{
+  "version": "1.0.1",
+  "kind": "Labelled product illustrations, not model-run evidence",
+  "sources": {
+    "src/panel/render.ts": "a08b851841620e96e72cf0f904f5a797a83a4af035bf6cb689cb5ccf117703cb",
+    "media/panel.css": "febf0d83b848ffbb8c24e3ddc4106f4a87641af151e4afcc2ddc19c5a4e56a99",
+    "src/commandCenter.ts": "fc0079e44f99301b5ca307409b0a550f7cab482c23ea18d3252864032f2c10eb",
+    "src/setup.ts": "41f38dcaf0bff311f70bc70f98096ef45dd4ef86174e5ef6aa5b26b9aa4db70f"
+  },
+  "root_sources": {
+    "scripts/render-public-media.mjs": "ac7c6f5376347ddec6936cb7673cb260cc783152f08e382dd87e59f98371362c",
+    "scripts/render-public-media.py": "c4e78cd17229eb13c0607f6a9a9dc90d77263a47a9a8f21c5331935f68b5d15b",
+    "packages/core/src/viewmodel/panel.ts": "ef456e83fa9f3563560d377cc88bc8f4678858213de118a2677d672b571cb201",
+    "packages/core/src/rule.ts": "69ddcdf706a0b480980c36dd33aa31becfce014004795f3d39230165abff9213"
+  }
+}

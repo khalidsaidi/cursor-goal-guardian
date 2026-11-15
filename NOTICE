@@ -46,8 +46,8 @@ packages (@deepseek-ai/dsh-goal, dsh-tool-goal, dsh-goal-round-driver and
 dsh-command-goal, with dsh-session, dsh-session-projection, dsh-agent, dsh-llm
 and what they need, 0.2.2-rc.1, and @deepseek-ai/cordis 4.1.0, MIT), bundled
 into Guardian's hook and MCP programs. They run beside Guardian's own goal
-file, which stays the master copy of the goal: they hold a copy of the goal's
-phase, revision and round count, their tools can refuse a change, their round
+file, which owns the goal text and finish conditions. DeepSeek owns goal
+phase, revision and round authority; its tools can refuse a change, its round
 driver is asked about each round, and their prompts are part of what the agent
 is sent. Their "complete" is a status change; Guardian's own checks decide
 whether a goal is done. Guardian's adapter is packages/core/src/goal/engine.ts.
@@ -97,5 +97,7 @@ change that judges nothing. What is
 adapted: Codex produces its continuation turn in a thread started with Codex's
 own test support, whose model endpoint is a local capture server, and Guardian
 reads that request back, because only Cursor's stop hook can start the agent's
-next turn. A goal is recorded as complete only when Guardian's own checks pass
-and DeepSeek Harness's tool accepts it and Codex's accounting copy is synchronized.
+next turn. A checked completion (the internal outcome "proved") requires Guardian's
+completion checks and independent reviews to pass, DeepSeek Harness to accept
+the phase change and Codex's accounting copy to be synchronized. A completion
+with unfinished independent checks is labelled unchecked instead.

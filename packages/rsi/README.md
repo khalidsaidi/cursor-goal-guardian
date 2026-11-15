@@ -1,21 +1,28 @@
-# packages/rsi: Guardian's domain for Google's RRSI
+# CGG's Google RRSI learning domain
 
-Guardian retunes its reviewer's prompt with RRSI (Regularized Recursive Self-Improvement,
-github.com/google-research/rrsi), vendored unmodified in `third_party/rrsi`. The extension starts a run by itself
-when enough feedback covers both real gaps and false alarms in both training and held-out cases, and again after new corrections; a result is applied
-only if it loses no catch and gets more right on held-out cases, and the panel has an Undo. It changes the
-reviewer's prompt only, not the evaluator. Background learning waits while a goal is active or paused. It uses a recent batch, one search candidate, and a shared limit of 32 Cursor agent invocations across search roles and replays. `CGG_RSI_AUTO_CALL_LIMIT` configures that limit; zero prevents background model invocations. This counts headless Cursor invocations, not currency or internal model turns. Hitting the limit keeps the current reviewer and does not retry the same feedback. It has not yet run on a user's real verdicts: the only runs so far are
-on a study rig and against a stand-in agent. This folder is our side:
+Google Research's RRSI searches for useful changes to CGG's reviewer prompt. It uses the user's specific feedback on saved review findings: retain useful catches and remove unnecessary complaints. CGG's current-review context also uses explicit corrections immediately; RRSI supplies later qualified prompt adaptation.
 
-- `cgg/`: an RRSI domain. Guardian copies it to `domains/cgg/` of a throwaway RRSI checkout it assembles
-  under `.cursor/goal-guardian/rsi/` (see `packages/core/src/goal/improve.ts`).
-  - `adapter.py`: the Domain. Tasks are the workspace's labelled review cases (`data/tasks.json`, written by
-    Guardian), split by a stable hash into evolve and held-out. Running a task replays one review with the
-    candidate prompt through Guardian's own binary (`goal-guardian-hook replay-review`).
-  - `cursor_llm.py`: sends RRSI's search roles (analyst, digester, proposer, critic) to `cursor-agent`, the
-    user's own Cursor model, by replacing `rrsi.llm.generate` at import. RRSI's files are untouched.
-  - `model_budget.py`: the allowance shared across concurrent search and replay workers.
-  - `harness/`: filled at run time with the workspace's current `reviewer.md`.
-- `tests/`: the domain against a temp workspace and a fake `cursor-agent`, and one RRSI smoke run.
+The upstream RRSI engine is retained in `third_party/rrsi`. CGG's domain is copied into an isolated checkout under the workspace's Guardian directory. It replays saved work through the installed hook and candidate prompt, with native `cursor-agent` supplying the search roles and any needed issue-identity matching. CGG does not change RRSI's upstream files.
 
-The domain also supplies RRSI's native non-compensatory `guards`: removing false complaints cannot pay for losing a useful finding on the search cases. Its `TaskResult.extra` retains specific issue observations, and counts/weights describe the actual user judgments. The consumed reviewer file is classified under RRSI's real `prompt` category, so edit history and credit counts remain usable. Stable supported workspace knowledge is allowed consistently in the constitution and role briefs. Background search remains bounded; its single-round mode does not exercise multi-round stagnation-triggered exploration. No claim is made that all RRSI modes run in that mode.
+## What is connected
+
+- `adapter.py`: task splits, actual replay, specific-finding scores/weights and RRSI's own selection guards. Observed useful catches cannot be traded for fewer false complaints. Prompt edits use RRSI's real `prompt` category so history/credit remain meaningful.
+- `feedback.py`: match the same concrete issue without exposing the desired label; a different flag is not the original catch. Unknown identity cannot qualify an update.
+- `cursor_llm.py`: transport for the analyst, digester, proposer and critic through the user's Cursor model.
+- `model_budget.py`: shared per-attempt and rolling workspace invocation allowances.
+- `replay_cache.py`: compatible complete observations; labels can change without pretending the model reran, while scores are recalculated. Case, prompt, model/runtime or dependency changes prevent incompatible reuse.
+- Constitution and briefs: allow supported stable workspace inspection knowledge, but not memorized case answers, changed user requirements or unconsumed learned files.
+
+Only the consumed reviewer prompt is adopted. The goal, fixed completion checks and ADK evaluator are outside the learned output. A withheld comparison must improve the specific feedback judgments and preserve confirmed catches before adoption. The panel records adoption and offers Undo.
+
+## When it runs
+
+Automatic learning needs enough examples of both useful findings and unnecessary complaints in training and withheld splits, then enough new labelled reviews to try again. It waits while a goal is active or paused and yields to foreground work. Current automatic search is one round with one candidate; other multi-round exploration modes are not claimed as active.
+
+Off, Light and Standard controls are in the Command Center. Per-attempt and rolling workspace allowances share usage across search, replays and issue matching. The standard allowance is 32 headless invocations; an invocation can contain several provider model turns, so this is not a dollar or token cap. A limited or unqualified run keeps the current reviewer, and compatible progress/history can be reused.
+
+## Evidence
+
+Earlier real-model RRSI search produced useful prompt changes; later native Cursor checks verified candidate installation/use and the current explicit-feedback connection. Local tests cover the current domain, guards, specific scoring, caches, controls and adoption/undo with stand-ins. A new winning automatic search is not required to repeat those completed checks.
+
+Naturally accumulated user feedback has not yet demonstrated an improvement, and a fresh full feedback-to-search-to-automatic-adoption sequence has not completed in one native Cursor run. This is not a guarantee of improvement from every correction. See [verification](../../docs/verification.md) and the [maintainer record](../../docs/release-status.md). Current build/run validation is Linux x64.

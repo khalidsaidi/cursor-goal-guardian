@@ -1,16 +1,25 @@
-# Goal Guardian benchmarks
+# Performance and usage
 
-> **Historical record.** This file describes earlier versions of Goal Guardian and has not been updated. It names tools that no longer exist (`guardian_get_contract`, `guardian_get_status`, `guardian_report_goal`, `guardian_update_goal` and others); the current ones are `get_goal`, `create_goal`, `update_goal`, `goal_command` and `guardian_change_goal`. For the current design see `docs/goal-design.md`.
+CGG is useful when keeping the goal, reusing valid work or finding an omission saves the user from having to restart or redirect the agent. There is no general measured percentage improvement for every task.
 
-Date: 2026-08-26T02:54:24.656Z · Node v20.20.0 · AMD Ryzen 7 3800X 8-Core Processor (16 cores)
+## What was observed
 
-## 1. Hook latency (packaged bin, spawn-to-response)
+Earlier Linux lab studies measured hook/tool overhead and used stand-in models for repeatable integration checks. Their timings belong to their recorded builds and environments; they are not guarantees for the current package, other platforms or a real model.
 
-- bare `node -e 0` baseline: p50 27.7ms · p95 36.3ms · p99 37.8ms (n=30)
-- neutral shell: p50 65.4ms · p95 77.5ms · p99 84.0ms (n=60)
+A bounded native Cursor comparison reused a saved documentation-omission task. Both runs finished correctly. The CGG-context run reused recorded successful checks rather than rerunning them after a docs-only change and used fewer tool calls. This was one pair, with possible ordering/cache effects: it does not establish a general speed or quality gain.
 
-## 2. MCP tool round-trips (packaged server, real stdio)
+Other real Cursor records cover goal retention, review-driven repair, specific corrections and use of a qualified reviewer prompt. See [verification](verification.md) for those scopes. No global improvement percentage or fraction of bundled code executed is claimed.
 
-- cold start + handshake: 123.0ms
-- guardian_get_contract: p50 1.7ms · p95 2.9ms · p99 7.7ms (n=50)
-- guardian_get_status: p50 2.0ms · p95 2.8ms · p99 4.1ms (n=50)
+## What consumes your plan
+
+- A continuation is another agent turn.
+- Completion uses the project reviewer and an ADK evaluator sample by default. A disagreement can require a focused additional check.
+- Learning replays saved work and runs RRSI's search roles and any needed issue matching through Cursor.
+
+A headless Cursor invocation can contain several model turns. Invocation allowances do not cap currency, tokens or provider-internal turns. Reported reviewer usage is supplied to RRSI when available; missing usage is left unknown.
+
+## User controls
+
+The Command Center offers Off, Light and Standard for automatic learning. Background learning yields to active work and shares a rolling workspace allowance across attempts. Unqualified candidates and allowance exhaustion leave the current reviewer in place. Optional goal token budgets are accounted for by Codex's goal store; they are separate from learning's invocation allowance.
+
+Current platform validation is Linux x64, including WSL Ubuntu. Detailed measurement provenance remains in the [maintainer release record](release-status.md). Earlier benchmark tables are preserved in Git history, not presented as current package measurements.
