@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import esbuild from "esbuild";
@@ -45,9 +44,12 @@ describe("the originals, as they are", () => {
     // Run the vendored files themselves (types stripped) and compare with what Guardian says.
     const run = async (...file: string[]): Promise<Record<string, (...args: unknown[]) => Array<{ text: string }>>> => {
       const js = esbuild.transformSync(vendored(...file), { loader: "ts", format: "esm" }).code;
-      const tmp = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "gg-orig-"))), "m.mjs");
-      fs.writeFileSync(tmp, js);
-      return import(/* @vite-ignore */ pathToFileURL(tmp).href);
+      const scratch = fs.mkdtempSync(path.join(repo, "node_modules", ".gg-orig-"));
+      const tmp = path.join(scratch, "m.mjs");
+      try {
+        fs.writeFileSync(tmp, js);
+        return await import(/* @vite-ignore */ pathToFileURL(tmp).href);
+      } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
     };
     const prompt = await run(...dsh, "goal-round-driver", "src", "prompt.ts");
     const wrapup = await run(...dsh, "tool-goal", "src", "wrapup.ts");

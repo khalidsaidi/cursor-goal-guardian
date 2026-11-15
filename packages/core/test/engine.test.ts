@@ -4,7 +4,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { foldGoal } from "@deepseek-ai/dsh-goal";
 import {
   EngineRefused, appendAudit, controlGoal, criteriaFromTexts, defaultContract, engineApply, engineRun, engineGoalPolicy, DEEPSEEK_GOAL_POLICY, guardianRuleContent, runGoalTool, runGoalCommand, engineEvents, engineView, getGuardianPaths, goalPhaseOf, goalTurnContext, legacyGoalPhase,
@@ -121,13 +122,13 @@ describe("DeepSeek's goal service keeps the goal's state", () => {
     await engineApply(root, "Add CSV export", "none", { type: "pause" });
     const here = path.dirname(fileURLToPath(import.meta.url));
     const script = `
-      import { engineApply, engineView, readGoalRecords } from ${JSON.stringify(path.join(here, "..", "src", "index.ts"))};
+      import { engineApply, engineView, readGoalRecords } from ${JSON.stringify(pathToFileURL(path.join(here, "..", "src", "index.ts")).href)};
       const before = engineView(await readGoalRecords(process.argv[2]));
       const after = await engineApply(process.argv[2], "Add CSV export", "none", { type: "resume" });
       console.log(JSON.stringify({ before, after }));`;
     const file = path.join(root, "replay.mts");
     await fs.writeFile(file, script);
-    const out = execFileSync(path.join(here, "..", "..", "..", "node_modules", ".bin", "tsx"), [file, root], { encoding: "utf8" });
+    const out = execFileSync(process.execPath, [createRequire(import.meta.url).resolve("tsx/cli"), file, root], { encoding: "utf8" });
     const { before, after } = JSON.parse(out.trim().split("\n").pop()!) as { before: Record<string, unknown>; after: Record<string, unknown> };
     expect(before).toMatchObject({ phase: "paused", revision: 2, roundsStarted: 1 });
     expect(after).toMatchObject({ phase: "active", revision: 3, roundsStarted: 1 });
