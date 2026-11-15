@@ -139,8 +139,11 @@ check of the evaluator's objections ran on 5 of the 45 replayed runs and took 7 
 **The reviewer's base prompt.** RRSI evolved the base template with real Claude
 models before the current fixed review requirements. On the original repo-separated
 held-out set, objections to work labelled complete fell and catches of unrequested work
-were retained, but a previously caught real defect was missed. This is an earlier
-prompt-learning demonstration with a tradeoff; it would fail today's no-lost-catch gate.
+were retained, but one case labelled incomplete stopped being flagged. Checking the saved
+findings showed that the original flag concerned lint and a supporting input check; both
+reviews missed the actual package-root export defect. This demonstrates real prompt
+search and changed judgments, not preservation or loss of that specific useful catch.
+Those whole-case records do not qualify a candidate under today's specific-finding gate.
 
 A later replay (Test 15) reported perfect agreement with its reference labels. A consumer
 TypeScript check has since reproduced a missing public export in one of its cases labelled

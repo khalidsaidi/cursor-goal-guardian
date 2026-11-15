@@ -67,12 +67,13 @@ const SECRET_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|ACCESS_?KE
  *
  * Where they come from, in full: Google's RRSI evolved them on the study rig from the Test 10 prompt, in 4 accepted
  * edits. On that run's held-out cases they flagged good work 0 of 11 times (the old prompt: 8 of 11) and caught 4
- * of 4 runs with unrequested work, but caught only 1 of the 2 real failures the old prompt caught. By the rule
- * Guardian ships (improve.ts: keep a change only if it loses no catch), that run alone would have been rejected.
+ * of 4 runs with unrequested work. One case labelled bad stopped being flagged, but source review found
+ * the old flag concerned lint/supporting checks while both reviews missed its package-root export defect.
+ * Whole-case flag counts do not establish preservation or loss of that specific useful catch.
  * Test 15 later reported improved agreement with reference labels on 33 constructed cases. A subsequent
  * consumer TypeScript check reproduced a real missing export in a case labelled finished, so its reported
  * perfect accuracy is not reliable. That case was not in the original repo-separated RRSI held-out set;
- * the earlier real-model prompt-learning demonstration and its missed-defect tradeoff still stand.
+ * the earlier real-model prompt search remains separate, with the finding-level qualification above.
  * Neither study validates the current automatic feedback-to-adoption path.
  */
 export const REVIEW_PROMPT = `You check an AI coding agent's claim that a goal is done. The user's goal:
