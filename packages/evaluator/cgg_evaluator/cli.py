@@ -113,7 +113,7 @@ def ask_agent(text: str) -> str:
         else:
             ask = text
         r = subprocess.run([command, "-p", ask, "--output-format", "json", "--trust", "--mode", "ask", "--workspace", scratch],
-                           cwd=scratch, capture_output=True, text=True, timeout=TIMEOUT_S,
+                           cwd=scratch, capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT_S,
                            env={**os.environ, "GOAL_GUARDIAN_REVIEWING": "1"},
                            shell=os.name == "nt" and command.lower().endswith(".cmd"))
         if r.returncode != 0:

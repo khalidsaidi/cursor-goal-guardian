@@ -2,7 +2,7 @@
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
   "description": "Keep Cursor working on your goal, independently review the finished work, and learn from your corrections. Powered by goal code from Codex and DeepSeek, Google ADK and RRSI.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
   "galleryBanner": {

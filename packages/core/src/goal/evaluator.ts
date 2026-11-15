@@ -7,7 +7,9 @@
  * of its own about unrequested work) and the user's own Cursor model. It can't block anything: when it can't run it
  * is skipped and recorded as skipped.
  */
-import { spawn } from "node:child_process";
+import { spawn as nodeSpawn } from "node:child_process";
+import crossSpawn from "cross-spawn";
+const spawn = crossSpawn as typeof nodeSpawn;
 import fs from "node:fs";
 import { stopProcessTree, trackProcessTree } from "../processTree.js";
 import path from "node:path";
@@ -146,7 +148,7 @@ export function runEvaluator(job: EvaluatorJob, budgetMs: number, paths: Evaluat
       clearTimeout(timer);
       resolve(v);
     };
-    const child = spawn(paths.python, ["-I", paths.cli, "--adk", paths.adkDir, "--site", paths.site], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, detached: process.platform !== "win32", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1" } });
+    const child = spawn(paths.python, ["-I", "-X", "utf8", paths.cli, "--adk", paths.adkDir, "--site", paths.site], { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, detached: process.platform !== "win32", env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONUTF8: "1" } });
     trackProcessTree(child);
     const timer = setTimeout(() => {
       stopProcessTree(child);

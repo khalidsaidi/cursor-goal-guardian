@@ -76,7 +76,7 @@ def generate(prompt, system=None, max_retries=3, json_only=False, model=None,
             env = {**os.environ, "GOAL_GUARDIAN_REVIEWING": "1"}
             reserve_call()
             try:
-                r = subprocess.run(args, cwd=scratch, capture_output=True, text=True, timeout=TIMEOUT_S, env=env,
+                r = subprocess.run(args, cwd=scratch, capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT_S, env=env,
                                    shell=os.name == "nt" and command.lower().endswith(".cmd"))
                 out = answer_text(r.stdout or "") if r.returncode == 0 else None
                 if out and out.strip():

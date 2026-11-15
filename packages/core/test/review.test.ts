@@ -119,6 +119,17 @@ describe("the reviewer's instructions", () => {
 });
 
 describe("running a review", () => {
+  it.runIf(process.platform === "win32")("preserves a long multiline request through a Windows command shim", async () => {
+    const root = await repo();
+    const goal = 'Preserve "quoted" text, %PATH%, !name!, & pipes | carets ^ and 日本語\n' + "Long user context. ".repeat(2500);
+    const seen = path.join(await tmp("gg-windows-seen-"), "prompt.txt");
+    const model = await stub(`const fs=require("fs"); fs.writeFileSync(${JSON.stringify(seen)}, fs.readFileSync(".cursor/goal-guardian/review-task.md", "utf8")); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
+    const launcher = path.join(path.dirname(model), "cursor-agent.cmd");
+    await fs.writeFile(launcher, `@echo off\r\n"${process.execPath}" "${model}" %*\r\n`);
+    process.env.GOAL_GUARDIAN_REVIEWER = launcher;
+    expect(await runReview(root, { goal, successCriteria: [{ id: "sc_1", text: "Preserve the request." }] })).toMatchObject({ ran: true, fails: [], unanswered: [] });
+    expect(await fs.readFile(seen, "utf8")).toContain(goal);
+  });
   it("reports genuine provider usage and leaves missing usage unknown", async () => {
     const root=await repo();
     for(const [usage,want] of [[{input_tokens:100,output_tokens:20},120],[{total_tokens:81},81],[{inputTokens:23272,outputTokens:1423,cacheReadTokens:47872,cacheWriteTokens:0,reasoningTokens:711},72567],[{inputTokens:100,outputTokens:20,cacheReadTokens:40,cacheWriteTokens:10},170],[{totalTokens:191,inputTokens:100,outputTokens:20},191],[{},undefined]] as const){

@@ -49,6 +49,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: packages/codex-goals
+          shared-key: codex-goals
+          cache-on-failure: true
       - uses: oven-sh/setup-bun@v2
         if: matrix.target != 'win32-arm64'
       - run: pnpm install --frozen-lockfile
@@ -56,10 +58,15 @@ jobs:
       - run: pnpm -r build
       - name: Build the actual native goal runtime and hook/MCP programs
         run: node scripts/compile-binaries.mjs --host-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-codex-${{ matrix.target }}
+          path: dist-bin/${{ matrix.target }}/goal-guardian-codex-goals${{ matrix.exe }}
+          if-no-files-found: error
       - name: Test the real Codex goal wrapper
         run: cargo test --release --locked --manifest-path packages/codex-goals/Cargo.toml
       - run: pnpm -r exec tsc -p tsconfig.json --noEmit
-      - run: pnpm -r test
+      - run: pnpm test
       - run: pnpm --filter @goal-guardian/e2e test:e2e:offline
       - name: Build the complete platform VSIX
         run: pnpm package:vsix --target ${{ matrix.target }}

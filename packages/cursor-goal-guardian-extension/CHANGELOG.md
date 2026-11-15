@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2 (in preparation)
+
+- Restore complete native package builds for the existing Windows, macOS and Linux targets on x64 and ARM64. Native qualification is in progress.
+- Include ADK and the Codex goal runtime in every platform package.
+- Preserve long, multiline and non-English requests through Windows reviewer, evaluator and learning calls.
+- Execute complete native packages before publication and publish those checked artifacts.
+
 ## 1.0.1
 
 - Keep the goal engines complementary: DeepSeek controls goal status and rounds; Codex supplies usage accounting, budgets and continuation instructions.

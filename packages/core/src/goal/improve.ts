@@ -4,7 +4,9 @@
  * cases (from the user's review feedback), a domain (packages/rsi/cgg) that replays a review with a candidate
  * prompt, and the user's own model for RRSI's search roles. An automatically selected result still has to pass held-out checks, and the user can undo it.
  */
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn as nodeSpawn } from "node:child_process";
+import crossSpawn from "cross-spawn";
+const spawn = crossSpawn as typeof nodeSpawn;
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";

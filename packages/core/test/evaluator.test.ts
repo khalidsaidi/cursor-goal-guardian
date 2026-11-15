@@ -91,6 +91,19 @@ const steps = [
 ];
 const job = { userQuery: "Add CSV export\nDone when:\n- the export test passes", items: [{ id: "sc_1", text: "the export test passes" }], conversation: steps, report: "I report the goal complete." };
 
+it.runIf(process.platform === "win32")("preserves Unicode across the isolated Python evaluator protocol", async () => {
+  const dir = await tmp("gg-eval-unicode-");
+  const cli = path.join(dir, "unicode.py");
+  await fs.writeFile(cli, `import sys,json
+job=json.load(sys.stdin)
+score=1 if job['user_query']=='日本語' else 0
+rubrics=[{'id':id,'property':'日本語','score':score,'rationale':'日本語'} for id in ['sc_1','extra']]
+print(json.dumps({'ran':True,'overall':score,'rubrics':rubrics,'calls':1,'seconds':0},ensure_ascii=False))
+`);
+  const out = await runEvaluator({ userQuery: "日本語", items: [{ id: "sc_1", text: "日本語" }], conversation: [{ role: "assistant", content: "日本語", tool_calls: null }], report: "日本語" }, 10_000, { python: "python", cli, adkDir: dir, site: dir });
+  expect(out).toMatchObject({ ran: true, overall: 1, rubrics: 2, failed: [], unanswered: [] });
+});
+
 describe("the run as Guardian saw it", () => {
   it("is every command with its output and every edit with its text, in order, from the start of the run", async () => {
     const root = await repo();

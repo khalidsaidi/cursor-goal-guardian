@@ -101,7 +101,7 @@ class CggDomain(Domain):
         try:
             if rec is None:
                 reserve_call()
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=REPLAY_TIMEOUT_S)
+                r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", timeout=REPLAY_TIMEOUT_S)
                 rec = json.loads(r.stdout.strip().splitlines()[-1])
                 if not rec.get("ran"):
                     rec["flagged"] = None

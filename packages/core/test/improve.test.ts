@@ -217,6 +217,7 @@ const a = process.argv.slice(2);
 let prompt = a[a.indexOf("-p") + 1];
 const ws = a[a.indexOf("--workspace") + 1];
 if (prompt.startsWith("Read task.md")) prompt = fs.readFileSync(path.join(ws, "task.md"), "utf8");
+if (prompt.startsWith("Read .cursor/goal-guardian/review-task.md")) prompt = fs.readFileSync(path.join(ws, ".cursor/goal-guardian/review-task.md"), "utf8");
 if(process.env.CGG_TEST_AGENT_MARKER) fs.writeFileSync(process.env.CGG_TEST_AGENT_MARKER,String(process.pid));
 if(process.env.CGG_TEST_AGENT_DELAY) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,Number(process.env.CGG_TEST_AGENT_DELAY));
 const say = (o) => process.stdout.write(JSON.stringify({ type: "result", usage: {inputTokens:100,outputTokens:20,cacheReadTokens:40,cacheWriteTokens:0}, result: JSON.stringify(o) }) + "\\n");
@@ -236,12 +237,15 @@ else say({ items: [{ id: "sc_1", verdict: "fails", evidence: "nope" }], extra: [
 `,
   );
   await fs.chmod(file, 0o755);
+  if (process.platform === "win32") {
+    const launcher = path.join(dir, "agent.cmd");
+    await fs.writeFile(launcher, `@echo off\r\n"${process.execPath}" "${file}" %*\r\n`);
+    return launcher;
+  }
   return file;
 }
 
 const PYTHON = process.env.GOAL_GUARDIAN_TEST_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
-/** The stand-in agents are scripts run through their shebang line, which Windows doesn't honour. */
-const posixOnly = process.platform === "win32";
 
 const rsiPaths = (): RsiPaths => ({
   python: PYTHON,
@@ -270,7 +274,7 @@ async function labelledWorkspace(): Promise<string> {
   return root;
 }
 
-describe.skipIf(posixOnly)("Guardian's RRSI domain", () => {
+describe("Guardian's RRSI domain", () => {
   it("passes its own Python checks against a temp checkout and a fake agent", () => {
     const out = execFileSync(PYTHON, ["-m", "unittest", "tests/test_cgg_domain.py"], {
       cwd: path.join(REPO_ROOT, "packages", "rsi"),
@@ -281,7 +285,7 @@ describe.skipIf(posixOnly)("Guardian's RRSI domain", () => {
   }, 120_000);
 });
 
-describe.skipIf(posixOnly)("replaying one saved review, as RRSI does", () => {
+describe("replaying one saved review, as RRSI does", () => {
   it("re-runs a case with another prompt and says whether it flagged", async () => {
     const root = await labelledWorkspace();
     process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
@@ -293,7 +297,7 @@ describe.skipIf(posixOnly)("replaying one saved review, as RRSI does", () => {
   }, 60_000);
 });
 
-describe.skipIf(posixOnly)("one improvement try with Google's RRSI, start to finish", () => {
+describe("one improvement try with Google's RRSI, start to finish", () => {
   it("RRSI's winner does better on cases it never saw, and waits for the user to apply it", async () => {
     const root = await labelledWorkspace();
     process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();
@@ -322,7 +326,7 @@ describe.skipIf(posixOnly)("one improvement try with Google's RRSI, start to fin
   });
 });
 
-describe.skipIf(posixOnly)("Guardian improving its reviewer by itself", () => {
+describe("Guardian improving its reviewer by itself", () => {
   it("does not search when the initial evaluation is incomplete", async () => {
     const root = await labelledWorkspace();
     process.env.GOAL_GUARDIAN_REVIEWER = await stubAgent();

@@ -149,14 +149,26 @@ describe("only the user changes the goal", () => {
 
 describe("the token budget", () => {
   it("is offered on guardian_change_goal and get_goal reports usage; without Codex's store installed a budget change says so", async () => {
-    const tool = (await client.listTools()).tools.find((t) => t.name === "guardian_change_goal")!;
-    expect((tool.inputSchema.properties as Record<string, { description: string }>).token_budget!.description).toContain("Only when the user explicitly asks for a token budget");
-    const res = (await client.callTool({ name: "guardian_change_goal", arguments: { token_budget: 50000, user_words: "use at most 50000 tokens" } })) as { isError?: boolean; content: Array<{ text: string }> };
-    expect(res.isError).toBe(true);
-    expect(res.content[0]!.text).toContain("Codex's goal store isn't installed");
-    const { goal } = (await callJson("get_goal")) as { goal: Record<string, unknown> };
-    expect(goal).toMatchObject({ token_budget: null });
-    expect(typeof goal.tokens_used).toBe("number");
+    const missingClient = new Client({ name: "mcp-no-store", version: "0.0.0" });
+    await missingClient.connect(new StdioClientTransport({
+      command: path.join(process.cwd(), "node_modules", ".bin", "tsx"),
+      args: [path.join(process.cwd(), "src", "index.ts")],
+      env: { ...process.env, GOAL_GUARDIAN_WORKSPACE_ROOT: ws.root, GOAL_GUARDIAN_CODEX_GOALS: "" } as Record<string, string>,
+      stderr: "ignore",
+    }));
+    try {
+      const tool = (await missingClient.listTools()).tools.find((t) => t.name === "guardian_change_goal")!;
+      expect((tool.inputSchema.properties as Record<string, { description: string }>).token_budget!.description).toContain("Only when the user explicitly asks for a token budget");
+      const res = (await missingClient.callTool({ name: "guardian_change_goal", arguments: { token_budget: 50000, user_words: "use at most 50000 tokens" } })) as { isError?: boolean; content: Array<{ text: string }> };
+      expect(res.isError).toBe(true);
+      expect(res.content[0]!.text).toContain("Codex's goal store isn't installed");
+      const state = await missingClient.callTool({ name: "get_goal", arguments: {} });
+      const { goal } = JSON.parse((state.content as Array<{ text: string }>)[0]!.text) as { goal: Record<string, unknown> };
+      expect(goal).toMatchObject({ token_budget: null });
+      expect(typeof goal.tokens_used).toBe("number");
+    } finally {
+      await missingClient.close();
+    }
   });
 });
 

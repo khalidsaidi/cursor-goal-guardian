@@ -33,8 +33,12 @@ print(json.dumps({"ran": True, "flagged": "QUIET" not in open(prompt).read(), "f
 
 
 def executable(path: Path, text: str) -> Path:
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
+    if os.name == "nt":
+        launcher = path.with_suffix(".cmd")
+        launcher.write_text(f'@echo off\n"{sys.executable}" -X utf8 "{path}" %*\n', encoding="utf-8")
+        return launcher
     return path
 
 
@@ -58,7 +62,9 @@ class CggDomainTest(unittest.TestCase):
         os.environ["GOAL_GUARDIAN_REVIEWER"] = str(executable(self.tmp / "agent", FAKE_AGENT))
         os.environ["FAKE_LOG"] = str(self.log)
         os.environ["CGG_WORKSPACE"] = str(self.tmp)
-        os.environ["CGG_REPLAY"] = json.dumps([sys.executable, str(executable(self.tmp / "replay", FAKE_REPLAY))])
+        replay = self.tmp / "replay.py"
+        replay.write_text(FAKE_REPLAY, encoding="utf-8")
+        os.environ["CGG_REPLAY"] = json.dumps([sys.executable, str(replay)])
         sys.path[:0] = [str(self.repo)]
         for m in [m for m in sys.modules if m.startswith(("rrsi", "domains", "adapter", "cursor_llm", "briefs", "feedback", "replay_cache", "model_budget"))]:
             del sys.modules[m]

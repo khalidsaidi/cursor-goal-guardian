@@ -1,6 +1,6 @@
 {
   "name": "cursor-goal-guardian-testkit",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
