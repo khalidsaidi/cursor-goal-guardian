@@ -27,7 +27,7 @@ if (requested !== "linux-x64") {
 }
 const TARGETS = [requested];
 
-run("node", [path.join(root, "scripts", "compile-binaries.mjs")], root);
+run("node", [path.join(root, "scripts", "compile-binaries.mjs"), "--target", requested], root);
 for (const target of TARGETS) {
   run("node", [path.join(root, "scripts", "package-extension.js"), "--target", target], root);
   run(

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // The recorder and the MCP server are compiled into self-contained native
-// executables for ALL six platform/arch combos — no Node.js, no PATH, no
-// downloads, no dialogs. Five targets compile with bun; windows-arm64 (which
+// executables for six configured platform/architecture targets. A successful
+// core-binary build is not qualification of the full CGG package. Five targets compile with bun; windows-arm64 (which
 // bun cannot target) builds via official Node SEA: esbuild CJS bundle ->
 // SEA blob -> injected into the official win-arm64 node.exe with postject.
 //
-//   node scripts/compile-binaries.mjs             # all publishable targets
+//   node scripts/compile-binaries.mjs             # all configured core-binary targets
 //   node scripts/compile-binaries.mjs --host-only # just this machine (CI/dev)
 //
 // Output: dist-bin/<vscode-target>/goal-guardian-{hook,mcp}[.exe]
@@ -169,8 +169,8 @@ async function buildSea(dir) {
  * OpenAI Codex's goal store behind Guardian's small Rust binary (packages/codex-goals): token budgets and usage.
  * Rust doesn't cross-compile from here, so it is built for this machine's own target with cargo; for the other
  * targets a binary built by CI on that platform (the `codex-goals` job's artifact, unpacked to
- * .cache/codex-goals/<target>/) is used when it is there. Without one the package ships without budgets, which
- * Guardian tolerates: every budget call is then a no-op.
+ * .cache/codex-goals/<target>/) is used when it is there. Without that runtime,
+ * full goal completion remains unverified; core-binary smoke tests alone do not qualify the product.
  */
 async function addCodexGoals(target, dir) {
   const name = `goal-guardian-codex-goals${target.startsWith("win32") ? ".exe" : ""}`;
@@ -183,13 +183,13 @@ async function addCodexGoals(target, dir) {
   if (process.env.GOAL_GUARDIAN_SKIP_CODEX_GOALS) return console.log(`codex-goals: skipped for ${target} (GOAL_GUARDIAN_SKIP_CODEX_GOALS)`);
   if (target === hostTarget()) {
     if (spawnSync("cargo", ["--version"], { timeout: 10_000 }).status !== 0) {
-      console.log("codex-goals: cargo isn't installed, so Codex's goal store isn't built; this package ships without token budgets");
+      console.log("codex-goals: cargo isn't installed, so Codex's goal runtime is unavailable; checked goal completion will be unverified");
     } else {
       const crate = path.join(root, "packages", "codex-goals");
       const targetDir = process.env.CARGO_TARGET_DIR ?? path.join(cacheDir, "codex-goals-target");
       const built = spawnSync("cargo", ["build", "--release", "--locked"], { cwd: crate, stdio: "inherit", env: { ...process.env, CARGO_TARGET_DIR: targetDir } });
       if (built.status === 0) return copy(path.join(targetDir, "release", name));
-      console.log("codex-goals: the cargo build failed, so this package ships without token budgets");
+      console.log("codex-goals: the cargo build failed, so the Codex goal runtime is unavailable; checked goal completion will be unverified");
     }
   }
   try {

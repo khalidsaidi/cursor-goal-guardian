@@ -13634,8 +13634,3 @@ dependencies = [
 name = "crossterm"
 version = "0.29.0"
 source = "git+https://github.com/openai-oss-forks/crossterm?rev=ed1cdab335221515706178d68495bba2aed1924f#ed1cdab335221515706178d68495bba2aed1924f"
-
-[[patch.unused]]
-name = "v8"
-version = "152.2.0"
-source = "git+https://github.com/openai-oss-forks/rusty_v8.git?rev=90a65f887a0c0f048f3784afbcb320b373c8a2e0#90a65f887a0c0f048f3784afbcb320b373c8a2e0"

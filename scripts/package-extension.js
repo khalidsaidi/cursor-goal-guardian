@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Package a platform-targeted VSIX carrying the self-contained native
-// binaries for exactly that platform:
+// binaries for exactly that platform. Target support here is build plumbing,
+// not qualification of the full product; ADK is currently bundled only on Linux x64:
 //
 //   node scripts/package-extension.js                    # host platform
 //   node scripts/package-extension.js --target win32-x64 # explicit target

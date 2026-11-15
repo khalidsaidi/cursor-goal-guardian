@@ -77,3 +77,10 @@ The panel uses Cursor commands to cancel the current chat or start a new one. Th
 Current build/run validation is Linux x64, including WSL Ubuntu. Real Cursor and local stand-in checks establish different behaviors; see [verification](verification.md) and the [maintainer release record](release-status.md). Naturally accumulated user feedback and a fresh whole-chain native search/adoption gain have not been demonstrated. Earlier goal, review and real-model RRSI evidence still counts; another winning prompt is not a new release gate.
 
 CGG cannot force continuation, guarantee review correctness, observe every ignored-path shell change or defend its own records against deliberate tampering. Outside Git the project review does not run. Its job is helping an ordinary agent finish useful work.
+
+
+## Platform build path
+
+The repository retains builders for Linux, macOS and Windows on x64 and ARM64. Bun compiles the hook/MCP programs for five targets; Windows ARM64 uses Node SEA. A checksum-pinned Python runtime is specified for each target. This is reusable cross-platform build infrastructure, not proof of complete product support.
+
+The Codex goal runtime is built natively per target and can be supplied through a cached CI artifact. The current package-test CI jobs explicitly skip that runtime and do not download its separate job's artifacts. ADK's dependency-wheel mapping is currently Linux x64 only; other target packages omit the evaluator. Therefore a passing core-binary job alone cannot validate the advertised complete goal/review/learning workflow on another platform. The current public release remains Linux x64.

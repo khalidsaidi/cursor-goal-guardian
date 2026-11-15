@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  # Codex's goal store behind Guardian's Rust binary, built natively on each of the six shipped architectures
+  # Candidate native builds of Codex's goal runtime on the six configured architectures
   # (Rust is not cross-compiled). The binary is uploaded so a release can pick it up per platform.
   codex-goals:
     strategy:
@@ -49,12 +49,13 @@ jobs:
 
   build-test:
     env:
-      # The Rust binary has its own job above; here the package is built without it, which Guardian tolerates.
+      # Core binaries are tested without the separately built Codex runtime. This intentionally
+      # does not qualify complete goal handling or the full distributable on these targets.
       GOAL_GUARDIAN_SKIP_CODEX_GOALS: "1"
     strategy:
       fail-fast: false
       matrix:
-        # All six shipped architectures execute their own binaries.
+        # Candidate core binaries execute on the configured architecture runners.
         # macos-15-intel is the supported x64 runner (macos-13 queues are
         # chronically starved); macos-latest additionally executes the
         # darwin-x64 binaries under Rosetta as a second, faster x64 proof.
@@ -81,7 +82,7 @@ jobs:
       # agent scenarios are skipped automatically in CI (no cursor-agent,
       # and the harness gates on GG_E2E_CONFIRM there).
       - run: pnpm --filter @goal-guardian/e2e test:e2e:offline
-      # The shipped VSIX for this machine, with its pinned, checksum-verified Python: RRSI's
+      # A candidate VSIX for this machine, with pinned, checksum-verified Python: RRSI's
       # self-improvement runs on that interpreter, so it has to start on every architecture.
       - run: node scripts/package-extension.js
       - name: bundled Python runs RRSI's imports
