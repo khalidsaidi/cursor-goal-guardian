@@ -115,8 +115,13 @@ export class PanelController implements vscode.WebviewViewProvider {
 
   private shell(webview: vscode.Webview): string {
     const nonce = crypto.randomBytes(16).toString("hex");
-    const script = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "webview.js"));
-    const style = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, "media", "panel.css"));
+    // Remote Cursor windows can reject vscode-resource requests with 401 after a
+    // local/remote switch. These are our bundled assets, so deliver them with
+    // the HTML instead; keep scripts and styles restricted to this nonce.
+    const script = fs.readFileSync(vscode.Uri.joinPath(this.context.extensionUri, "media", "webview.js").fsPath, "utf8")
+      .replace(/<\/script/gi, "<\\/script");
+    const style = fs.readFileSync(vscode.Uri.joinPath(this.context.extensionUri, "media", "panel.css").fsPath, "utf8")
+      .replace(/<\/style/gi, "<\\/style");
     const sections = ["welcome", "goal", "tour", "criteria", "constraints"]
       .map((id) => `<div id="${id}"></div>`)
       .join("\n");
@@ -124,12 +129,12 @@ export class PanelController implements vscode.WebviewViewProvider {
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
-<link rel="stylesheet" href="${style}">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+<style nonce="${nonce}">${style}</style>
 </head>
 <body>
 ${sections}
-<script nonce="${nonce}" src="${script}"></script>
+<script nonce="${nonce}">${script}</script>
 </body>
 </html>`;
   }

@@ -140,6 +140,30 @@ describe("running a review", () => {
     expect(await runReview(root, { goal, successCriteria: [{ id: "sc_1", text: "Preserve the request." }] })).toMatchObject({ ran: true, fails: [], unanswered: [] });
     expect(await fs.readFile(seen, "utf8")).toContain(goal);
   });
+  it("supplies current small-project source, including untracked work, without Guardian's private files", async () => {
+    const root = await repo();
+    await fs.writeFile(path.join(root, "a.js"), "export const current = 2;\n");
+    await fs.writeFile(path.join(root, "new.js"), "export const added = 3;\n");
+    await fs.writeFile(path.join(root, ".cursor", "private.txt"), "private setup marker");
+    const seen = path.join(await tmp("gg-review-context-"), "prompt.txt");
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`const fs=require("fs"); fs.writeFileSync(${JSON.stringify(seen)}, fs.existsSync(".cursor/goal-guardian/review-task.md") ? fs.readFileSync(".cursor/goal-guardian/review-task.md", "utf8") : process.argv[process.argv.indexOf("-p")+1]); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
+    expect(await runReview(root, { goal: "Check the additions", successCriteria: [{ id: "sc_1", text: "The additions work" }] })).toMatchObject({ ran: true });
+    const prompt = await fs.readFile(seen, "utf8");
+    expect(prompt).toContain('"path":"a.js","content":"export const current = 2;');
+    expect(prompt).toContain('"path":"new.js","content":"export const added = 3;');
+    expect(prompt).not.toContain("private setup marker");
+    expect(prompt).toContain("still run the relevant tests and probes");
+  });
+
+  it("keeps large project contents out of the prompt instead of silently truncating the source", async () => {
+    const root = await repo();
+    await fs.writeFile(path.join(root, "large.txt"), "large-source-marker" + "x".repeat(64 * 1024));
+    const seen = path.join(await tmp("gg-review-context-"), "prompt.txt");
+    process.env.GOAL_GUARDIAN_REVIEWER = await stub(`const fs=require("fs"); fs.writeFileSync(${JSON.stringify(seen)}, fs.existsSync(".cursor/goal-guardian/review-task.md") ? fs.readFileSync(".cursor/goal-guardian/review-task.md", "utf8") : process.argv[process.argv.indexOf("-p")+1]); console.log(JSON.stringify({result:${JSON.stringify(JSON.stringify(HOLDS))}}));`);
+    expect(await runReview(root, { goal: "Check the work", successCriteria: [{ id: "sc_1", text: "The work is done" }] })).toMatchObject({ ran: true });
+    expect(await fs.readFile(seen, "utf8")).not.toContain("large-source-marker");
+  });
+
   it("reports genuine provider usage and leaves missing usage unknown", async () => {
     const root=await repo();
     for(const [usage,want] of [[{input_tokens:100,output_tokens:20},120],[{total_tokens:81},81],[{inputTokens:23272,outputTokens:1423,cacheReadTokens:47872,cacheWriteTokens:0,reasoningTokens:711},72567],[{inputTokens:100,outputTokens:20,cacheReadTokens:40,cacheWriteTokens:10},170],[{totalTokens:191,inputTokens:100,outputTokens:20},191],[{},undefined]] as const){

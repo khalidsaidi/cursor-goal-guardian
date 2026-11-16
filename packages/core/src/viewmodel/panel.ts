@@ -109,7 +109,7 @@ function buildTour(inputs: PanelInputs): PanelTour {
       id: "ask",
       label: "Ask your agent for something",
       hint: "your request becomes the goal",
-      done: contract.goal.trim().length > 0 || records.length > 0,
+      done: contract.goal.trim().length > 0,
     },
     {
       id: "steer",
@@ -169,7 +169,7 @@ function goalStatus(phase: PanelViewModel["goalPhase"], run: PanelViewModel["goa
   // An older record: proved with the review's objection still attached. Newer ones end as "disputed" outright.
   if (phase === "complete" && run?.outcome === "proved" && run.reviewer.length) return { lamp: "warn", word: "needs attention" };
   // Both goal keepers accepted it, but a check didn't run: complete, and not proved.
-  if (phase === "complete" && run?.outcome === "unchecked") return { lamp: "warn", word: "unchecked" };
+  if (phase === "complete" && run?.outcome === "unchecked") return { lamp: "idle", word: "review unfinished" };
   if (phase === "complete") return run?.outcome === "proved" ? { lamp: "on", word: "complete" } : { lamp: "idle", word: "closed" };
   if (run?.outcome === "disputed") return { lamp: "warn", word: "needs attention" };
   if (run?.outcome === "unverified") return { lamp: "warn", word: "unverified" };

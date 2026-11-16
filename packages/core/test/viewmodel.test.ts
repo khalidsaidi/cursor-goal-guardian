@@ -104,14 +104,14 @@ describe("get-started tour", () => {
     expect(vm.tour).toMatchObject({ doneCount: 1, total: 4, visible: true });
   });
 
-  it("asking completes via goal or via any tape record; /guardian completes only on a guardian status/contract call", () => {
+  it("background activity does not complete asking before a goal exists", () => {
     const inputs = baseInputs();
     inputs.contract = defaultContract();
     inputs.records = [
       { ts: at(10), kind: "action.observed", actionType: "mcp", actionValue: "browser/take_screenshot" },
     ];
     const vm = buildPanelViewModel(inputs);
-    expect(stepById(vm).ask).toBe(true);
+    expect(stepById(vm).ask).toBe(false);
     expect(stepById(vm).steer).toBe(false);
   });
 

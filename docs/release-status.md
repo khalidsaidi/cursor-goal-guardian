@@ -2,6 +2,16 @@
 
 Updated 2026-11-15 for the 1.0.2 platform restoration and public-material refresh, carrying forward the agreed release evidence and completed leverage work. This is the release checklist, not a new benchmark plan.
 
+## Current UX release gate: open
+
+The user requires actual Cursor footage and a usable setup before release. A real CSV task has now been captured: connection, goal retention, implementation, tests, browser use and the final result. The original run ended unchecked after the project reviewer timed out twice; ADK completed its check. The edited recording uses actual sampled Cursor frames, shortens waits and omits file dialogs. It does not portray a successful completion review. Recording: `C:\Users\khali\Documents\Codex\2026-11-11\thi\artifacts\cgg-real-cursor-walkthrough.mp4`; raw samples and metadata remain outside this repository.
+
+The 1.0.3 candidate fixes the observed blank panel by embedding its bundled script and stylesheet with nonce-restricted content policy. Setup starts with Connect Guardian, with optional fields collapsed. Background activity no longer marks the first request as completed. The unavailable-review screen now uses a neutral status and one short explanation, without an amber warning or retry button; technical records are collapsed under Check details. The installed Linux candidate was visually checked in actual Cursor on the same unfinished-review record. Preview: `C:\Users\khali\Documents\Codex\2026-11-11\thi\artifacts\cgg-panel-after.jpg`.
+
+Review-session traces showed completed tests and probes before the deadline, with no final verdict returned. Small text projects now reach the reviewer in a bounded source snapshot to avoid repeated file reads, and its deadline allows time to return the answer. The first source-snapshot check still timed out; the subsequent check with the final deadline completed with all requested verdicts and no findings. This is a targeted real review of the unchanged CSV work, not a new end-to-end Cursor run or proof of a general speed improvement. Results: `/home/khali/ggw-study/cgg-real-ux/final-source-review.json`. Core and extension checks pass and the Linux candidate builds and installs. Full final-build workflow footage is still incomplete; the gate remains open. Existing goal, review, learning and platform evidence continues to count. No further paid runs are scheduled by this record.
+
+The public images and GIFs were also regenerated for the current setup using the existing pipeline. They remain explicitly labelled illustrations and do not replace real footage. The 1.0.3 candidate is not published; the qualified 1.0.2 release below remains the published version.
+
 ## Target
 
 Remember the user's goal and keep Cursor working on it; independently check unfinished or meaningfully unrequested work; improve the reviewer from feedback through RRSI. Codex and DeepSeek goal code, CGG's reviewer, ADK and RRSI remain the intended components. Help ordinary agents finish; do not police honesty.

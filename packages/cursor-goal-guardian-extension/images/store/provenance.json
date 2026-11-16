@@ -1,16 +1,16 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.3",
   "kind": "Labelled product illustrations, not model-run evidence",
   "sources": {
-    "src/panel/render.ts": "a08b851841620e96e72cf0f904f5a797a83a4af035bf6cb689cb5ccf117703cb",
-    "media/panel.css": "febf0d83b848ffbb8c24e3ddc4106f4a87641af151e4afcc2ddc19c5a4e56a99",
+    "src/panel/render.ts": "1ccf3f4eb283aabd771b4bc34bc9d0f2f27a1a361a4708a704b6440092b2d52f",
+    "media/panel.css": "0b7e768d87df5b7b1b6e5b8e4231dfad76c0f0f5ae2249f2cb5a79756d7fcbdd",
     "src/commandCenter.ts": "fc0079e44f99301b5ca307409b0a550f7cab482c23ea18d3252864032f2c10eb",
     "src/setup.ts": "41f38dcaf0bff311f70bc70f98096ef45dd4ef86174e5ef6aa5b26b9aa4db70f"
   },
   "root_sources": {
     "scripts/render-public-media.mjs": "13c2deed7d079484e75163b8b5028dece9116e2a5681913abdcf42190405cb2f",
-    "scripts/render-public-media.py": "75f5ebe9409522e6dea1a0b0bcfff4465583bfa09ff2fb3890a52372788f04d4",
-    "packages/core/src/viewmodel/panel.ts": "ef456e83fa9f3563560d377cc88bc8f4678858213de118a2677d672b571cb201",
+    "scripts/render-public-media.py": "de75baaff4dd8d82ec0d939caa0a315b834ce828b51baddb49182c2628afbbb8",
+    "packages/core/src/viewmodel/panel.ts": "fb8c5521ffee8f238982b3d54b1ad226d332b8b2e9f975fb2939fb4a999201b1",
     "packages/core/src/rule.ts": "69ddcdf706a0b480980c36dd33aa31becfce014004795f3d39230165abff9213"
   }
 }

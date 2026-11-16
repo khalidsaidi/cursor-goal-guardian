@@ -11,7 +11,7 @@ with sync_playwright() as pw:
  for scene in cfg['scenes']:
   name=scene['name'];page.goto((tmp/(name+'.html')).as_uri());page.wait_for_load_state('load')
   if scene.get('fill'):
-   frame=page.frame_locator('iframe');frame.locator('#su-goal').fill('Ship CSV export with filters and tests')
+   frame=page.frame_locator('iframe');frame.locator('.su-options summary').click();frame.locator('#su-goal').fill('Ship CSV export with filters and tests')
    frame.locator('#su-crit').fill('Export only the filtered rows');frame.locator('#su-crit').press('Enter')
    frame.locator('#su-con').fill('No new dependencies');frame.locator('#su-con').press('Enter')
   page.screenshot(path=str(tmp/(name+'.png')))

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.3 (in preparation)
+
+- Keep an unfinished CGG review neutral: one short message, technical details collapsed, and no retry button.
+- Correct the first-request checklist and give small-project reviews their source up front, with time to return a verdict.
+
+- Load the panel’s bundled styles and script directly in its nonce-protected HTML, avoiding failed remote asset requests that can leave WSL setup blank.
+- Start setup with Connect Guardian; goal and boundary fields stay available under optional settings.
+- A real Cursor setup and workflow recording is required before this release is considered ready.
+
 ## 1.0.2
 
 - Restore complete native package builds for the existing Windows, macOS and Linux targets on x64 and ARM64. Complete packages execute in native platform checks with a stand-in model.

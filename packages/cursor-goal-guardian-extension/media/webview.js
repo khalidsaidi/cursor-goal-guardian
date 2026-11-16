@@ -10,9 +10,14 @@
     return `
     <div class="welcome">
       <div class="lamp-row"><span class="lamp idle"></span><span class="status-word">standing by</span></div>
-      <p>Guardian keeps your goal with the project, helps the agent finish what remains,
-      and checks the finished work. You can correct its review.</p>
+      <p>Keep your goal with the project, help Cursor finish what remains,
+      and give the finished work a separate check.</p>
+      <button data-setup-submit>Connect Guardian</button>
+      <p class="quiet">Connect, enable Guardian&rsquo;s tools in Cursor once, then ask for the work in chat.
+      Your request becomes the goal.</p>
 
+      <details class="su-options">
+        <summary>Add a goal or boundaries now (optional)</summary>
       <div class="su">
         <label class="su-label" for="su-goal">What are you working toward?</label>
         <textarea id="su-goal" class="su-input su-goal" rows="2" spellcheck="false"
@@ -31,16 +36,15 @@
         <label class="su-check"><input id="su-git" type="checkbox" checked />
           Keep Guardian&rsquo;s machine-written files out of git</label>
 
-        <button data-setup-submit>Connect Guardian</button>
-        <p class="quiet">Everything here is optional and editable later &mdash; connect empty
-        and your first request to the agent becomes the goal.</p>
+        <p class="quiet">You can change these later. Use Connect Guardian above when ready.</p>
       </div>
+      </details>
     </div>`;
   }
   var GOAL_RUN_WORD = {
     working: "Continuing the goal: the agent has the next steps",
     proved: "Work complete: independent checks passed",
-    unchecked: "Work reported complete; independent checks are incomplete",
+    unchecked: "The agent finished the work",
     disputed: "Work needs attention: review findings remain",
     unverified: "Goal tracking could not finish: check the setup",
     blocked: "Goal blocked",
@@ -74,7 +78,11 @@
       ...g.goalFileEdited ? ["The agent edited Guardian's goal files during this run."] : []
     ];
     const missed = g.passedReview ? g.saidMissed ? `<p class="review-line"><span class="review-said">you said: this wasn't done. The goal is reopened so Cursor can finish it.</span></p>` : `<p class="review-line">The independent review reported no remaining findings. <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>` : "";
-    return `<p class="review-line">${escapeHtml(head)}</p>${lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("")}${missed}`;
+    const lineHtml = lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("");
+    const receiptHtml = lineHtml + (g.outcome === "unchecked" ? g.skipped.map((s) => `<p class="review-line">${escapeHtml(s)}</p>`).join("") : "");
+    const receipts = (g.outcome === "unchecked" || g.outcome === "proved" && !disputed) && receiptHtml ? `<details class="run-details"><summary>Check details</summary>${receiptHtml}</details>` : lineHtml;
+    const summary = g.outcome === "unchecked" ? "" : `<p class="review-line">${escapeHtml(head)}</p>`;
+    return `${summary}${receipts}${missed}`;
   }
   var SOURCE_WORD = { user: "your call", fixed: "the agent fixed it", overruled: "you marked the goal done over it", missed: "you said the work wasn't done" };
   function renderReviews(vm) {
@@ -123,11 +131,9 @@
     }
     return `<div class="goal-controls"><button class="link" data-cmd="goal.pause">Pause goal</button> <button class="link" data-cmd="goal.done">Mark goal done</button></div>`;
   }
-  function renderVerificationWarning(vm) {
-    const run = vm.goalRun;
-    if (run?.outcome !== "unchecked") return "";
-    const reasons = run.skipped.map((s) => `<li>Not independently checked: ${escapeHtml(s)}</li>`).join("");
-    return `<div class="verification-warning" role="status" aria-live="polite"><strong>Verification incomplete</strong><p>This work has not been fully independently checked.</p>${reasons ? `<ul>${reasons}</ul>` : ""}</div>`;
+  function renderReviewNotice(vm) {
+    if (vm.goalRun?.outcome !== "unchecked") return "";
+    return `<p class="review-notice" role="status" aria-live="polite">The agent finished the work. CGG couldn&rsquo;t finish its independent review.</p>`;
   }
   function renderGoal(vm) {
     if (!vm.setUp) return "";
@@ -142,7 +148,7 @@
         <span class="lamp ${vm.status.lamp}"></span>
         <span class="status-word">${escapeHtml(vm.status.word)}</span>
       </div>
-      ${renderVerificationWarning(vm)}
+      ${renderReviewNotice(vm)}
       ${renderGoalRun(vm)}
       ${renderReviews(vm)}
       ${renderImprove(vm)}
