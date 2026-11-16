@@ -1,4 +1,5 @@
 import { goalHash, goalPhaseOf } from "../goal/loop.js";
+import { currentGoalRecords } from "../goal/workContext.js";
 import type { Contract } from "../schema/contract.js";
 import type { AuditRecord, GoalReviewRecord, ImproveRunRecord } from "../schema/audit.js";
 import { enoughToImprove, improveRunning, reviewLabels, reviewFeedbackTargets, type ReviewLabel } from "../goal/improve.js";
@@ -169,7 +170,7 @@ function goalStatus(phase: PanelViewModel["goalPhase"], run: PanelViewModel["goa
   // An older record: proved with the review's objection still attached. Newer ones end as "disputed" outright.
   if (phase === "complete" && run?.outcome === "proved" && run.reviewer.length) return { lamp: "warn", word: "needs attention" };
   // Both goal keepers accepted it, but a check didn't run: complete, and not proved.
-  if (phase === "complete" && run?.outcome === "unchecked") return { lamp: "idle", word: "review unfinished" };
+  if (phase === "complete" && run?.outcome === "unchecked") return { lamp: "idle", word: "changes made" };
   if (phase === "complete") return run?.outcome === "proved" ? { lamp: "on", word: "complete" } : { lamp: "idle", word: "closed" };
   if (run?.outcome === "disputed") return { lamp: "warn", word: "needs attention" };
   if (run?.outcome === "unverified") return { lamp: "warn", word: "unverified" };
@@ -246,10 +247,10 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
     };
   }
 
-  const goalRun = buildGoalRun(inputs.goalRecords ?? records);
-
-  const goalRecords = inputs.goalRecords ?? records;
-  const goalPhase = goalPhaseOf(goalRecords, contract);
+  const history = inputs.goalRecords ?? records;
+  const goalRecords = currentGoalRecords(history, goalHash(contract));
+  const goalRun = buildGoalRun(goalRecords);
+  const goalPhase = goalPhaseOf(history, contract);
   const proved = provedItems(goalRecords, contract);
 
   return {
@@ -260,7 +261,7 @@ export function buildPanelViewModel(inputs: PanelInputs): PanelViewModel {
     status: goalStatus(goalPhase, goalRun),
     goalRun,
     reviews: buildReviews(goalRecords),
-    improve: buildImprove(goalRecords, inputs.improvedReviewer === true),
+    improve: buildImprove(history, inputs.improvedReviewer === true),
     hooksDisabled: inputs.workspaceTrusted === false,
     goalPhase,
     tour: buildTour(inputs),

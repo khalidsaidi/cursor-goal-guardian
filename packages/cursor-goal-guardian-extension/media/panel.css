@@ -195,7 +195,6 @@ textarea.su-goal {
 }
 
 /* A failed check is CGG's service state, not a warning about the user's work. */
-.review-notice { margin: 12px 0; color: var(--vscode-descriptionForeground); font-size: 13px; line-height: 1.5; }
 .run-details { margin: 12px 0; }
 .run-details summary { cursor: pointer; color: var(--vscode-descriptionForeground); font-size: 12px; }
 .run-details .review-line { overflow-wrap: anywhere; }

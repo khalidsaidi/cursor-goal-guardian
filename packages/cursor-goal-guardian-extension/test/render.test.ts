@@ -70,18 +70,19 @@ describe("panel sections", () => {
     expect(sections.constraints).toContain("No new dependencies");
   });
 
-  it("shows an unfinished review neutrally and keeps technical receipts closed", () => {
+  it("keeps service failures out of the primary task view and technical receipts closed", () => {
     const inp=inputs();
     inp.goalRecords=[{ts:at(1),kind:"goal.end",goalHash:goalHash(inp.contract),outcome:"unchecked",skipped:["reviewer failed <details>"],proved:[{criterion:"sc_1",command:"npm test",quote:"passed"}]}];
     const sections=renderSections(buildPanelViewModel(inp));
-    expect(sections.goal).toContain('class="review-notice" role="status"');
+    expect(sections.goal).not.toContain("CGG couldn");
+    expect(sections.goal).not.toContain("review unfinished");
     expect(sections.goal).not.toContain('class="lamp warn"');
     expect(sections.goal).toContain('<details class="run-details"><summary>Check details</summary>');
     expect(sections.goal).not.toMatch(/<details[^>]*open/);
     expect(sections.goal).not.toContain("Verification incomplete");
     expect(sections.goal).not.toContain("retry");
     expect(sections.goal).toContain("reviewer failed &lt;details&gt;");
-    expect(sections.goal.indexOf("couldn&rsquo;t finish")).toBeLessThan(sections.goal.indexOf("npm test"));
+    expect(sections.goal.indexOf('<details class="run-details">')).toBeLessThan(sections.goal.indexOf("reviewer failed"));
     inp.goalRecords[0]={ts:at(1),kind:"goal.end",goalHash:goalHash(inp.contract),outcome:"proved"};
     expect(renderSections(buildPanelViewModel(inp)).goal).not.toContain('class="review-notice"');
   });

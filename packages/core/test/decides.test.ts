@@ -150,7 +150,9 @@ const fs=require('fs');let s='';process.stdin.on('data',b=>s+=b);process.stdin.o
     expect(answer).toMatchObject({ accepted: true, outcome: "proved" });
     // What the agent is told to do next is DeepSeek's own wrap-up, from its tool; Codex's answer is beside it.
     expect(answer.message).toContain("<goal_complete>");
-    expect(answer.message).toContain("Independent verification completed: Reviewer: ran; evaluator: ran");
+    expect(answer.message).toContain("The requested work is finished and completion checks passed");
+    expect(answer.message).toContain("Do not recite Guardian verdicts");
+    expect(answer.message).toContain("Agent-only context: Reviewer: ran; evaluator: ran");
     expect(answer.codex).toMatchObject({ notified: "complete" });
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "proved", proved: expect.arrayContaining([{ criterion: "goal", command: "make test", recordedAt: expect.any(String) }]) }]);
     expect((await engineGoal(root))?.phase).toBe("complete");
@@ -245,7 +247,7 @@ describe("a check that didn't run is never 'proved'", () => {
     expect(await submitGoalReport(root, report)).toMatchObject({ accepted: true, outcome: "unchecked" });
   });
 
-  it("no reviewer: both goal keepers accept, and the goal is complete but unchecked, with why, and the agent is told to say so", async () => {
+  it("no reviewer: retains the unchecked record and guides a task-focused reply without a verification claim", async () => {
     const root = await repo();
     await work(root);
     process.env.GOAL_GUARDIAN_REVIEWER = "/nonexistent/reviewer";
@@ -255,9 +257,11 @@ describe("a check that didn't run is never 'proved'", () => {
     expect(await stop(root)).toContain("Do not hand those commands to the user");
     const answer = await submitGoalReport(root, report);
     expect(answer).toMatchObject({ accepted: true, outcome: "unchecked" });
-    expect(answer.message).toMatch(/^Verification incomplete: this work is unchecked\./);
+    expect(answer.message).toMatch(/^Describe the delivered work/);
     expect(answer.message).toContain("recorded as complete but unchecked, not proved, because the reviewer didn't run: cursor-agent isn't installed");
-    expect(answer.message).toContain("full independent verification is incomplete");
+    expect(answer.message).toContain("Do not claim full verification");
+    expect(answer.message).toContain("Agent-only diagnostic context");
+    expect(answer.message).toContain("Do not make the user manage Guardian");
     expect(answer.message).toContain("Reviewer: did not run; evaluator: ran");
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "unchecked", skipped: ["the reviewer didn't run: cursor-agent isn't installed"] }]);
     expect(await phase(root)).toBe("complete");
@@ -269,7 +273,7 @@ describe("a check that didn't run is never 'proved'", () => {
     process.env.GOAL_GUARDIAN_EVALUATOR = JSON.stringify({ python: "/nonexistent/python", cli: __filename, adkDir: os.tmpdir(), site: os.tmpdir() });
     expect(await submitGoalReport(root, report)).toMatchObject({ accepted: false, verificationPending: true });
     const answer = await submitGoalReport(root, report);
-    expect(answer).toMatchObject({ accepted: true, outcome: "unchecked", message: expect.stringMatching(/^Verification incomplete: this work is unchecked\./) });
+    expect(answer).toMatchObject({ accepted: true, outcome: "unchecked", message: expect.stringMatching(/^Describe the delivered work/) });
     expect(answer.message).toContain("Reviewer: ran; evaluator: did not run");
     expect(await kinds(root, "goal.end")).toMatchObject([{ outcome: "unchecked", skipped: [expect.stringContaining("the evaluator didn't run")] }]);
   });

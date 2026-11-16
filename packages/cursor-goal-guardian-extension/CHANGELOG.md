@@ -2,12 +2,13 @@
 
 ## 1.0.3 (in preparation)
 
-- Keep an unfinished CGG review neutral: one short message, technical details collapsed, and no retry button.
+- Show delivered work and useful findings, with diagnostic records available under Check details and no retry button. Routine agent replies describe the result without asking users to manage internal checkers.
+- Keep the current goal's display separate from earlier goals, preventing old review failures from appearing on a new task.
 - Correct the first-request checklist and give small-project reviews their source up front, with time to return a verdict.
 
 - Load the panel’s bundled styles and script directly in its nonce-protected HTML, avoiding failed remote asset requests that can leave WSL setup blank.
 - Start setup with Connect Guardian; goal and boundary fields stay available under optional settings.
-- A real Cursor setup and workflow recording is required before this release is considered ready.
+- The installed Linux candidate completed the existing CSV task in real Cursor, reusing the implementation and recorded checks; both completion checks passed.
 
 ## 1.0.2
 

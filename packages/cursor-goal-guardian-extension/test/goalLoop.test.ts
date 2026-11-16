@@ -243,7 +243,8 @@ describe("the reviewer on the panel, and improving it", () => {
   it("says plainly when a goal is complete but unchecked, disputed, or unverified", () => {
     const end = (outcome: "unchecked" | "disputed" | "unverified", rest: Record<string, unknown> = {}): AuditRecord => ({ ts: at(5), kind: "goal.end", conversationId: "c", goalHash: "h", outcome, ...rest }) as AuditRecord;
     const unchecked = renderSections(vm([end("unchecked", { skipped: ["the reviewer didn't run: cursor-agent isn't installed"] })])).goal;
-    expect(unchecked).toContain("CGG couldn&rsquo;t finish its independent review");
+    expect(unchecked).not.toContain("CGG couldn");
+    expect(unchecked).not.toContain("review unfinished");
     expect(unchecked).toContain("the reviewer didn&#39;t run: cursor-agent isn&#39;t installed");
     expect(unchecked).toContain('<details class="run-details">');
     expect(renderSections(vm([end("disputed", { reviewer: ["Reviewer: sc_1 isn't done: a placeholder"] })])).goal).toContain("Work needs attention: review findings remain");

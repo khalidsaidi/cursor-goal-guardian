@@ -43,7 +43,7 @@
   }
   var GOAL_RUN_WORD = {
     working: "Continuing the goal: the agent has the next steps",
-    proved: "Work complete: independent checks passed",
+    proved: "Finished",
     unchecked: "The agent finished the work",
     disputed: "Work needs attention: review findings remain",
     unverified: "Goal tracking could not finish: check the setup",
@@ -77,7 +77,7 @@
       ...g.changedSinceReview ? ["The last review objected, and the agent changed the project after it. That final state wasn't reviewed again."] : [],
       ...g.goalFileEdited ? ["The agent edited Guardian's goal files during this run."] : []
     ];
-    const missed = g.passedReview ? g.saidMissed ? `<p class="review-line"><span class="review-said">you said: this wasn't done. The goal is reopened so Cursor can finish it.</span></p>` : `<p class="review-line">The independent review reported no remaining findings. <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>` : "";
+    const missed = g.passedReview ? g.saidMissed ? `<p class="review-line"><span class="review-said">you said: this wasn't done. The goal is reopened so Cursor can finish it.</span></p>` : `<p class="review-line">Anything still missing? <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>` : "";
     const lineHtml = lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("");
     const receiptHtml = lineHtml + (g.outcome === "unchecked" ? g.skipped.map((s) => `<p class="review-line">${escapeHtml(s)}</p>`).join("") : "");
     const receipts = (g.outcome === "unchecked" || g.outcome === "proved" && !disputed) && receiptHtml ? `<details class="run-details"><summary>Check details</summary>${receiptHtml}</details>` : lineHtml;
@@ -131,10 +131,6 @@
     }
     return `<div class="goal-controls"><button class="link" data-cmd="goal.pause">Pause goal</button> <button class="link" data-cmd="goal.done">Mark goal done</button></div>`;
   }
-  function renderReviewNotice(vm) {
-    if (vm.goalRun?.outcome !== "unchecked") return "";
-    return `<p class="review-notice" role="status" aria-live="polite">The agent finished the work. CGG couldn&rsquo;t finish its independent review.</p>`;
-  }
   function renderGoal(vm) {
     if (!vm.setUp) return "";
     const goal = vm.goal.trim();
@@ -148,7 +144,6 @@
         <span class="lamp ${vm.status.lamp}"></span>
         <span class="status-word">${escapeHtml(vm.status.word)}</span>
       </div>
-      ${renderReviewNotice(vm)}
       ${renderGoalRun(vm)}
       ${renderReviews(vm)}
       ${renderImprove(vm)}
@@ -173,7 +168,9 @@
   function renderCriteria(vm) {
     if (!vm.setUp || vm.successCriteria.length === 0) return "";
     const items = vm.successCriteria.map((c) => `<li class="${c.done ? "done" : ""}"><span class="tick">${c.done ? "\u2713" : ""}</span>${escapeHtml(c.text)}</li>`).join("");
-    return `<div class="criteria"><div class="eyebrow">Done when</div><ul>${items}</ul></div>`;
+    const list = `<ul>${items}</ul>`;
+    if (vm.goalPhase === "complete" && vm.goalRun?.outcome === "unchecked") return `<details class="run-details"><summary>Goal details</summary>${list}</details>`;
+    return `<div class="criteria"><div class="eyebrow">Done when</div>${list}</div>`;
   }
   function renderConstraints(vm) {
     if (!vm.setUp || vm.constraints.length === 0) return "";

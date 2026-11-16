@@ -59,6 +59,22 @@ describe("panel view model", () => {
     expect(ticks([{ ts: at(5), kind: "goal.control", goalHash: goalHash(inputs.contract), operation: "complete", actor: "user" }])).toEqual([false, false]);
   });
 
+  it.each(["same", "different"])("does not carry a previous run's result or complaints into a %s goal", (kind) => {
+    const inp = baseInputs();
+    const hash = goalHash(inp.contract);
+    const oldHash = kind === "same" ? hash : "earlier-goal";
+    inp.goalRecords = [
+      { ts: at(5), kind: "goal.set", goalHash: oldHash },
+      { ts: at(4), kind: "goal.review", id: "old-review", goalHash: oldHash, reportTs: at(4), ran: false, reason: "old check timed out", seconds: 90, fails: [{ id: "sc_1", evidence: "old complaint" }], extra: [] },
+      { ts: at(3), kind: "goal.end", goalHash: oldHash, outcome: "unchecked", skipped: ["old check timed out"] },
+      { ts: at(1), kind: "goal.set", goalHash: hash },
+    ];
+    const vm = buildPanelViewModel(inp);
+    expect(vm.goalRun).toBeNull();
+    expect(vm.reviews).toEqual([]);
+    expect(vm.successCriteria.every(c => !c.done)).toBe(true);
+  });
+
   it("the status follows the goal, and flags in old logs change nothing", () => {
     const end = (outcome: "proved" | "blocked" | "stalled" | "limit"): AuditRecord => ({ ts: at(5), kind: "goal.end", conversationId: "c", goalHash: "h", outcome });
     const word = (goalRecords: AuditRecord[]) => buildPanelViewModel(baseInputs({ goalRecords })).status;

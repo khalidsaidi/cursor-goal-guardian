@@ -59,7 +59,7 @@ function renderWelcome(vm: PanelViewModel): string {
 
 const GOAL_RUN_WORD: Record<NonNullable<PanelViewModel["goalRun"]>["outcome"], string> = {
   working: "Continuing the goal: the agent has the next steps",
-  proved: "Work complete: independent checks passed",
+  proved: "Finished",
   unchecked: "The agent finished the work",
   disputed: "Work needs attention: review findings remain",
   unverified: "Goal tracking could not finish: check the setup",
@@ -100,7 +100,7 @@ function renderGoalRun(vm: PanelViewModel): string {
   const missed = g.passedReview
     ? g.saidMissed
       ? `<p class="review-line"><span class="review-said">you said: this wasn't done. The goal is reopened so Cursor can finish it.</span></p>`
-      : `<p class="review-line">The independent review reported no remaining findings. <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>`
+      : `<p class="review-line">Anything still missing? <button class="link" data-cmd="review.missed:${escapeHtml(g.passedReview)}">This wasn't done</button></p>`
     : "";
   const lineHtml = lines.map((l) => `<p class="review-line">${escapeHtml(l)}</p>`).join("");
   const receiptHtml = lineHtml + (g.outcome === "unchecked" ? g.skipped.map((s) => `<p class="review-line">${escapeHtml(s)}</p>`).join("") : "");
@@ -171,10 +171,6 @@ function renderGoalControls(vm: PanelViewModel): string {
   return `<div class="goal-controls"><button class="link" data-cmd="goal.pause">Pause goal</button> <button class="link" data-cmd="goal.done">Mark goal done</button></div>`;
 }
 
-function renderReviewNotice(vm: PanelViewModel): string {
-  if (vm.goalRun?.outcome !== "unchecked") return "";
-  return `<p class="review-notice" role="status" aria-live="polite">The agent finished the work. CGG couldn&rsquo;t finish its independent review.</p>`;
-}
 
 function renderGoal(vm: PanelViewModel): string {
   if (!vm.setUp) return "";
@@ -191,7 +187,6 @@ function renderGoal(vm: PanelViewModel): string {
         <span class="lamp ${vm.status.lamp}"></span>
         <span class="status-word">${escapeHtml(vm.status.word)}</span>
       </div>
-      ${renderReviewNotice(vm)}
       ${renderGoalRun(vm)}
       ${renderReviews(vm)}
       ${renderImprove(vm)}
@@ -225,7 +220,9 @@ function renderCriteria(vm: PanelViewModel): string {
   const items = vm.successCriteria
     .map((c) => `<li class="${c.done ? "done" : ""}"><span class="tick">${c.done ? "✓" : ""}</span>${escapeHtml(c.text)}</li>`)
     .join("");
-  return `<div class="criteria"><div class="eyebrow">Done when</div><ul>${items}</ul></div>`;
+  const list = `<ul>${items}</ul>`;
+  if (vm.goalPhase === "complete" && vm.goalRun?.outcome === "unchecked") return `<details class="run-details"><summary>Goal details</summary>${list}</details>`;
+  return `<div class="criteria"><div class="eyebrow">Done when</div>${list}</div>`;
 }
 
 function renderConstraints(vm: PanelViewModel): string {
