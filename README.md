@@ -24,7 +24,7 @@ You ask for CSV export that respects the current filters, with tests. Cursor add
 
 *Illustrative conversation and example data, with the current CGG panel. This is an explanation of the workflow, not a recording of a real model run.*
 
-[Watch the actual Cursor panel](https://github.com/khalidsaidi/cursor-goal-guardian/releases/download/v1.0.3/cgg-cursor-panel.mp4) — a pointer-free walkthrough of the current controls after the CSV task completed.
+[Watch the actual Cursor panel](https://github.com/khalidsaidi/cursor-goal-guardian/releases/latest/download/cgg-cursor-panel.mp4) — see the goal, completed work and finish conditions inside Cursor.
 
 ## Get started
 

@@ -2,6 +2,10 @@
 
 Updated 2026-11-16 for the installed 1.0.3 Cursor completion and presentation pass, carrying forward the agreed release evidence and completed leverage work. This is the release checklist, not a new benchmark plan.
 
+## Documentation correction: 1.0.4
+
+Remove production/editing notes from the product pitch. Both READMEs now describe what the panel walkthrough shows: the goal, completed work and finish conditions. The public changelog drops the capture-editing note, and the walkthrough footer describes the panel rather than how the video was assembled. No interface, goal, review, ADK or RRSI behavior changes. Existing native-verified packages and actual Cursor evidence carry forward. Open VSX makes released READMEs immutable, so 1.0.4 is a documentation/metadata release; only package version metadata, README and changelog entries change in the VSIX. Every other archive entry must match 1.0.3 byte for byte, without ZIP extra fields. Publication/readback is pending below.
+
 ## Open VSX publication: uploads accepted; Windows x64 activation pending
 
 The user supplied an existing local publishing credential. It was read only for publication, never printed, never committed and never changed. All six platform publication commands succeeded for 1.0.3. Live Open VSX checks verify Linux x64/ARM64, macOS x64/ARM64 and Windows ARM64: the registry archive SHA-256, description, packaged README, changelog and manifest match the staged release. The generic latest listing is now 1.0.3. Windows x64 was accepted by the publishing service but remains absent from its public version endpoint and still reports 1.0.0 as its platform latest. The cause is not established; do not claim full registry completion or repeat publishing blindly. Its verified 1.0.3 GitHub download remains available. The publisher-account status endpoint is not readable with the publishing credential; no broader credential or privilege change was attempted.

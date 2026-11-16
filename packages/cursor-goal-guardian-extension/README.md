@@ -26,7 +26,7 @@ Cursor adds an export and stops. The export still includes filtered-out rows. CG
 
 *Illustrative conversation and example data, with the current CGG panel. These visuals explain the workflow; they are not recordings of real model sessions.*
 
-[Watch the actual Cursor panel](https://github.com/khalidsaidi/cursor-goal-guardian/releases/download/v1.0.3/cgg-cursor-panel.mp4) — a pointer-free walkthrough of the current controls after the CSV task completed.
+[Watch the actual Cursor panel](https://github.com/khalidsaidi/cursor-goal-guardian/releases/latest/download/cgg-cursor-panel.mp4) — see the goal, completed work and finish conditions inside Cursor.
 
 ## Get started
 
