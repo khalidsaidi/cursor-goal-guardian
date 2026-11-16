@@ -2,6 +2,10 @@
 
 ## 1.0.3
 
+- Refresh the sidebar, welcome screen and guides around goal keeping with Codex + DeepSeek, independent review with CGG + Google ADK, and self-improvement with Google RRSI.
+- Use Cursor’s sidebar typography and theme colors, with a compact goal preview and expandable full request.
+- Replace public pointer-bearing captures with a clean actual Cursor panel walkthrough.
+
 - Show delivered work and useful findings, with diagnostic records available under Check details and no retry button. Routine agent replies describe the result without asking users to manage internal checkers.
 - Keep the current goal's display separate from earlier goals, preventing old review failures from appearing on a new task.
 - Preserve learning results when Windows briefly locks a feedback or replay cache file, without making another model call.

@@ -1,10 +1,20 @@
 # Cursor Goal Guardian
 
-**Keep Cursor working on your goal, check the finished work, and learn from your corrections.**
+**Help Cursor finish what you asked.**
 
-![Cursor Goal Guardian](packages/cursor-goal-guardian-extension/images/banner.png)
+CGG brings together goal keeping, independent review and feedback-driven learning to help Cursor finish your request, catch meaningful omissions and avoid unnecessary work.
 
-Ask for the work as usual. CGG remembers the goal across chats, sends unfinished work back to the agent, and gives completion a separate check.
+| What CGG does | What powers it |
+| --- | --- |
+| **Goal loop** — remembers your goal across chats and sends the agent back with what remains. | Goal-keeping code from **[OpenAI Codex](https://github.com/openai/codex) + [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)**. |
+| **Independent review** — checks finished work for meaningful omissions, defects and unrequested changes, then sends useful findings back. | **CGG’s project reviewer + [Google ADK](https://github.com/google/adk-python)** and its open-source evaluation toolkit. |
+| **Self-improvement** — learns from your specific feedback by testing reviewer-prompt updates before adopting them. | **[Google RRSI](https://github.com/google-research/rrsi)**, with separate examples to check an update and an option to undo it. |
+
+CGG helps a normal agent finish the work. It is not an honesty detector and does not ask the agent to prove its honesty.
+
+[Get started](#get-started) · [See the workflow](#one-request-through-to-completion) · [Feedback and learning](#you-stay-in-control)
+
+![Goal loop with Codex and DeepSeek, independent review with CGG and Google ADK, self-improvement with Google RRSI](packages/cursor-goal-guardian-extension/images/banner.png)
 
 ## One request, through to completion
 
@@ -14,25 +24,19 @@ You ask for CSV export that respects the current filters, with tests. Cursor add
 
 *Illustrative conversation and example data, with the current CGG panel. This is an explanation of the workflow, not a recording of a real model run.*
 
+[Watch the actual Cursor panel](https://github.com/khalidsaidi/cursor-goal-guardian/releases/download/v1.0.3/cgg-cursor-panel.mp4) — a pointer-free walkthrough of the current controls after the CSV task completed.
+
 ## Get started
 
 You need Cursor, a trusted Git project and a signed-in [Cursor CLI](https://cursor.com/docs/cli/installation) on the machine where the project runs. For WSL, install and sign in to the CLI inside WSL. CGG recognizes `agent` and the older `cursor-agent` name. Linux packages require glibc 2.39+ and OpenSSL 3, such as Ubuntu 24.04. CGG bundles its other runtimes; no separate Google Cloud account or Google model key is required.
 
-1. Download the **1.0.2 VSIX** for your operating system and processor from [GitHub releases](https://github.com/khalidsaidi/cursor-goal-guardian/releases/tag/v1.0.2). Choose `win32` for Windows, `darwin` for macOS or `linux` for Linux; choose `arm64` for Apple silicon or an ARM processor, otherwise `x64`. For a WSL project, use the Linux package and install it in the WSL extension host.
+1. Download the **latest VSIX** for your operating system and processor from [GitHub releases](https://github.com/khalidsaidi/cursor-goal-guardian/releases/latest). Choose `win32` for Windows, `darwin` for macOS or `linux` for Linux; choose `arm64` for Apple silicon or an ARM processor, otherwise `x64`. For a WSL project, use the Linux package and install it in the WSL extension host.
 2. In Cursor, open the Command Palette (**Ctrl+Shift+P**, or **Cmd+Shift+P** on macOS), run **Extensions: Install from VSIX…** and select the downloaded file.
 3. Open your trusted Git project. Run **Goal Guardian: Show Panel**, then click **Connect Guardian**. The goal fields are optional; you can leave them empty.
 4. Click **Open MCP Settings** in the setup notification and enable **goal-guardian** for the project. In a remote workspace, open Cursor’s MCP settings manually if the button cannot open them.
 5. Ask Cursor for the work as usual: “Add CSV export that respects the current filters, with tests.” That request becomes the goal.
 
 The Open VSX listing may still carry an older version; use the linked release for this build. For an illustrated tour of setup, controls and feedback, see the [store guide](packages/cursor-goal-guardian-extension/README.md).
-
-## Three parts, one purpose
-
-- **Goal loop — Codex + DeepSeek.** CGG remembers your request and finish conditions, brings previous work back into context and sends the agent back with what remains. DeepSeek Harness controls goal status and rounds; OpenAI Codex supplies usage accounting, optional token budgets and continuation instructions. Cursor does the implementation work.
-- **Independent review — CGG + Google ADK.** CGG’s reviewer checks the finished project for missing work, real defects and meaningful unrequested changes. Google’s open-source ADK separately evaluates the recorded work and project evidence against your request. Useful findings go back to the agent.
-- **Learning from feedback — Google RRSI.** Your specific corrections become examples for testing reviewer-prompt updates. With enough examples, RRSI searches for improvements and CGG checks them on examples withheld from search. An update must improve those judgments without losing confirmed useful findings. You can undo it.
-
-These components have complementary jobs: keep the goal available, check the work, and improve the reviewer from specific corrections. RRSI updates the reviewer prompt; it does not change your goal or the fixed completion checks.
 
 ## What happens while you work
 

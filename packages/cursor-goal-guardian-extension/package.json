@@ -1,7 +1,7 @@
 {
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
-  "description": "Keep Cursor working on your goal, independently review the finished work, and learn from your corrections. Powered by goal code from Codex and DeepSeek, Google ADK and RRSI.",
+  "description": "Help Cursor finish what you asked. Goal loop with OpenAI Codex + DeepSeek, independent review with CGG + Google ADK, and feedback-driven reviewer learning with Google RRSI.",
   "version": "1.0.3",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",

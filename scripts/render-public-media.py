@@ -9,7 +9,7 @@ with sync_playwright() as pw:
  browser=pw.chromium.launch(headless=True,**({'executable_path':browser_path} if Path(browser_path).exists() else {}),args=['--no-sandbox'])
  page=browser.new_page(viewport={'width':1440,'height':960},device_scale_factor=1)
  for scene in cfg['scenes']:
-  name=scene['name'];page.goto((tmp/(name+'.html')).as_uri());page.wait_for_load_state('load')
+  name=scene['name'];page.goto((tmp/(name+'.html')).as_uri());page.wait_for_load_state('load');page.add_style_tag(content='*{cursor:none!important}')
   if scene.get('fill'):
    frame=page.frame_locator('iframe');frame.locator('.su-options summary').click();frame.locator('#su-goal').fill('Ship CSV export with filters and tests')
    frame.locator('#su-crit').fill('Export only the filtered rows');frame.locator('#su-crit').press('Enter')

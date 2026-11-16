@@ -2,6 +2,14 @@
 
 Updated 2026-11-16 for the installed 1.0.3 Cursor completion and presentation pass, carrying forward the agreed release evidence and completed leverage work. This is the release checklist, not a new benchmark plan.
 
+## First-use presentation and pointer-free media follow-up
+
+The public introduction now leads with the three capabilities and named sources: goal loop with OpenAI Codex + DeepSeek Harness, independent review with CGG + Google ADK, and self-improvement with Google RRSI. Both READMEs use a concise capability/source table, retain the helpful-agent purpose, link the sources, and direct installation to the latest release instead of stale 1.0.2 instructions. The banner, extension description and first-use panel carry the same message. Learning remains conditional on sufficient feedback and qualification; no unmeasured improvement is promised. GitLens, Continue and GitHub Pull Requests were reviewed as presentation references for task-focused entry points and onboarding, without copying their branding.
+
+Current illustrations use a neutral editor palette, the production renderer and pointer-free headless capture. Every illustration and animation frame was inspected; setup now shows the primary connect path without scrolling into optional fields. The actual Cursor panel was captured on the existing completed CSV goal, with the pointer parked outside the crop before saving each frame. The public video is a cropped, sampled UI walkthrough after completion, not a new model run or new completion evidence. Pointer-bearing originals remain private evidence and are to be replaced in the public release. No new model calls were made.
+
+Extension build and existing tests pass. Native runtime, hook/MCP programs, goal logic, review, ADK and RRSI files are unchanged. The release refresh will replace only frontend presentation, description, guides and media, comparing every other archive entry with the native-verified package and retaining its original receipt digest. Existing product/platform evidence carries forward; Open VSX authentication is unchanged.
+
 ## Sidebar styling follow-up: installed local preview
 
 After the 1.0.3 release, the user rejected the panel's oversized bold request, oversized status and faint checklist. The sidebar now inherits Cursor's font size, font weight and theme colors, with compact section headings, status beside the heading, a three-line request preview and a keyboard-operable full-request disclosure with Edit goal. Completed criteria remain readable, with plain check icons. Controls, focus outlines, inputs and scrolling use the host theme tokens, including contrast borders.

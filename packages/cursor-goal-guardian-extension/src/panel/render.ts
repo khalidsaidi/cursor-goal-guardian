@@ -24,12 +24,17 @@ function renderWelcome(vm: PanelViewModel): string {
   if (vm.setUp) return "";
   return `
     <div class="welcome">
-      <div class="lamp-row"><span class="lamp idle"></span><span class="status-word">standing by</span></div>
-      <p>Keep your goal with the project, help Cursor finish what remains,
-      and give the finished work a separate check.</p>
+      <h2 class="welcome-title">Help Cursor finish your work</h2>
+      <p>Keep the goal across chats, catch meaningful omissions, and learn from your feedback.</p>
       <button data-setup-submit>Connect Guardian</button>
       <p class="quiet">Connect, enable Guardian&rsquo;s tools in Cursor once, then ask for the work in chat.
       Your request becomes the goal.</p>
+
+      <dl class="welcome-features">
+        <div><dt>Goal loop <span>OpenAI Codex + DeepSeek</span></dt><dd>Remembers your goal and sends the agent back with what remains.</dd></div>
+        <div><dt>Independent review <span>CGG + Google ADK</span></dt><dd>Checks finished work and returns useful findings to the agent.</dd></div>
+        <div><dt>Self-improvement <span>Google RRSI</span></dt><dd>Tests reviewer updates from your feedback; adopts them only when they qualify.</dd></div>
+      </dl>
 
       <details class="su-options">
         <summary>Add a goal or boundaries now (optional)</summary>

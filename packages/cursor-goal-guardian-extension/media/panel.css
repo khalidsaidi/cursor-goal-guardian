@@ -96,3 +96,9 @@ textarea.su-goal { resize: vertical; min-height: 48px; line-height: 1.45; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); }
 ::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground); }
+
+.welcome-title { font-size: 16px; font-weight: 600; line-height: 1.3; margin: 0 0 8px; }
+.welcome-features { margin: 16px 0; display: grid; gap: 14px; }
+.welcome-features dt { font-weight: 600; }
+.welcome-features dt span { display: block; font-size: 12px; font-weight: 400; color: var(--vscode-descriptionForeground); margin-top: 2px; }
+.welcome-features dd { margin: 4px 0 0; }

@@ -30,7 +30,7 @@ function inputs(overrides: Partial<PanelInputs> = {}): PanelInputs {
 describe("panel sections", () => {
   it("not connected: only the welcome card with the in-place connect form renders", () => {
     const sections = renderSections(buildPanelViewModel(inputs({ setUp: false })));
-    expect(sections.welcome).toContain("standing by");
+    expect(sections.welcome).toContain("Help Cursor finish your work");
     // The whole setup is a real form in the panel: goal input, list builders
     // (no delimiters anywhere), gitignore choice, one submit.
     expect(sections.welcome).toContain('id="su-goal"');
