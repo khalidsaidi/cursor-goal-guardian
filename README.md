@@ -36,7 +36,7 @@ You need Cursor, a trusted Git project and a signed-in [Cursor CLI](https://curs
 4. Click **Open MCP Settings** in the setup notification and enable **goal-guardian** for the project. In a remote workspace, open Cursor’s MCP settings manually if the button cannot open them.
 5. Ask Cursor for the work as usual: “Add CSV export that respects the current filters, with tests.” That request becomes the goal.
 
-The Open VSX listing may still carry an older version; use the linked release for this build. For an illustrated tour of setup, controls and feedback, see the [store guide](packages/cursor-goal-guardian-extension/README.md).
+CGG is also available on [Open VSX](https://open-vsx.org/extension/khalidsaidi/cursor-goal-guardian-extension). For an illustrated tour of setup, controls and feedback, see the [store guide](packages/cursor-goal-guardian-extension/README.md).
 
 ## What happens while you work
 
