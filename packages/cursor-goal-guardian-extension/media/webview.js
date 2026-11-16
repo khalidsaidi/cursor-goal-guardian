@@ -134,16 +134,15 @@
   function renderGoal(vm) {
     if (!vm.setUp) return "";
     const goal = vm.goal.trim();
-    const goalHtml = goal ? `<button class="goal-text" data-cmd="editGoal" title="Change the goal">${escapeHtml(goal)}</button>` : `<p class="goal-empty">No goal yet. Ask your agent for something \u2014 the request becomes
+    const goalHtml = goal ? `<details class="goal-request"><summary><span class="goal-preview">${escapeHtml(goal)}</span><span class="goal-toggle">Full request</span></summary><div class="goal-full"><p>${escapeHtml(goal)}</p><button class="link" data-cmd="editGoal">Edit goal</button></div></details>` : `<p class="goal-empty">No goal yet. Ask your agent for something \u2014 the request becomes
        the goal automatically. Or <button class="link" data-cmd="editGoal">write it here</button>.</p>`;
     return `
     <div class="goal">
-      <div class="eyebrow">Goal</div>
-      ${goalHtml}
-      <div class="lamp-row">
+      <div class="goal-heading"><div class="eyebrow">Goal</div><div class="lamp-row">
         <span class="lamp ${vm.status.lamp}"></span>
         <span class="status-word">${escapeHtml(vm.status.word)}</span>
-      </div>
+      </div></div>
+      ${goalHtml}
       ${renderGoalRun(vm)}
       ${renderReviews(vm)}
       ${renderImprove(vm)}

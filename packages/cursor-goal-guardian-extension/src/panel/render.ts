@@ -4,8 +4,8 @@ import type { PanelViewModel } from "@goal-guardian/core";
  * Pure HTML renderers: (view model) -> section markup strings. No vscode, no
  * DOM — the webview script applies them, tests snapshot them.
  *
- * Design: the goal is the title and status reads like an instrument. All copy
- * is on the user's side of the screen: "Done when", "Boundaries", "Mark done".
+ * Use the host sidebar's typography and compact section hierarchy. Long requests
+ * remain available in full without overwhelming the progress and next actions.
  */
 
 export const SECTION_IDS = ["welcome", "goal", "tour", "criteria", "constraints"] as const;
@@ -176,17 +176,16 @@ function renderGoal(vm: PanelViewModel): string {
   if (!vm.setUp) return "";
   const goal = vm.goal.trim();
   const goalHtml = goal
-    ? `<button class="goal-text" data-cmd="editGoal" title="Change the goal">${escapeHtml(goal)}</button>`
+    ? `<details class="goal-request"><summary><span class="goal-preview">${escapeHtml(goal)}</span><span class="goal-toggle">Full request</span></summary><div class="goal-full"><p>${escapeHtml(goal)}</p><button class="link" data-cmd="editGoal">Edit goal</button></div></details>`
     : `<p class="goal-empty">No goal yet. Ask your agent for something — the request becomes
        the goal automatically. Or <button class="link" data-cmd="editGoal">write it here</button>.</p>`;
   return `
     <div class="goal">
-      <div class="eyebrow">Goal</div>
-      ${goalHtml}
-      <div class="lamp-row">
+      <div class="goal-heading"><div class="eyebrow">Goal</div><div class="lamp-row">
         <span class="lamp ${vm.status.lamp}"></span>
         <span class="status-word">${escapeHtml(vm.status.word)}</span>
-      </div>
+      </div></div>
+      ${goalHtml}
       ${renderGoalRun(vm)}
       ${renderReviews(vm)}
       ${renderImprove(vm)}

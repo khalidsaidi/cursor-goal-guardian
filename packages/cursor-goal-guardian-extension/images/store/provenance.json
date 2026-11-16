@@ -2,8 +2,8 @@
   "version": "1.0.3",
   "kind": "Labelled product illustrations, not model-run evidence",
   "sources": {
-    "src/panel/render.ts": "daacf4b7bd31a4f093c5012e8c1cb71af317f426608d10d214b782110f5fc69c",
-    "media/panel.css": "b8e7416605f085e11171ee55bffb6d07e5729dd261c80f53dd21edd4f8e7a25f",
+    "src/panel/render.ts": "cc5936d991eddcc0ac645a9c9c1ba876bfee2abd9d3824ed07e74277854c7770",
+    "media/panel.css": "3838270446d8847e052e87967816398b5eed87288d275aedca474e4b410e24e2",
     "src/commandCenter.ts": "fc0079e44f99301b5ca307409b0a550f7cab482c23ea18d3252864032f2c10eb",
     "src/setup.ts": "41f38dcaf0bff311f70bc70f98096ef45dd4ef86174e5ef6aa5b26b9aa4db70f"
   },
