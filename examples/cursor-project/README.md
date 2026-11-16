@@ -18,4 +18,4 @@ The real setup also generates `/guardian` and `/guardian-goal` skills and regist
 
 CGG keeps the goal across chats, sends the agent back with unfinished work and checks requested completion. Correct specific review findings in chat or the panel. Learning is bounded and only qualified reviewer updates are adopted.
 
-The example rule is generated from the current source, not a separate protocol to maintain. The JSON files are illustrative; their executable paths must be supplied by the extension. Current build validation is Linux x64, including WSL Ubuntu. See the [main guide](../../README.md).
+The example rule is generated from the current source, not a separate protocol to maintain. The JSON files are illustrative; their executable paths must be supplied by the extension. Complete packages are checked on Windows, macOS and Linux, on x64 and ARM64. Real Cursor/model evidence remains scoped to Linux/WSL. See the [main guide](../../README.md).
