@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.3 (in preparation)
+## 1.0.3
 
 - Show delivered work and useful findings, with diagnostic records available under Check details and no retry button. Routine agent replies describe the result without asking users to manage internal checkers.
 - Keep the current goal's display separate from earlier goals, preventing old review failures from appearing on a new task.
