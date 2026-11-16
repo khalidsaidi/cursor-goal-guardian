@@ -4,13 +4,11 @@ The store visuals explain how CGG helps finish work. They use labelled example d
 
 ## Scenes
 
-- Welcome and setup: connect with optional goal, finish conditions and boundaries.
-- Ask and track: an ordinary request becomes the project goal.
-- Continue: incomplete work returns to the agent with a concrete next step.
-- Review: a missing package export is a useful finding; supporting types/docs are not unrelated work.
-- Correct: a specific correction helps the next check and is retained for eligible learning.
-- Control: pause, resume, mark done and choose a background-learning allowance.
-- Briefing: `/guardian` summarizes what remains without requiring another goal interview.
+Use one ordinary CSV task throughout: request an export that respects filters, let the agent stop with that behavior unfinished, show CGG sending the finding back, show the agent fixing it with a regression test, then show checked completion. The main animation contains those five stages with readable illustrative chat beside the current panel.
+
+Feedback has its own story: a requested CSV regression test is wrongly called unrelated, the user corrects that specific complaint, and the correction is saved. The final scene explains that later RRSI prompt updates need enough examples and must qualify. It does not show immediate adoption or claim a learning gain from that one correction.
+
+Other visuals each explain an action: connect the project, enable MCP, get a briefing, pause without losing the CSV goal, find the Command Palette, or control learning. Keep the task consistent and avoid repeated panel shots with different slogans. Leave enough time to read each animation frame.
 
 ## Asset inventory
 

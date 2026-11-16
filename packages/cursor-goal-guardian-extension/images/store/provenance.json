@@ -8,8 +8,8 @@
     "src/setup.ts": "41f38dcaf0bff311f70bc70f98096ef45dd4ef86174e5ef6aa5b26b9aa4db70f"
   },
   "root_sources": {
-    "scripts/render-public-media.mjs": "ac7c6f5376347ddec6936cb7673cb260cc783152f08e382dd87e59f98371362c",
-    "scripts/render-public-media.py": "c4e78cd17229eb13c0607f6a9a9dc90d77263a47a9a8f21c5331935f68b5d15b",
+    "scripts/render-public-media.mjs": "13c2deed7d079484e75163b8b5028dece9116e2a5681913abdcf42190405cb2f",
+    "scripts/render-public-media.py": "75f5ebe9409522e6dea1a0b0bcfff4465583bfa09ff2fb3890a52372788f04d4",
     "packages/core/src/viewmodel/panel.ts": "ef456e83fa9f3563560d377cc88bc8f4678858213de118a2677d672b571cb201",
     "packages/core/src/rule.ts": "69ddcdf706a0b480980c36dd33aa31becfce014004795f3d39230165abff9213"
   }

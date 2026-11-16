@@ -4,82 +4,80 @@
 
 ![Cursor Goal Guardian](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/banner.png)
 
-Ask your agent for the work as usual. CGG remembers the goal across chats, sends the agent back with unfinished work, and gives completion a separate check. It helps a normal agent finish; it is not an honesty detector.
+Ask for the work as usual. CGG remembers the goal across chats, sends unfinished work back to the agent, and gives completion a separate check.
 
-**Native packages target Windows, macOS and Linux, on x64 and ARM64.** Choose the target of Cursor’s extension host; WSL projects use Linux. Real Cursor/model evidence is from Linux/WSL; native package checks use a stand-in model. Linux builds require glibc 2.39+ and OpenSSL 3 (Ubuntu 24.04 or compatible).
+## See what it does
 
-## What CGG adds
+**You ask:** “Add CSV export that respects the current filters, with tests.”
 
-- **Goal loop:** your request, finish conditions and previous work stay available. DeepSeek Harness controls goal status and rounds; OpenAI Codex supplies accounting, optional token budgets and continuation instructions.
-- **Independent review:** CGG's reviewer checks the actual project for missing work, real defects and meaningful unrequested changes. Google's open-source ADK separately evaluates the recorded work and project evidence against your request. Findings that need action go back to the agent.
-- **Learning from feedback:** correct a specific finding in chat or the panel. Your reason helps the current review and is saved for Google's RRSI to test prompt updates when enough examples exist. An update must do better on withheld examples without losing confirmed useful findings. You can undo it.
+Cursor adds an export and stops. The export still includes filtered-out rows. CGG finds the missing behavior and sends Cursor back to fix it and add a regression test. The updated work is checked against the original request before the goal is marked complete.
 
-![Goal loop illustration](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/hero.gif)
+![An illustrative CSV task: request, unfinished behavior, CGG follow-up, repair and checked completion](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/hero.gif)
 
-*The visuals below are current product illustrations with example data. Panel views come from the production renderer. Chat, menus and guidance are explanatory illustrations, not recordings of real Cursor/model sessions.*
+*Illustrative conversation and example data, with the current CGG panel. These visuals explain the workflow; they are not recordings of real model sessions.*
 
 ## Get started
 
-1. Open a trusted project folder in Cursor and install the extension matching its host OS and architecture.
-2. Open the Guardian panel and click **Connect Guardian**. You can fill the goal, finish conditions and boundaries now, or leave them empty.
-3. Open Cursor's MCP settings and enable the project's **goal-guardian** server. Use **Open MCP Settings** if the connection notification is shown; remote workspaces may need this step opened manually.
-4. Ask your agent for the work. CGG captures that request as the goal; a listed set of finish conditions becomes its checklist. Instructions after the list are retained.
+You need Cursor, a trusted Git project and a signed-in [Cursor CLI](https://cursor.com/docs/cli/installation) on the machine where the project runs. For WSL, install and sign in to the CLI inside WSL. CGG recognizes `agent` and the older `cursor-agent` name. Linux packages require glibc 2.39+ and OpenSSL 3, such as Ubuntu 24.04. CGG bundles its other runtimes; no separate Google Cloud account or Google model key is required.
 
-Completion review needs Cursor CLI (`agent` or `cursor-agent`) installed and signed in to the Cursor account you want to use. The package bundles CGG's other runtimes. No separate Google Cloud account or Google model key is required.
+1. Download the **1.0.2 VSIX** for your operating system and processor from [GitHub releases](https://github.com/khalidsaidi/cursor-goal-guardian/releases/tag/v1.0.2). Choose `win32` for Windows, `darwin` for macOS or `linux` for Linux; choose `arm64` for Apple silicon or an ARM processor, otherwise `x64`. For a WSL project, use the Linux package and install it in the WSL extension host.
+2. In Cursor, open the Command Palette (**Ctrl+Shift+P**, or **Cmd+Shift+P** on macOS), run **Extensions: Install from VSIX…** and select the downloaded file.
+3. Open your trusted Git project. Run **Goal Guardian: Show Panel**, then click **Connect Guardian**. The goal fields are optional; you can leave them empty.
+4. Click **Open MCP Settings** in the setup notification and enable **goal-guardian** for the project. In a remote workspace, open Cursor’s MCP settings manually if the button cannot open them.
+5. Ask Cursor for the work as usual: “Add CSV export that respects the current filters, with tests.” That request becomes the goal.
 
-![Connect Guardian](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s9-setup.png)
+The Open VSX listing may still carry an older version. Use the linked release for this build.
+
+![Connect Guardian in your project](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s9-setup.png)
+
+## What makes it work
+
+- **Goal loop — Codex + DeepSeek.** CGG remembers your request and finish conditions, brings previous work back into context and sends the agent back with what remains. DeepSeek Harness controls goal status and rounds; OpenAI Codex supplies usage accounting, optional token budgets and continuation instructions. Cursor does the implementation work.
+- **Independent review — CGG + Google ADK.** CGG’s reviewer checks the finished project for missing work, real defects and meaningful unrequested changes. Google’s open-source ADK separately evaluates the recorded work and project evidence against your request. Useful findings go back to the agent.
+- **Learning from feedback — Google RRSI.** Your specific corrections become examples for testing reviewer-prompt updates. With enough examples, RRSI searches for improvements and CGG checks them on examples withheld from search. An update must improve those judgments without losing confirmed useful findings. You can undo it.
 
 ## Stay with the goal
 
-Use `/guardian` for a short account of the goal, what is complete and what remains. Use `/guardian-goal` to show or change the objective, pause it or resume it. A fresh chat keeps the recorded goal.
+Use `/guardian` for a short briefing on the goal and remaining work. A fresh chat keeps the original goal, so you can pick up where you left off. Use `/guardian-goal` to show or change it, pause it or resume it.
 
-![A request becomes the goal](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-ask.gif)
+The panel shows finish conditions, findings and controls. **Pause goal** stops follow-ups. **Resume goal** or **Work on the goal** opens a new chat. The agent cannot resume your pause on its own. You can also mark the work done yourself.
 
-When you change direction, the new objective comes from your latest words. A temporary instruction such as “only the first part for now” leaves the rest of the goal for later.
+![Pause the CSV task while retaining the original goal](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-pivot.gif)
 
-![Change direction](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-pivot.gif)
+## Check completion
 
-The panel shows the goal and its finish conditions. **Pause goal** stops follow-ups; **Resume goal** or **Work on the goal** starts a new chat. You can mark work done yourself. The agent cannot resume your pause on its own.
+The project reviewer checks requested behavior, applicable tests/builds and affected public entry points. ADK checks the recorded work and project evidence against your request. A useful finding goes back to the agent. Valid checks can be reused while the relevant work and evidence stay unchanged.
 
-![Current session panel](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/s5-session.png)
+**Complete** means the requested work passed the independent checks. **Needs attention** means a review finding remains. **Unchecked** means an independent check did not finish; **Unverified** means part of goal tracking could not run. A block, pause or reached limit also remains visible. CGG does not turn incomplete verification into a checked completion.
 
-## Finish useful work
+## Correct a finding, help future reviews
 
-On completion, the reviewer checks requested behavior, applicable tests/builds and affected public entry points. ADK checks the recorded work against your request. Supporting tests, types and documentation belong to the work; harmless formatting is not a reason to send the agent back unless you explicitly required it.
+Suppose a reviewer calls the requested CSV regression test “unrequested work.” Choose **Unnecessary complaint** beside that finding and explain that the test belongs to your request. Use **Useful finding** for a catch worth keeping. Explicit corrections in chat can reach the same records. If accepted work was unfinished, **This wasn't done** reopens the original goal.
 
-Valid checks can be reused while the relevant work and evidence are unchanged. A meaningful finding sends the agent back to finish the work. An incomplete check gets a bounded recovery attempt; if verification still cannot finish, CGG says so.
+![An unnecessary complaint, your specific correction and the conditions for later reviewer improvement](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-review.gif)
 
-The panel distinguishes:
+Your correction helps the current review and is saved for later learning. It does not instantly replace the reviewer. With enough specific feedback, RRSI tests prompt updates against past work and separate held-out examples. CGG adopts an update only if it qualifies; otherwise it keeps the current reviewer.
 
-- **Complete:** the requested work passed the independent checks. The internal record calls this `proved`; it is not a guarantee about every possible input.
-- **Unchecked:** work was reported complete, but an independent check did not finish.
-- **Needs attention:** an unresolved review finding remains.
-- **Unverified:** part of goal tracking could not run.
-- **Blocked, set aside or stalled:** work needs help, was left for later, or stopped progressing.
-- **Limit reached:** the continuation or goal usage allowance ended.
+Open **Goal Guardian: Command Center → Automatic learning…** and choose Off, Light or Standard. Learning yields to active work and shares a rolling workspace allowance. Feedback stays saved when learning is off. **Undo** returns to the built-in reviewer.
 
-![Review and correction illustration](https://raw.githubusercontent.com/khalidsaidi/cursor-goal-guardian/main/packages/cursor-goal-guardian-extension/images/store/gif-review.gif)
+## Usage and privacy
 
-## Correct the reviewer
+Follow-ups, independent checks and learning use your Cursor plan. A headless invocation can contain several model turns, so the learning allowance is not a dollar or token cap. You control background learning from the Command Center.
 
-Use **Useful finding** or **Unnecessary complaint** beside a finding. Explicit chat judgments can reach the same records. If accepted work was unfinished, **This wasn't done** reopens the original goal. You do not need to rate every review or complete a separate reporting ritual.
+CGG stores goal records, command output and review cases locally under `.cursor/goal-guardian`. Relevant records and source are sent through your Cursor account for review and learning. Treat that content as you would other material you share with Cursor.
 
-In **Goal Guardian: Command Center → Automatic learning…**, choose Off, Light or Standard. Learning waits for enough specific feedback, yields to active work and shares a rolling workspace allowance. It tests reviewer-prompt changes; it does not change your goal or the evaluator. Feedback remains saved when learning is off, and **Undo** returns to the built-in reviewer.
+## Support and limits
 
-Earlier real-model RRSI search produced useful prompt changes. Native Cursor checks cover corrections helping a current review and use of an installed candidate. Naturally accumulated user feedback has not yet demonstrated an improvement, and a fresh full feedback-to-search-to-adoption sequence has not completed in one native Cursor run.
+Packages are available for Windows, macOS and Linux on x64 and ARM64. Native package checks use stand-in models; real Cursor/model evidence comes from Linux/WSL. A successful package check does not establish model accuracy or desktop delivery on every platform.
 
-## Usage and limits
+CGG helps an ordinary agent finish; it is not an honesty detector. It cannot force continuation or guarantee a correct review. The project reviewer needs Git. Desktop follow-ups require Cursor’s stop hook and a trusted workspace; the tested headless CLI does not supply that hook. Cursor updates and other stop hooks can affect the loop. CGG does not protect its records against deliberate tampering.
 
-Follow-ups, independent checks and learning use your Cursor plan. A headless invocation may contain several model turns; learning's invocation allowance is not a dollar or token cap. You control background learning from the Command Center.
-
-CGG stores local goal records, command output and review cases under `.cursor/goal-guardian`. Relevant records and source are sent through your Cursor account for review and learning. Use the same care with confidential material as with Cursor itself.
-
-CGG cannot force an agent to continue, guarantee a correct review or defend its records against deliberate tampering. Outside Git the project reviewer does not run. Desktop follow-ups require Cursor's stop hook and a trusted workspace; the tested headless CLI does not provide that continuation hook. Cursor updates and other stop hooks can affect the loop.
+Earlier real-model RRSI search produced useful prompt changes. Native Cursor checks cover specific corrections and use of an installed candidate. Improvement from naturally accumulated user feedback, and a fresh complete feedback-to-search-to-adoption sequence in one native Cursor run, have not been demonstrated. See the [verification guide](https://github.com/khalidsaidi/cursor-goal-guardian/blob/main/docs/verification.md) for the evidence and scope.
 
 ## Reference
 
-Chat tools: `get_goal`, `create_goal`, `update_goal`, `goal_command`, `guardian_change_goal`, `guardian_review_feedback`.
+CGG creates project records under `.cursor/goal-guardian`, a rule under `.cursor/rules`, and `/guardian` and `/guardian-goal` skills under `.cursor/skills`. Setup registers a user-level goal-guardian MCP entry for agent-hub chats, preserving unrelated entries. Chat tools: `get_goal`, `create_goal`, `update_goal`, `goal_command`, `guardian_change_goal`, `guardian_review_feedback`.
 
-CGG creates its goal/config/records under `.cursor/goal-guardian`, a rule under `.cursor/rules`, and the `/guardian` and `/guardian-goal` skills under `.cursor/skills`. Setup also registers a user-level goal-guardian MCP entry for agent-hub chats, preserving unrelated entries. Use **Goal Guardian: Remove from Workspace** to remove its project integration. The extension setting `goalGuardian.statusBar.enabled` controls the status-bar item.
+Use **Goal Guardian: Remove from Workspace** to remove the project integration. The extension setting `goalGuardian.statusBar.enabled` controls the status-bar item.
 
-See the [project README](https://github.com/khalidsaidi/cursor-goal-guardian#readme), [verification scope](https://github.com/khalidsaidi/cursor-goal-guardian/blob/main/docs/verification.md) and [design](https://github.com/khalidsaidi/cursor-goal-guardian/blob/main/docs/goal-design.md). Upstream contributions and licenses are recorded in NOTICE: [OpenAI Codex](https://github.com/openai/codex), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Google ADK](https://github.com/google/adk-python) and [Google Research RRSI](https://github.com/google-research/rrsi).
+See the [project README](https://github.com/khalidsaidi/cursor-goal-guardian#readme) and [design](https://github.com/khalidsaidi/cursor-goal-guardian/blob/main/docs/goal-design.md). Upstream contributions and licenses are recorded in NOTICE: [OpenAI Codex](https://github.com/openai/codex), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Google ADK](https://github.com/google/adk-python) and [Google Research RRSI](https://github.com/google-research/rrsi).

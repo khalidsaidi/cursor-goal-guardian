@@ -2,32 +2,37 @@
 
 **Keep Cursor working on your goal, check the finished work, and learn from your corrections.**
 
-CGG helps an ordinary coding agent finish what you asked for. It remembers the goal across chats, sends the agent back when work remains, and gives completed work a separate review. It is not an honesty detector.
-
 ![Cursor Goal Guardian](packages/cursor-goal-guardian-extension/images/banner.png)
 
-**Native package targets: Windows, macOS and Linux, on x64 and ARM64.** WSL projects use the Linux package. Real Cursor/model evidence comes from Linux/WSL; native package checks use a stand-in model. Linux builds require glibc 2.39+ and OpenSSL 3 (Ubuntu 24.04 or compatible).
+Ask for the work as usual. CGG remembers the goal across chats, sends unfinished work back to the agent, and gives completion a separate check.
+
+## One request, through to completion
+
+You ask for CSV export that respects the current filters, with tests. Cursor adds the export and stops, but it still exports filtered-out rows. CGG’s review finds the missing behavior and sends the agent back with a concrete next step. Cursor fixes the export and adds a regression test. CGG checks the updated work against your original request.
+
+![An illustrative CSV task: request, unfinished behavior, CGG follow-up, repair and checked completion](packages/cursor-goal-guardian-extension/images/store/hero.gif)
+
+*Illustrative conversation and example data, with the current CGG panel. This is an explanation of the workflow, not a recording of a real model run.*
+
+## Get started
+
+You need Cursor, a trusted Git project and a signed-in [Cursor CLI](https://cursor.com/docs/cli/installation) on the machine where the project runs. For WSL, install and sign in to the CLI inside WSL. CGG recognizes `agent` and the older `cursor-agent` name. Linux packages require glibc 2.39+ and OpenSSL 3, such as Ubuntu 24.04. CGG bundles its other runtimes; no separate Google Cloud account or Google model key is required.
+
+1. Download the **1.0.2 VSIX** for your operating system and processor from [GitHub releases](https://github.com/khalidsaidi/cursor-goal-guardian/releases/tag/v1.0.2). Choose `win32` for Windows, `darwin` for macOS or `linux` for Linux; choose `arm64` for Apple silicon or an ARM processor, otherwise `x64`. For a WSL project, use the Linux package and install it in the WSL extension host.
+2. In Cursor, open the Command Palette (**Ctrl+Shift+P**, or **Cmd+Shift+P** on macOS), run **Extensions: Install from VSIX…** and select the downloaded file.
+3. Open your trusted Git project. Run **Goal Guardian: Show Panel**, then click **Connect Guardian**. The goal fields are optional; you can leave them empty.
+4. Click **Open MCP Settings** in the setup notification and enable **goal-guardian** for the project. In a remote workspace, open Cursor’s MCP settings manually if the button cannot open them.
+5. Ask Cursor for the work as usual: “Add CSV export that respects the current filters, with tests.” That request becomes the goal.
+
+The Open VSX listing may still carry an older version; use the linked release for this build. For an illustrated tour of setup, controls and feedback, see the [store guide](packages/cursor-goal-guardian-extension/README.md).
 
 ## Three parts, one purpose
 
-- **Goal loop.** Your request and finish conditions stay with the project. CGG brings prior work and checks back into context and sends the agent back with what remains. DeepSeek Harness supplies goal status, authority and round control; OpenAI Codex supplies usage accounting, optional token budgets and continuation instructions. Cursor remains the agent doing the work.
-- **Independent review.** CGG's own reviewer checks the finished project for missing work, demonstrated bugs and meaningful unrequested changes. Google's open-source Agent Development Kit (ADK) separately evaluates the recorded work and supplied project evidence against your request. Useful findings go back to the agent; supporting tests, types and documentation are part of the work.
-- **Learning from feedback.** Correct a specific review finding in the panel or in chat. The correction helps the current check and is saved for later learning. With enough examples, Google's RRSI tests reviewer-prompt updates on past work and checks them on examples withheld from search. CGG adopts an update only when it improves those feedback judgments without losing a confirmed useful finding. You can undo it.
+- **Goal loop — Codex + DeepSeek.** CGG remembers your request and finish conditions, brings previous work back into context and sends the agent back with what remains. DeepSeek Harness controls goal status and rounds; OpenAI Codex supplies usage accounting, optional token budgets and continuation instructions. Cursor does the implementation work.
+- **Independent review — CGG + Google ADK.** CGG’s reviewer checks the finished project for missing work, real defects and meaningful unrequested changes. Google’s open-source ADK separately evaluates the recorded work and project evidence against your request. Useful findings go back to the agent.
+- **Learning from feedback — Google RRSI.** Your specific corrections become examples for testing reviewer-prompt updates. With enough examples, RRSI searches for improvements and CGG checks them on examples withheld from search. An update must improve those judgments without losing confirmed useful findings. You can undo it.
 
-These components have distinct jobs. CGG does not run Codex or DeepSeek as another implementation agent, use ADK to inspect files directly, or let RRSI change your goal or the fixed completion checks.
-
-## Start using it
-
-1. Install the **1.0.2 VSIX matching your extension host’s operating system and architecture** from [GitHub releases](https://github.com/khalidsaidi/cursor-goal-guardian/releases). The [Open VSX listing](https://open-vsx.org/extension/khalidsaidi/cursor-goal-guardian-extension) may lag: check its version and target before installing; older packages are not this release.
-2. Open a trusted project folder in Cursor. Connect Guardian from its panel; the goal, finish conditions and boundaries are optional at setup.
-3. Enable the project's **goal-guardian** MCP server in Cursor's settings when prompted.
-4. Ask your agent for the work as you normally would. The request becomes the goal. Use `/guardian` for a short briefing or `/guardian-goal` to steer it.
-
-Completion review uses Cursor CLI (`agent` or `cursor-agent`) signed in to your Cursor account. Each platform package bundles its other runtimes; it does not require a separate Google Cloud account or a Google model API key.
-
-![Current panel example](packages/cursor-goal-guardian-extension/images/store/s5-session.png)
-
-*Product illustrations use the current panel renderer with clearly labelled example data. They are not recordings of a real model run. See the [store guide](packages/cursor-goal-guardian-extension/README.md) for the full tour.*
+These components have complementary jobs: keep the goal available, check the work, and improve the reviewer from specific corrections. RRSI updates the reviewer prompt; it does not change your goal or the fixed completion checks.
 
 ## What happens while you work
 

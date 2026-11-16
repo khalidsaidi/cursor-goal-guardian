@@ -4,6 +4,8 @@
 
 Help an ordinary Cursor agent finish the user's goal. Lead with remembered goals, useful follow-ups, independent review and corrections that help the reviewer. CGG is not an honesty detector.
 
+Lead with the CSV user story and readable agent follow-up, followed by explicit setup steps. Explain each upstream component through its contribution to that experience. Keep testing history and detailed evidence on their reference pages.
+
 ## Consistent message
 
 - Goal loop: DeepSeek Harness supplies status/round authority; Codex supplies accounting, budgets and continuation instructions. Cursor does the implementation work.
