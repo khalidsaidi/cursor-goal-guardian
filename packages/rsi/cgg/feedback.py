@@ -6,6 +6,7 @@ import re
 import uuid
 from pathlib import Path
 import cursor_llm
+from model_budget import _file_operation
 
 
 def _normal(text):
@@ -60,7 +61,7 @@ def matches(task, replay):
         cache.parent.mkdir(parents=True, exist_ok=True)
         temporary = cache.with_suffix(".tmp-" + uuid.uuid4().hex)
         temporary.write_text(json.dumps(judged))
-        temporary.replace(cache)
+        _file_operation(lambda: temporary.replace(cache))
     result.update(judged)
     return result
 

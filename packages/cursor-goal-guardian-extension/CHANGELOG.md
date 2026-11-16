@@ -4,6 +4,7 @@
 
 - Show delivered work and useful findings, with diagnostic records available under Check details and no retry button. Routine agent replies describe the result without asking users to manage internal checkers.
 - Keep the current goal's display separate from earlier goals, preventing old review failures from appearing on a new task.
+- Preserve learning results when Windows briefly locks a feedback or replay cache file, without making another model call.
 - Correct the first-request checklist and give small-project reviews their source up front, with time to return a verdict.
 
 - Load the panel’s bundled styles and script directly in its nonce-protected HTML, avoiding failed remote asset requests that can leave WSL setup blank.

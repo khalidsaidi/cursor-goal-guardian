@@ -14,6 +14,8 @@ Actual footage: `C:\Users\khali\Documents\Codex\2026-11-11\thi\artifacts\cgg-cur
 
 Public screenshots and GIFs were regenerated using the existing production-renderer pipeline and remain labelled illustrations. Prior goal, feedback, learning and platform evidence continues to count. No additional paid study is required. The 1.0.3 runtime needs its native package qualification before publication; the qualified 1.0.2 release below remains published. Open VSX authentication is still unavailable.
 
+Native qualification run `43915226347` passed both Linux packages, then exposed a Windows learning failure: an atomic feedback-cache replacement hit WinError 5. Feedback and replay cache replacement now reuse the existing bounded Windows filesystem-sharing recovery used by model allowances. The recovery repeats only the file operation, retaining the computed result. A regression injects that actual failure and checks both cache results survive, with one model invocation total and reuse on the next match; the Python domain and allowance suites pass directly on Windows and Linux. The corrected packages require a new native qualification run; the earlier Cursor completion remains valid because this change affects learning-cache persistence only.
+
 ## Target
 
 Remember the user's goal and keep Cursor working on it; independently check unfinished or meaningfully unrequested work; improve the reviewer from feedback through RRSI. Codex and DeepSeek goal code, CGG's reviewer, ADK and RRSI remain the intended components. Help ordinary agents finish; do not police honesty.

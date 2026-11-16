@@ -4,6 +4,7 @@ import json
 import os
 import uuid
 from pathlib import Path
+from model_budget import _file_operation
 
 
 def entry(task, prompt):
@@ -39,4 +40,4 @@ def save(file, record):
     clean = {k:v for k,v in record.items() if k not in ("feedback_matches", "feedback", "task_id", "label", "trial")}
     temporary = file.with_suffix(".tmp-" + uuid.uuid4().hex)
     temporary.write_text(json.dumps(clean))
-    temporary.replace(file)
+    _file_operation(lambda: temporary.replace(file))

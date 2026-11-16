@@ -94,6 +94,32 @@ class CggDomainTest(unittest.TestCase):
         self.assertEqual(self.dom.heldout_ids(), ["c"])
         self.assertEqual(sorted(self.dom.smoke_ids()), ["a", "b"])
 
+    def test_windows_cache_sharing_preserves_results_without_another_model_call(self):
+        from unittest.mock import patch
+        import feedback
+        import replay_cache
+        blocked = set()
+        original_replace = Path.replace
+        def sharing_once(file, target):
+            if target not in blocked:
+                blocked.add(target)
+                error = PermissionError("controlled Windows sharing violation")
+                error.winerror = 5
+                raise error
+            return original_replace(file, target)
+        task = {"feedback": [{"key": "issue", "finding": "Original concrete issue", "label": "right"}]}
+        replay = {"ran": True, "flagged": True, "fails": [{"id": "item", "evidence": "Same issue, reworded"}]}
+        with patch.dict(os.environ, {"CGG_FEEDBACK_CACHE": str(self.tmp / "feedback")}), \
+             patch.object(Path, "replace", sharing_once), \
+             patch.object(feedback.cursor_llm, "generate", return_value={"matches": [{"key": "issue", "present": True}]}) as generate:
+            self.assertEqual(feedback.matches(task, replay), {"issue": True})
+            self.assertEqual(feedback.matches(task, replay), {"issue": True})
+            generate.assert_called_once()
+            cache = self.tmp / "replays" / "saved.json"
+            replay_cache.save(cache, replay)
+            self.assertEqual(replay_cache.load(cache), replay)
+        self.assertEqual(len(blocked), 2)
+
     def test_smoke_uses_both_issue_labels_from_a_mixed_review_without_duplicate_replays(self):
         from unittest.mock import patch
         module=sys.modules[self.dom.__class__.__module__]
