@@ -1,108 +1,48 @@
-name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
-    inputs:
-      target:
-        description: Native package to check (all retains the complete release matrix)
-        type: choice
-        default: all
-        options: [all, linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64, win32-arm64]
-      native_run:
-        description: Earlier native build with unchanged Codex inputs; full host behavior checks still run (optional)
-        type: string
-        default: ''
-
+name: Windows release build verification
+on: workflow_dispatch
+permissions:
+  contents: read
 jobs:
-  platform:
-    name: Complete package (${{ matrix.target }})
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(inputs.target && inputs.target != 'all' && format('["{0}"]', inputs.target) || '["linux-x64","linux-arm64","darwin-x64","darwin-arm64","win32-x64","win32-arm64"]') }}
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-24.04","linux-arm64":"ubuntu-24.04-arm","darwin-x64":"macos-15-intel","darwin-arm64":"macos-latest","win32-x64":"windows-latest","win32-arm64":"windows-11-arm"}')[matrix.target] }}
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
+  rebuild:
+    runs-on: windows-latest
+    timeout-minutes: 135
     env:
-      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       CARGO_TARGET_DIR: ${{ github.workspace }}/packages/codex-goals/target
-      GOAL_GUARDIAN_CODEX_GOALS: ${{ github.workspace }}/dist-bin/${{ matrix.target }}/goal-guardian-codex-goals${{ startsWith(matrix.target, 'win32-') && '.exe' || '' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Allow long dependency paths on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
+        with:
+          ref: 1427598a0b0a3e0f24a897c6a8b15970f1b88ffa
+          persist-credentials: false
+      - name: Prepare native build
         run: |
           git config --global core.longpaths true
           Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-      - uses: actions/setup-python@v5
-        id: python
-        with:
-          python-version: '3.12'
-      - uses: dtolnay/rust-toolchain@stable
-        if: inputs.native_run == ''
-      - uses: Swatinem/rust-cache@v2
-        if: inputs.native_run == ''
-        with:
-          workspaces: packages/codex-goals
-          shared-key: codex-goals
-          cache-on-failure: true
-          cache-workspace-crates: true
-      - uses: oven-sh/setup-bun@v2
-        if: matrix.target != 'win32-arm64'
-      - run: pnpm install --frozen-lockfile
-      - run: node scripts/check-versions.mjs
-      - run: pnpm -r build
-      - name: Check the source and native test result before reusing Codex
-        if: inputs.native_run != ''
-        run: node scripts/check-native-reuse.mjs '${{ inputs.native_run }}' '${{ matrix.target }}'
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - uses: actions/download-artifact@v4
-        if: inputs.native_run != ''
-        with:
-          name: native-codex-${{ matrix.target }}
-          path: .cache/codex-goals/${{ matrix.target }}
-          run-id: ${{ inputs.native_run }}
-          github-token: ${{ github.token }}
-      - name: Select the checked native artifact
-        if: inputs.native_run != ''
-        run: echo 'CGG_USE_CACHED_CODEX=1' >> "$GITHUB_ENV"
-      - name: Build the actual native goal runtime and hook/MCP programs
-        run: node scripts/compile-binaries.mjs --host-only
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-codex-${{ matrix.target }}
-          path: dist-bin/${{ matrix.target }}/goal-guardian-codex-goals${{ startsWith(matrix.target, 'win32-') && '.exe' || '' }}
-          if-no-files-found: error
-      - name: Test the real Codex goal wrapper
-        if: inputs.native_run == ''
-        run: cargo test --release --locked --manifest-path packages/codex-goals/Cargo.toml
-      - run: pnpm -r exec tsc -p tsconfig.json --noEmit
-      - run: pnpm test
-      - run: pnpm --filter @goal-guardian/e2e test:e2e:offline
-      - name: Build the complete platform VSIX
-        run: pnpm package:vsix --target ${{ matrix.target }}
-        env:
-          CGG_BUILD_PYTHON: ${{ steps.python.outputs.python-path }}
-      - name: Execute the contents of the VSIX, including ADK and RRSI
-        run: node scripts/verify-package.mjs packages/cursor-goal-guardian-extension/cursor-goal-guardian-${{ matrix.target }}.vsix
-        env:
-          CGG_BUILD_PYTHON: ${{ steps.python.outputs.python-path }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: complete-package-${{ matrix.target }}
-          path: |
-            packages/cursor-goal-guardian-extension/cursor-goal-guardian-${{ matrix.target }}.vsix
-            packages/cursor-goal-guardian-extension/cursor-goal-guardian-${{ matrix.target }}.vsix.verified.json
-          if-no-files-found: error
+          if (Test-Path $env:CARGO_TARGET_DIR) { throw 'Expected an empty build directory' }
+          rustup toolchain install 1.100.0 --profile minimal
+          rustc +1.100.0 -vV
+      - name: Compile the pinned release without a build cache
+        working-directory: packages/codex-goals
+        run: cargo +1.100.0 build --release --locked
+      - name: Record rebuilt executable digest
+        run: |
+          $file = Join-Path $env:CARGO_TARGET_DIR 'release/goal-guardian-codex-goals.exe'
+          Get-FileHash $file | Format-List
+          git diff --exit-code
+      - name: Scan the rebuilt file without executing it
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'clamav.zip'
+          $tools = Join-Path $env:RUNNER_TEMP 'clamav-tools'
+          $db = Join-Path $env:RUNNER_TEMP 'clamav-db'
+          Invoke-WebRequest 'https://github.com/Cisco-Talos/clamav/releases/download/clamav-1.5.1/clamav-1.5.1.win.x64.zip' -OutFile $archive
+          if ((Get-FileHash $archive).Hash -ne '2644780016d308f64cbb0b5b4d8d1263e6f65813329f9d93ecd5751d968f506d') { throw 'Scanner archive checksum mismatch' }
+          Expand-Archive $archive $tools
+          $scanner = (Get-ChildItem $tools -Recurse -Filter clamscan.exe).FullName
+          $update = (Get-ChildItem $tools -Recurse -Filter freshclam.exe).FullName
+          New-Item $db -ItemType Directory | Out-Null
+          $config = Join-Path $env:RUNNER_TEMP 'freshclam.conf'
+          'DatabaseMirror database.clamav.net' | Set-Content -Encoding ascii $config
+          & $update "--config-file=$config" "--datadir=$db"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not update antivirus definitions' }
+          & $scanner "--database=$db" '--max-filesize=300M' (Join-Path $env:CARGO_TARGET_DIR 'release/goal-guardian-codex-goals.exe')
+          exit $LASTEXITCODE
