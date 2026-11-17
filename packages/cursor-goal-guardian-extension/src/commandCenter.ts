@@ -1,9 +1,29 @@
 import * as vscode from "vscode";
-import { getGuardianPaths, readConfigSafe, readContractSafe, writeContract, writeJsonAtomic } from "@goal-guardian/core";
+import { appendAudit, criteriaFromTexts, getGuardianPaths, goalHash, goalPhaseOf, nowIso, parseRequest, readConfigSafe, readContractSafe, readGoalRecords, setEngineGoal, writeContract, writeJsonAtomic } from "@goal-guardian/core";
 
 export interface CommandCenterDeps {
   root: string;
   refresh(): Promise<void>;
+}
+
+/** Both editing surfaces replace the checklist from the new request, as a chat edit does. */
+export async function editWorkspaceGoal(root: string): Promise<void> {
+  const contract = await readContractSafe(root);
+  const value = await vscode.window.showInputBox({
+    title: "Edit goal",
+    value: contract.goal,
+    prompt: "Include the finish conditions you want to keep in the new request.",
+  });
+  if (value === undefined || value.trim() === contract.goal.trim()) return;
+  const { goal, items } = parseRequest(value);
+  const current = await readContractSafe(root);
+  if (current.goal !== contract.goal) throw new Error("The goal changed while you were editing. Open the current goal to edit it.");
+  const completed = goalPhaseOf(await readGoalRecords(root), current) === "complete";
+  if (!(await setEngineGoal(root, goal, completed && Boolean(goal)))) {
+    throw new Error("Guardian could not change this goal.");
+  }
+  const saved = await writeContract(root, { ...current, goal, successCriteria: criteriaFromTexts(items) });
+  await appendAudit(root, { ts: nowIso(), kind: "goal.set", goalHash: goalHash(saved) });
 }
 
 /**
@@ -29,12 +49,9 @@ export async function openCommandCenter(deps: CommandCenterDeps): Promise<void> 
   if (!picked) return;
 
   switch (picked.action) {
-    case "goal": {
-      const goal = await vscode.window.showInputBox({ title: "Goal", value: contract.goal, prompt: "What should the agent finish? Keep any important boundaries." });
-      if (goal === undefined) return;
-      await writeContract(deps.root, { ...contract, goal });
+    case "goal":
+      await editWorkspaceGoal(deps.root);
       break;
-    }
     case "learning": {
       const config = await readConfigSafe(deps.root);
       const allowance = await vscode.window.showQuickPick([

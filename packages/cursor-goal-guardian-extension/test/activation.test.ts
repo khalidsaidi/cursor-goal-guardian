@@ -107,7 +107,6 @@ describe("activation surface", () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-setup-"));
     cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
 
-    process.env.GOAL_GUARDIAN_TEST_HOME = root; // never touch the real ~/.cursor
     await applySetup(root, makeContext(root) as never, {
       goal: "Ship it",
       criteria: ["criterion one", "criterion two"],
@@ -116,7 +115,7 @@ describe("activation surface", () => {
     });
 
     // Hub support: the user-level MCP registration landed in the (test) home.
-    const userMcp = JSON.parse(await fs.readFile(path.join(root, ".cursor", "mcp.json"), "utf8"));
+    const userMcp = JSON.parse(await fs.readFile(path.join(process.env.GOAL_GUARDIAN_TEST_HOME!, ".cursor", "mcp.json"), "utf8"));
     expect(userMcp.mcpServers["goal-guardian"]).toBeDefined();
 
     const rulePath = path.join(root, GUARDIAN_RULE_RELATIVE_PATH);
@@ -225,5 +224,65 @@ describe("activation surface", () => {
     cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
     await doctorIntegration(root, makeContext(root) as never);
     expect(await fileExists(path.join(root, GUARDIAN_RULE_RELATIVE_PATH))).toBe(false);
+  });
+});
+
+describe("shared Cursor configuration", () => {
+  const form = { goal: "Make a help page", criteria: [], constraints: [], gitignore: false };
+  const folder = async (name: string) => {
+    const root = path.join(process.env.GOAL_GUARDIAN_TEST_HOME!, name);
+    await fs.mkdir(path.join(root, ".cursor"), { recursive: true });
+    return root;
+  };
+
+  it("keeps existing tools and keeps the hub connected until the last project disconnects", async () => {
+    const { applySetup, runUninstall, doctorIntegration } = await import("../src/setup.js");
+    const [a, b] = await Promise.all([folder("A"), folder("B")]);
+    const home = process.env.GOAL_GUARDIAN_TEST_HOME!;
+    await fs.mkdir(path.join(home, ".cursor"));
+    const existing = { mcpServers: { other: { command: "another-tool" } } };
+    const mcp = (dir: string) => path.join(dir, ".cursor", "mcp.json");
+    const read = async (dir: string) => JSON.parse(await fs.readFile(mcp(dir), "utf8"));
+    for (const dir of [home, a, b]) await fs.writeFile(mcp(dir), "\uFEFF" + JSON.stringify(existing));
+    const ctx = makeContext() as never;
+    await Promise.all([applySetup(a, ctx, form), applySetup(b, ctx, form)]);
+    await doctorIntegration(a, ctx);
+    await runUninstall(b);
+    for (const dir of [home, a]) {
+      expect((await read(dir)).mcpServers.other).toEqual(existing.mcpServers.other);
+      expect((await read(dir)).mcpServers["goal-guardian"]).toBeDefined();
+    }
+    expect(await read(b)).toEqual(existing);
+    await runUninstall(a);
+    expect(await read(home)).toEqual(existing);
+  });
+
+  it("leaves a legacy hub registration available for projects that have not upgraded", async () => {
+    const { applySetup, runUninstall, bundledBinPaths } = await import("../src/setup.js");
+    const root = await folder("project");
+    const file = path.join(process.env.GOAL_GUARDIAN_TEST_HOME!, ".cursor", "mcp.json");
+    const ctx = makeContext() as never;
+    const existing = { mcpServers: { "goal-guardian": { command: bundledBinPaths(ctx).mcp } } };
+    await fs.mkdir(path.dirname(file));
+    await fs.writeFile(file, JSON.stringify(existing));
+    await applySetup(root, ctx, form);
+    await runUninstall(root);
+    expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual(existing);
+  });
+
+  it.each(["project hooks", "project MCP", "shared MCP"])("retains invalid %s settings and allows setup after correction", async kind => {
+    const { applySetup } = await import("../src/setup.js");
+    const root = await folder("project");
+    const dir = kind === "shared MCP" ? process.env.GOAL_GUARDIAN_TEST_HOME! : root;
+    const file = path.join(dir, ".cursor", kind === "project hooks" ? "hooks.json" : "mcp.json");
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const invalid = '{"my-tool": ';
+    await fs.writeFile(file, invalid);
+    await expect(applySetup(root, makeContext() as never, form)).rejects.toThrow(file);
+    expect(await fs.readFile(file, "utf8")).toBe(invalid);
+    expect(await fileExists(getGuardianPaths(root).contract)).toBe(false);
+    await fs.writeFile(file, "{}");
+    await applySetup(root, makeContext() as never, form);
+    expect(await fileExists(getGuardianPaths(root).contract)).toBe(true);
   });
 });

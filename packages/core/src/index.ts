@@ -5,6 +5,7 @@ export * from "./schema/contract.js";
 export * from "./schema/config.js";
 export * from "./schema/audit.js";
 export * from "./fsutil.js";
+export { processLease } from "./processLease.js";
 export * from "./safeReaders.js";
 export * from "./contractStore.js";
 export * from "./audit/log.js";

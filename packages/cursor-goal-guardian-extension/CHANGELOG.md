@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.5
+
+- Connecting Guardian preserves existing Cursor tools. Removing it from one project keeps other connected projects working.
+- Editing a goal in the sidebar or Command Center updates its finish conditions from the new request.
+
 ## 1.0.4
 
 - Clarify the panel walkthrough: see your goal, completed work and finish conditions in Cursor.

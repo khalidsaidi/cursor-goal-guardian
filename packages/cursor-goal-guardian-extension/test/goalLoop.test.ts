@@ -253,3 +253,34 @@ describe("the reviewer on the panel, and improving it", () => {
     expect(renderSections(vm([end("unverified", { reason: "Codex's goal program isn't installed" })])).goal).toContain("Goal tracking could not finish: check the setup");
   });
 });
+
+it("updates the goal and its finish conditions together on both editing surfaces", async () => {
+  const { editWorkspaceGoal, openCommandCenter } = await import("../src/commandCenter.js");
+  const root = await tmp("gg-edit-");
+  const initial = { ...defaultContract(), goal: "Export CSV", successCriteria: [{ id: "sc_1", text: "CSV respects filters" }], constraints: ["No new dependencies"] };
+  await core.writeContract(root, initial);
+  const input = vi.spyOn(vscode.window, "showInputBox");
+  const picker = vi.spyOn(vscode.window, "showQuickPick");
+  try {
+    input.mockResolvedValueOnce(undefined).mockResolvedValueOnce(initial.goal);
+    await editWorkspaceGoal(root);
+    await editWorkspaceGoal(root);
+    expect(await core.readContractSafe(root)).toEqual(initial);
+    input.mockResolvedValueOnce("Write a help page");
+    await editWorkspaceGoal(root);
+    expect(await core.readContractSafe(root)).toEqual({ ...initial, goal: "Write a help page", successCriteria: [] });
+    expect((await core.engineGoal(root))?.objective).toBe("Write a help page");
+    const request = "Document the form: 1. Show required fields 2. Explain validation";
+    picker.mockResolvedValueOnce({ action: "goal" } as never);
+    input.mockResolvedValueOnce(request);
+    await openCommandCenter({ root, refresh: async () => {} });
+    expect(await core.readContractSafe(root)).toEqual({ ...initial, goal: request, successCriteria: core.criteriaFromTexts(["Show required fields", "Explain validation"]) });
+    input.mockResolvedValueOnce("");
+    await editWorkspaceGoal(root);
+    expect((await core.readContractSafe(root)).successCriteria).toEqual([]);
+    expect(await core.engineGoal(root)).toBeNull();
+  } finally {
+    input.mockRestore();
+    picker.mockRestore();
+  }
+});

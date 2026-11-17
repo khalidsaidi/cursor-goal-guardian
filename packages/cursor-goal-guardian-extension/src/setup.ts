@@ -12,7 +12,7 @@ import {
   guardianRuleContent,
   GUARDIAN_RULE_RELATIVE_PATH,
   GUARDIAN_SKILLS,
-  readJsonFile,
+  processLease,
   writeContract,
   writeJsonAtomic,
 } from "@goal-guardian/core";
@@ -57,42 +57,98 @@ function hookCommand(context: vscode.ExtensionContext): string {
 
 async function readJsonOr<T>(filePath: string, fallback: T): Promise<T> {
   try {
-    return (await readJsonFile(filePath)) as T;
-  } catch {
-    return fallback;
+    const text = await fs.readFile(filePath, "utf8");
+    const value: unknown = JSON.parse(text.replace(/^\uFEFF/, ""));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error();
+    return value as T;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return fallback;
+    throw new Error(`Could not read ${filePath} as a JSON object. Check the file and try again.`);
   }
 }
 
-/**
- * Cursor's agent hub loads MCP servers from the USER-level ~/.cursor/mcp.json,
- * not the workspace one — and the server resolves its workspace via MCP roots.
- * Registering there once makes the guardian's tools available in every hub
- * chat. Merge-preserving; uninstall removes only our entry.
- */
-function mcpServerEntry(context: vscode.ExtensionContext, extraEnv?: Record<string, string>): Record<string, unknown> {
-  const entry: Record<string, unknown> = { command: bundledBinPaths(context).mcp };
-  if (extraEnv && Object.keys(extraEnv).length > 0) entry.env = extraEnv;
-  return entry;
+type McpConfig = { mcpServers?: Record<string, unknown> };
+
+function guardianServer(entry: unknown): boolean {
+  if (!entry || typeof entry !== "object") return false;
+  const { command, args } = entry as { command?: unknown; args?: unknown };
+  const paths = [command, ...(Array.isArray(args) ? args : [])];
+  return paths.some(p => typeof p === "string" && /(?:^|[\\/])(?:cursor-)?goal-guardian-mcp(?:\.exe|[\\/]dist[\\/]index\.js)?$/i.test(p));
 }
 
-export async function wireUserLevelMcp(context: vscode.ExtensionContext): Promise<void> {
-  const userMcpPath = path.join(process.env.GOAL_GUARDIAN_TEST_HOME ?? os.homedir(), ".cursor", "mcp.json");
-  const config = await readJsonOr<{ mcpServers?: Record<string, unknown> }>(userMcpPath, {});
-  config.mcpServers = config.mcpServers ?? {};
-  const desired = mcpServerEntry(context);
-  if (JSON.stringify(config.mcpServers["goal-guardian"]) === JSON.stringify(desired)) return;
-  config.mcpServers["goal-guardian"] = desired;
-  await writeJsonAtomic(userMcpPath, config);
+async function readMcp(file: string): Promise<McpConfig> {
+  const config = await readJsonOr<McpConfig>(file, {});
+  if ("mcpServers" in config && (!config.mcpServers || typeof config.mcpServers !== "object" || Array.isArray(config.mcpServers))) {
+    throw new Error(`Check the mcpServers setting in ${file} before connecting Guardian.`);
+  }
+  return config;
 }
 
-export async function unwireUserLevelMcp(): Promise<void> {
-  const userMcpPath = path.join(process.env.GOAL_GUARDIAN_TEST_HOME ?? os.homedir(), ".cursor", "mcp.json");
-  const config = await readJsonOr<{ mcpServers?: Record<string, { command?: string; args?: string[] }> } | null>(userMcpPath, null);
-  const entry = config?.mcpServers?.["goal-guardian"];
-  const ours = Boolean(entry && (/goal-guardian-mcp/.test(entry.command ?? "") || entry.args?.some((a) => /goal-guardian-mcp/.test(a))));
-  if (config?.mcpServers && ours) {
-    delete config.mcpServers["goal-guardian"];
-    await writeJsonAtomic(userMcpPath, config);
+function mcpServerEntry(context: vscode.ExtensionContext, root?: string) {
+  return { command: bundledBinPaths(context).mcp, ...(root ? { env: { GOAL_GUARDIAN_WORKSPACE_ROOT: root } } : {}) };
+}
+
+function userHome(): string {
+  return process.env.GOAL_GUARDIAN_TEST_HOME ?? os.homedir();
+}
+
+async function isUserHome(root: string): Promise<boolean> {
+  return path.relative(await fs.realpath(userHome()), await fs.realpath(root)) === "";
+}
+
+function checkServerName(config: McpConfig, file: string): void {
+  if (config.mcpServers && "goal-guardian" in config.mcpServers && !guardianServer(config.mcpServers["goal-guardian"])) {
+    throw new Error(`The name goal-guardian is already in use in ${file}.`);
+  }
+}
+
+/** The agent hub uses one registration across windows. Older installs have no list of owners. */
+async function updateHubRegistration(root: string, context?: vscode.ExtensionContext): Promise<void> {
+  const cursorDir = path.join(userHome(), ".cursor");
+  const file = path.join(cursorDir, "mcp.json");
+  const ownersFile = path.join(cursorDir, "goal-guardian-workspaces.json");
+  const lock = path.join(cursorDir, "goal-guardian-workspaces.lock");
+  const deadline = Date.now() + 5000;
+  let release = processLease(lock);
+  while (!release) {
+    if (Date.now() >= deadline) throw new Error("Another Cursor window is updating Guardian. Try again.");
+    await new Promise(resolve => setTimeout(resolve, 50));
+    release = processLease(lock);
+  }
+  try {
+    const config = await readMcp(file);
+    const entry = config.mcpServers?.["goal-guardian"];
+    const owners = await readJsonOr(ownersFile, { workspaces: [] as string[], legacy: guardianServer(entry) });
+    if (typeof owners.legacy !== "boolean" || !Array.isArray(owners.workspaces) || !owners.workspaces.every(p => typeof p === "string" && path.isAbsolute(p))) {
+      throw new Error(`Check the Guardian workspace list in ${ownersFile}.`);
+    }
+    const workspace = await fs.realpath(root);
+    const remaining = owners.workspaces.filter(p => path.relative(p, workspace) !== "");
+    if (context) {
+      checkServerName(config, file);
+      if (remaining.length === owners.workspaces.length) {
+        owners.workspaces.push(workspace);
+        await writeJsonAtomic(ownersFile, owners);
+      }
+      const desired = mcpServerEntry(context);
+      if (JSON.stringify(entry) !== JSON.stringify(desired)) {
+        config.mcpServers ??= {};
+        config.mcpServers["goal-guardian"] = desired;
+        await writeJsonAtomic(file, config);
+      }
+    } else if (remaining.length !== owners.workspaces.length) {
+      if (!remaining.length && !owners.legacy) {
+        if (config.mcpServers && guardianServer(entry)) {
+          delete config.mcpServers["goal-guardian"];
+          await writeJsonAtomic(file, config);
+        }
+        await fs.rm(ownersFile, { force: true });
+      } else {
+        await writeJsonAtomic(ownersFile, { ...owners, workspaces: remaining });
+      }
+    }
+  } finally {
+    release();
   }
 }
 
@@ -110,17 +166,24 @@ export async function wireIntegration(root: string, context: vscode.ExtensionCon
     entries.push(hookEntry(event, context));
     hooks.hooks[event] = entries;
   }
-  await writeJsonAtomic(hooksPath, hooks);
-
   const mcpPath = path.join(cursorDir, "mcp.json");
-  const mcp = await readJsonOr<{ mcpServers?: Record<string, unknown> }>(mcpPath, {});
-  mcp.mcpServers = mcp.mcpServers ?? {};
-  mcp.mcpServers["goal-guardian"] = mcpServerEntry(context, { GOAL_GUARDIAN_WORKSPACE_ROOT: root });
-  await writeJsonAtomic(mcpPath, mcp);
+  const shared = await isUserHome(root);
+  const mcp = await readMcp(mcpPath);
+  checkServerName(mcp, mcpPath);
+  await updateHubRegistration(root, context);
+  await writeJsonAtomic(hooksPath, hooks);
+  if (!shared) {
+    mcp.mcpServers ??= {};
+    mcp.mcpServers["goal-guardian"] = mcpServerEntry(context, root);
+    await writeJsonAtomic(mcpPath, mcp);
+  }
 }
 
 export function isGuardianHookCommand(command: unknown): boolean {
-  return typeof command === "string" && /goal-guardian-hook/.test(command);
+  if (typeof command !== "string") return false;
+  // Match our executable, or an older Node launcher whose script was under the hook package.
+  return /^(?:["']?)(?:[^"']*[\\/])?goal-guardian-hook(?:\.exe)?["']?$/i.test(command)
+    || /[\\/](?:cursor-)?goal-guardian-hook[\\/]dist[\\/]cli\.js["']?$/i.test(command);
 }
 
 /**
@@ -130,7 +193,6 @@ export function isGuardianHookCommand(command: unknown): boolean {
  */
 export async function connectWorkspace(root: string, context: vscode.ExtensionContext): Promise<void> {
   await wireIntegration(root, context);
-  await wireUserLevelMcp(context);
   await writeGuardianRule(root);
 }
 
@@ -193,20 +255,16 @@ export async function doctorIntegration(root: string, context: vscode.ExtensionC
   }
 
   const mcpPath = path.join(root, ".cursor", "mcp.json");
-  const mcp = await readJsonOr<{ mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> } | null>(mcpPath, null);
-  const entry = mcp?.mcpServers?.["goal-guardian"];
-  const referencesGuardian = (e: { command?: string; args?: string[] } | undefined): boolean =>
-    Boolean(e && (/goal-guardian-mcp/.test(e.command ?? "") || e.args?.some((a) => /goal-guardian-mcp/.test(a))));
-  if (referencesGuardian(entry)) {
-    const desired = mcpServerEntry(context, { GOAL_GUARDIAN_WORKSPACE_ROOT: root });
+  const mcp = await readMcp(mcpPath);
+  const entry = mcp.mcpServers?.["goal-guardian"];
+  if (mcp.mcpServers && guardianServer(entry) && !(await isUserHome(root))) {
+    const desired = mcpServerEntry(context, root);
     if (JSON.stringify(entry) !== JSON.stringify(desired)) {
-      mcp!.mcpServers!["goal-guardian"] = desired as never;
+      mcp.mcpServers["goal-guardian"] = desired;
       await writeJsonAtomic(mcpPath, mcp);
     }
   }
-
-  // The hub reads the user-level registration; keep it fresh too.
-  await wireUserLevelMcp(context);
+  await updateHubRegistration(root, context);
 }
 
 /** The invited setup flow: goal -> criteria -> constraints (all skippable), then files + wiring. */
@@ -229,6 +287,7 @@ export async function applySetup(root: string, context: vscode.ExtensionContext,
   const clean = (values: string[]): string[] => values.map((s) => s.trim()).filter(Boolean);
 
   const p = getGuardianPaths(root);
+  await connectWorkspace(root, context);
   await ensureGuardianFiles(root);
   if (!(await fileExists(p.config))) await writeJsonAtomic(p.config, defaultConfig());
 
@@ -240,13 +299,14 @@ export async function applySetup(root: string, context: vscode.ExtensionContext,
   });
   await writeJsonAtomic(p.migrationMarker, { from: 2, to: 2, ts: new Date().toISOString(), migratedBy: "setup" });
 
-  await connectWorkspace(root, context);
-
   offerMcpEnableGuidance();
 
   if (form.gitignore) {
     const giPath = path.join(root, ".gitignore");
-    const existing = await fs.readFile(giPath, "utf8").catch(() => "");
+    const existing = await fs.readFile(giPath, "utf8").catch(err => {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw err;
+    });
     if (!existing.includes(".cursor/goal-guardian/telemetry/")) {
       await fs.writeFile(giPath, `${existing.replace(/\n?$/, "\n")}.cursor/goal-guardian/telemetry/\n`, "utf8");
     }
@@ -276,15 +336,12 @@ export function offerMcpEnableGuidance(): void {
 
 /** Remove everything setup created: guardian dir, rule, hook entries, MCP server entry. */
 export async function runUninstall(root: string): Promise<void> {
-  await fs.rm(getGuardianPaths(root).dir, { recursive: true, force: true });
-  await fs.rm(path.join(root, GUARDIAN_RULE_RELATIVE_PATH), { force: true });
-  await unwireUserLevelMcp();
-  for (const skill of GUARDIAN_SKILLS) {
-    await fs.rm(path.join(root, skill.relativeDir), { recursive: true, force: true });
-  }
-
   const hooksPath = path.join(root, ".cursor", "hooks.json");
-  const hooks = await readJsonOr<{ version?: number; hooks?: Record<string, Array<{ command: string }>> } | null>(hooksPath, null);
+  const hooks = await readJsonOr<{ version?: number; hooks?: Record<string, HookEntry[]> } | null>(hooksPath, null);
+  const mcpPath = path.join(root, ".cursor", "mcp.json");
+  const shared = await isUserHome(root);
+  const mcp = await readMcp(mcpPath);
+  await updateHubRegistration(root);
   if (hooks?.hooks) {
     for (const [event, entries] of Object.entries(hooks.hooks)) {
       hooks.hooks[event] = entries.filter((e) => !isGuardianHookCommand(e?.command));
@@ -292,16 +349,20 @@ export async function runUninstall(root: string): Promise<void> {
     }
     // "Leaves no trace" means no trace: a shell holding nothing but our own
     // scaffolding is deleted, a file with someone else's hooks is preserved.
-    if (Object.keys(hooks.hooks).length === 0) await fs.rm(hooksPath, { force: true });
+    if (Object.keys(hooks.hooks).length === 0 && Object.keys(hooks).every(k => k === "hooks" || k === "version")) await fs.rm(hooksPath, { force: true });
     else await writeJsonAtomic(hooksPath, hooks);
   }
 
-  const mcpPath = path.join(root, ".cursor", "mcp.json");
-  const mcp = await readJsonOr<{ mcpServers?: Record<string, unknown> } | null>(mcpPath, null);
-  if (mcp?.mcpServers && "goal-guardian" in mcp.mcpServers) {
+  if (!shared && mcp.mcpServers && guardianServer(mcp.mcpServers["goal-guardian"])) {
     delete mcp.mcpServers["goal-guardian"];
     if (Object.keys(mcp.mcpServers).length === 0 && Object.keys(mcp).length === 1) await fs.rm(mcpPath, { force: true });
     else await writeJsonAtomic(mcpPath, mcp);
+  }
+
+  await fs.rm(getGuardianPaths(root).dir, { recursive: true, force: true });
+  await fs.rm(path.join(root, GUARDIAN_RULE_RELATIVE_PATH), { force: true });
+  for (const skill of GUARDIAN_SKILLS) {
+    await fs.rm(path.join(root, skill.relativeDir), { recursive: true, force: true });
   }
 
   // Empty parent folders we created are litter too; rmdir refuses non-empty

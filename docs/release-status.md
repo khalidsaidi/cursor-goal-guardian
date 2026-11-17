@@ -2,6 +2,12 @@
 
 Updated 2026-11-16 for the installed 1.0.3 Cursor completion and presentation pass, carrying forward the agreed release evidence and completed leverage work. This is the release checklist, not a new benchmark plan.
 
+## Unreleased workspace and goal fixes
+
+Connect preserves tools in UTF-8 BOM settings and leaves unreadable settings intact. Disconnect retains the shared agent-hub registration while another connected project needs it. For registrations inherited from earlier versions, CGG keeps the entry because older projects have no ownership record. Editing the goal from the sidebar or Command Center now derives the checklist from the edited request and preserves explicit workspace boundaries.
+
+The built extension passed the original Connect, Edit goal and Remove reproduction on Windows and WSL Linux, using disposable projects and a simulated Cursor extension API. The extension test suite also passed, including concurrent connections, legacy registrations, invalid settings and goal edits. These checks used no model calls. The public 1.0.4 packages predate the fixes.
+
 ## Documentation correction: 1.0.4
 
 Remove production/editing notes from the product pitch. Both READMEs now describe what the panel walkthrough shows: the goal, completed work and finish conditions. The public changelog drops the capture-editing note, and the walkthrough footer describes the panel rather than how the video was assembled. No interface, goal, review, ADK or RRSI behavior changes. Existing native-verified packages and actual Cursor evidence carry forward. Open VSX makes released READMEs immutable, so 1.0.4 is a documentation/metadata release; only package version metadata, README and changelog entries change in the VSIX. Every other archive entry must match 1.0.3 byte for byte, without ZIP extra fields. GitHub 1.0.4 is published with verified asset digests, and the installed Linux package matches its archive. Open VSX latest now resolves to 1.0.4, and current public READMEs were checked for every platform: the unwanted production phrase is absent. Live 1.0.4 packages are verified on Linux x64/ARM64, macOS x64/ARM64 and Windows ARM64. Windows x64 still exposes 1.0.0 after accepting the newer uploads; its current README never contained the phrase. The remaining registry activation is separate from this completed wording correction. Evidence: `/home/khali/ggw-study/release-1.0.4-docs/` (`archive-comparison.json`, `github-verification.json`, `public-copy-verification.json`, `installed-verification.json`).

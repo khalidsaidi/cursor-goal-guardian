@@ -3,14 +3,12 @@ import {
   detectWorkspaceFormat,
   getGuardianPaths,
   migrateV1toV2,
-  readContractSafe,
-  writeContract,
 } from "@goal-guardian/core";
 import { applyGoalCommand, applyReviewCommand, improveInBackground } from "./goalControls.js";
 import { PanelController } from "./panel/panelController.js";
 import { StatusBar } from "./statusBar.js";
 import { applySetup, connectWorkspace, doctorIntegration, offerMcpEnableGuidance, runUninstall } from "./setup.js";
-import { openCommandCenter } from "./commandCenter.js";
+import { editWorkspaceGoal, openCommandCenter } from "./commandCenter.js";
 
 /**
  * Activation contract: in a workspace without guardian files this registers
@@ -30,10 +28,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       } else if (root && command.startsWith("review.")) await applyReviewCommand(root, command, () => controller.refresh(), context.extensionPath);
       else if (command === "dismissTour") await context.workspaceState.update("goalGuardian.tour.dismissed", true);
       else if (command === "editGoal") {
-        if (!root) return;
-        const contract = await readContractSafe(root);
-        const goal = await vscode.window.showInputBox({ title: "Goal", value: contract.goal, prompt: "What should the agent finish? Keep any important boundaries." });
-        if (goal !== undefined) await writeContract(root, { ...contract, goal });
+        if (root) await editWorkspaceGoal(root).catch(err => vscode.window.showWarningMessage(`Goal Guardian: ${err.message}`));
       } else await vscode.commands.executeCommand(`goalGuardian.${command}`);
       await controller.refresh();
     },
@@ -140,7 +135,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       startServices();
     } else if (format === "v2") {
-      await doctorIntegration(root, context);
+      try {
+        await doctorIntegration(root, context);
+      } catch (err) {
+        void vscode.window.showWarningMessage(`Goal Guardian: ${err instanceof Error ? err.message : String(err)}`);
+      }
       startServices();
     } else if (!context.globalState.get<boolean>("goalGuardian.welcomed", false)) {
       // format "none": stay inert on disk, but introduce ourselves exactly

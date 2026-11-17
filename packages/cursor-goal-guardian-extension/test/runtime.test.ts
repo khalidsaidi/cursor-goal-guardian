@@ -24,7 +24,9 @@ describe("self-contained binary wiring", () => {
   it("hooks and both MCP entries invoke the bundled executables directly", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "gg-wire-"));
     cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
-    process.env.GOAL_GUARDIAN_TEST_HOME = root;
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "gg-home-"));
+    cleanups.push(() => fs.rm(home, { recursive: true, force: true }));
+    process.env.GOAL_GUARDIAN_TEST_HOME = home;
 
     await wireIntegration(root, { extensionPath: "/ext/dir" } as never, );
 
