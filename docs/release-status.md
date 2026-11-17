@@ -2,11 +2,11 @@
 
 Updated 2026-11-16 for the installed 1.0.3 Cursor completion and presentation pass, carrying forward the agreed release evidence and completed leverage work. This is the release checklist, not a new benchmark plan.
 
-## Unreleased workspace and goal fixes
+## 1.0.5 workspace and goal fixes
 
 Connect preserves tools in UTF-8 BOM settings and leaves unreadable settings intact. Disconnect retains the shared agent-hub registration while another connected project needs it. For registrations inherited from earlier versions, CGG keeps the entry because older projects have no ownership record. Editing the goal from the sidebar or Command Center now derives the checklist from the edited request and preserves explicit workspace boundaries.
 
-The built extension passed the original Connect, Edit goal and Remove reproduction on Windows and WSL Linux, using disposable projects and a simulated Cursor extension API. The extension test suite also passed, including concurrent connections, legacy registrations, invalid settings and goal edits. These checks used no model calls. The public 1.0.4 packages predate the fixes.
+The built extension passed the original Connect, Edit goal and Remove reproduction on Windows and WSL Linux, using disposable projects and a simulated Cursor extension API. The extension test suite also passed, including concurrent connections, legacy registrations, invalid settings and goal edits. These checks used no model calls. The [native package run](https://github.com/khalidsaidi/cursor-goal-guardian/actions/runs/44169919612) passed on Windows, macOS and Linux, each on x64 and ARM64. The [GitHub release](https://github.com/khalidsaidi/cursor-goal-guardian/releases/tag/v1.0.5) ships those packages from commit `1427598`. All public asset checksums matched the staged files. Open VSX publication is pending access to its publishing credential. On November 17 the Windows x64 registry listing still served 1.0.0 and the other five targets served 1.0.4.
 
 ## Documentation correction: 1.0.4
 
