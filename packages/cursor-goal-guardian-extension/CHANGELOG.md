@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.6
+
+- On Windows, bundled Python tools find Guardian’s own interpreter when the extension is installed or moved.
+
 ## 1.0.5
 
 - Connecting Guardian preserves existing Cursor tools. Removing it from one project keeps other connected projects working.

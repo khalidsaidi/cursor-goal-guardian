@@ -23,11 +23,56 @@ const flag = (name, fallback) => {
 const requested = flag("--target", host);
 const selected = requested === "all" ? targets : [requested];
 if (selected.some(target => !targets.includes(target))) throw new Error(`Unknown target: ${requested}`);
+const { name, publisher, version } = JSON.parse(await fs.readFile(path.join(extDir, "package.json"), "utf8"));
+const zipHeader = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+async function checkRegistryDownloads() {
+  const registry = (process.env.OVSX_REGISTRY_URL ?? "https://open-vsx.org").replace(/\/$/, "");
+  const results = await Promise.allSettled(selected.map(async target => {
+    const url = `${registry}/api/${publisher}/${name}/${target}/${version}`;
+    const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`registry returned HTTP ${response.status}`);
+    }
+    const entry = await response.json();
+    if (entry.namespace !== publisher || entry.name !== name || entry.version !== version || entry.targetPlatform !== target) {
+      throw new Error("registry returned a different package");
+    }
+    if (!entry.files?.download) throw new Error("registry supplied no download link");
+    const download = await fetch(entry.files.download, {
+      headers: { Range: "bytes=0-3" }, signal: AbortSignal.timeout(15_000),
+    });
+    if (!download.ok || !download.body) {
+      await download.body?.cancel();
+      throw new Error(`download returned HTTP ${download.status} or an empty body`);
+    }
+    let read = 0;
+    for await (const chunk of download.body) {
+      const prefix = chunk.subarray(0, zipHeader.length - read);
+      if (!zipHeader.subarray(read, read + prefix.length).equals(prefix)) break;
+      read += prefix.length;
+      if (read === zipHeader.length) return;
+    }
+    throw new Error("download did not start with a VSIX archive header");
+  }));
+  for (const [index, result] of results.entries()) {
+    if (result.status === "fulfilled") console.log(`${selected[index]} ${version} is downloadable`);
+    else {
+      console.error(`${selected[index]} ${version} download unconfirmed: ${result.reason.message}`);
+      process.exitCode = 1;
+    }
+  }
+}
+
+if (process.argv.includes("--check-registry")) {
+  if (process.argv.includes("--check")) throw new Error("Use --check for local artifacts or --check-registry for public downloads");
+  await checkRegistryDownloads();
+  process.exit(process.exitCode ?? 0);
+}
 const artifacts = flag("--artifacts", null);
 if (!artifacts && selected.some(target => target !== host)) {
   throw new Error("Cross-platform publishing needs --artifacts DIR containing the VSIX files and native CI verification receipts. Use --target all to publish the full matrix.");
 }
-const version = JSON.parse(await fs.readFile(path.join(extDir, "package.json"), "utf8")).version;
 function run(command, args, cwd = root) {
   const result = spawn(command, args, { stdio: "inherit", cwd, windowsHide: true });
   if (result.status !== 0) throw new Error(`Command failed: ${command} (exit ${result.status ?? "unavailable"})`);
@@ -61,3 +106,5 @@ if (!token) throw new Error("Set OVSX_TOKEN (or OVSX_PAT) to an Open VSX publish
 for (const { archive, target } of packages) {
   run("pnpm", ["dlx", "ovsx", "publish", archive, "--target", target, "-p", token]);
 }
+await checkRegistryDownloads();
+if (process.exitCode) console.error(`Recheck without uploading: pnpm publish:ovsx --target ${requested} --check-registry`);
