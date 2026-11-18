@@ -51,6 +51,8 @@ tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev 
 [profile.release]
 strip = true
 lto = "thin"
-codegen-units = 16
+# Match the pinned Codex workspace release profile: balance code generation
+# against binary size without changing panic handling or runtime features.
+codegen-units = 4
 
 [workspace]
