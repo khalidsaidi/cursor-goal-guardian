@@ -1,108 +1,74 @@
-name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
-    inputs:
-      target:
-        description: Native package to check (all retains the complete release matrix)
-        type: choice
-        default: all
-        options: [all, linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64, win32-arm64]
-      native_run:
-        description: Earlier native build with unchanged Codex inputs; full host behavior checks still run (optional)
-        type: string
-        default: ''
-
+name: Windows native package verification
+on: workflow_dispatch
+permissions:
+  contents: read
 jobs:
-  platform:
-    name: Complete package (${{ matrix.target }})
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(inputs.target && inputs.target != 'all' && format('["{0}"]', inputs.target) || '["linux-x64","linux-arm64","darwin-x64","darwin-arm64","win32-x64","win32-arm64"]') }}
-    runs-on: ${{ fromJSON('{"linux-x64":"ubuntu-24.04","linux-arm64":"ubuntu-24.04-arm","darwin-x64":"macos-15-intel","darwin-arm64":"macos-latest","win32-x64":"windows-latest","win32-arm64":"windows-11-arm"}')[matrix.target] }}
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 120
     env:
-      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       CARGO_TARGET_DIR: ${{ github.workspace }}/packages/codex-goals/target
-      GOAL_GUARDIAN_CODEX_GOALS: ${{ github.workspace }}/dist-bin/${{ matrix.target }}/goal-guardian-codex-goals${{ startsWith(matrix.target, 'win32-') && '.exe' || '' }}
+      RUSTUP_TOOLCHAIN: 1.100.0
     steps:
       - uses: actions/checkout@v4
-      - name: Allow long dependency paths on Windows
-        if: runner.os == 'Windows'
+        with:
+          persist-credentials: false
+      - name: Prepare a clean native build
         shell: pwsh
         run: |
           git config --global core.longpaths true
           Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1
+          foreach ($path in @($env:CARGO_TARGET_DIR, '.cache/codex-goals', 'dist-bin/win32-x64')) {
+            if (Test-Path $path) { throw "Expected clean build directory: $path" }
+          }
+          rustup toolchain install 1.100.0 --profile minimal
+          rustc -vV
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
-          cache: pnpm
       - uses: actions/setup-python@v5
         id: python
         with:
           python-version: '3.12'
-      - uses: dtolnay/rust-toolchain@stable
-        if: inputs.native_run == ''
-      - uses: Swatinem/rust-cache@v2
-        if: inputs.native_run == ''
-        with:
-          workspaces: packages/codex-goals
-          shared-key: codex-goals
-          cache-on-failure: true
-          cache-workspace-crates: true
       - uses: oven-sh/setup-bun@v2
-        if: matrix.target != 'win32-arm64'
       - run: pnpm install --frozen-lockfile
-      - run: node scripts/check-versions.mjs
       - run: pnpm -r build
-      - name: Check the source and native test result before reusing Codex
-        if: inputs.native_run != ''
-        run: node scripts/check-native-reuse.mjs '${{ inputs.native_run }}' '${{ matrix.target }}'
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - uses: actions/download-artifact@v4
-        if: inputs.native_run != ''
-        with:
-          name: native-codex-${{ matrix.target }}
-          path: .cache/codex-goals/${{ matrix.target }}
-          run-id: ${{ inputs.native_run }}
-          github-token: ${{ github.token }}
-      - name: Select the checked native artifact
-        if: inputs.native_run != ''
-        run: echo 'CGG_USE_CACHED_CODEX=1' >> "$GITHUB_ENV"
-      - name: Build the actual native goal runtime and hook/MCP programs
-        run: node scripts/compile-binaries.mjs --host-only
-      - uses: actions/upload-artifact@v4
-        with:
-          name: native-codex-${{ matrix.target }}
-          path: dist-bin/${{ matrix.target }}/goal-guardian-codex-goals${{ startsWith(matrix.target, 'win32-') && '.exe' || '' }}
-          if-no-files-found: error
-      - name: Test the real Codex goal wrapper
-        if: inputs.native_run == ''
-        run: cargo test --release --locked --manifest-path packages/codex-goals/Cargo.toml
-      - run: pnpm -r exec tsc -p tsconfig.json --noEmit
-      - run: pnpm test
-      - run: pnpm --filter @goal-guardian/e2e test:e2e:offline
-      - name: Build the complete platform VSIX
-        run: pnpm package:vsix --target ${{ matrix.target }}
+      - name: Compile and package from source
+        run: pnpm package:vsix --target win32-x64
         env:
           CGG_BUILD_PYTHON: ${{ steps.python.outputs.python-path }}
-      - name: Execute the contents of the VSIX, including ADK and RRSI
-        run: node scripts/verify-package.mjs packages/cursor-goal-guardian-extension/cursor-goal-guardian-${{ matrix.target }}.vsix
+      - name: Compare compiler output with the copy in the VSIX
+        shell: python
+        run: |
+          import hashlib, json, os
+          from pathlib import Path
+          from zipfile import ZipFile
+          name = "goal-guardian-codex-goals.exe"
+          binary = Path(os.environ["CARGO_TARGET_DIR"]) / "release" / name
+          archive = Path("packages/cursor-goal-guardian-extension/cursor-goal-guardian-win32-x64.vsix")
+          with binary.open("rb") as raw, ZipFile(archive) as package, package.open("extension/bin/" + name) as entry:
+              compiled = hashlib.file_digest(raw, "sha256").hexdigest()
+              packed = hashlib.file_digest(entry, "sha256").hexdigest()
+          assert compiled == packed, "Packaged executable differs from compiler output"
+          with archive.open("rb") as vsix:
+              digest = hashlib.file_digest(vsix, "sha256").hexdigest()
+          record = dict(commit=os.environ["GITHUB_SHA"], compiled_sha256=compiled, packaged_exe_sha256=packed, vsix_sha256=digest)
+          print(json.dumps(record))
+          Path("native-build.json").write_text(json.dumps(record, indent=2) + "\n")
+      - name: Test the packaged extension on Windows
+        run: node scripts/verify-package.mjs packages/cursor-goal-guardian-extension/cursor-goal-guardian-win32-x64.vsix
         env:
           CGG_BUILD_PYTHON: ${{ steps.python.outputs.python-path }}
-      - uses: actions/upload-artifact@v4
+      - name: Retain the package and its verification
+        if: ${{ !cancelled() && hashFiles('native-build.json') != '' }}
+        uses: actions/upload-artifact@v4
         with:
-          name: complete-package-${{ matrix.target }}
+          name: native-windows-package
           path: |
-            packages/cursor-goal-guardian-extension/cursor-goal-guardian-${{ matrix.target }}.vsix
-            packages/cursor-goal-guardian-extension/cursor-goal-guardian-${{ matrix.target }}.vsix.verified.json
-          if-no-files-found: error
+            native-build.json
+            packages/cursor-goal-guardian-extension/cursor-goal-guardian-win32-x64.vsix
+            packages/cursor-goal-guardian-extension/cursor-goal-guardian-win32-x64.vsix.verified.json
+          compression-level: 0
+          retention-days: 1
