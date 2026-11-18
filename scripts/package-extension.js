@@ -89,7 +89,6 @@ async function bundlePython() {
   // Git Bash may put GNU tar first; it treats a Windows drive letter as a remote host.
   const tar = process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\Windows", "System32", "tar.exe") : "tar";
   run(tar, ["-xzf", archive, "-C", binDir], root);
-  await prunePython(path.join(binDir, "python"));
   if (target.startsWith("win32")) {
     // The Codex executable imports this CRT too. Windows searches beside that executable,
     // not inside Python's subfolder; reuse the already bundled, target-matched runtime.
@@ -192,8 +191,11 @@ async function bundleEvaluator() {
   const vendored = path.join(root, "third_party", "adk-python");
   await fs.cp(path.join(vendored, "src"), path.join(home, "adk"), { recursive: true, filter: (src) => !/(^|[\\/])__pycache__([\\/]|$)/.test(src) });
   await fs.copyFile(path.join(vendored, "LICENSE"), path.join(home, "adk", "LICENSE"));
+  const installer = target.startsWith("win32")
+    ? [path.join(root, "scripts/install-windows-evaluator.py"), path.join(binDir, "python"), target]
+    : ["-m", "pip"];
   run(process.env.CGG_BUILD_PYTHON ?? (process.platform === "win32" ? "python" : "python3"), [
-    "-m", "pip", "install", "--quiet", "--no-input", "--no-deps", "--only-binary=:all:", "--implementation", "cp", "--python-version", "3.12", "--abi", "cp312",
+    ...installer, "install", "--quiet", "--no-input", "--no-deps", "--only-binary=:all:", "--implementation", "cp", "--python-version", "3.12", "--abi", "cp312",
     ...platforms.flatMap((p) => ["--platform", p]),
     "--target", path.join(home, "site-packages"), "-r", path.join(root, "packages", "evaluator", "requirements.txt"),
   ], root);
@@ -213,6 +215,7 @@ async function bundleEvaluator() {
 await bundlePython();
 await bundleRsi();
 await bundleEvaluator();
+await prunePython(path.join(binDir, "python"));
 
 const out = `cursor-goal-guardian-${target}.vsix`;
 run("pnpm", ["dlx", "@vscode/vsce", "package", "--no-dependencies", "--target", target, "--out", out], extDir);

@@ -2,7 +2,7 @@
   "name": "cursor-goal-guardian-extension",
   "displayName": "Cursor Goal Guardian",
   "description": "Help Cursor finish what you asked. Goal loop with OpenAI Codex + DeepSeek, independent review with CGG + Google ADK, and feedback-driven reviewer learning with Google RRSI.",
-  "version": "1.0.5",
+  "version": "1.0.7",
   "publisher": "khalidsaidi",
   "icon": "images/icon.png",
   "galleryBanner": {

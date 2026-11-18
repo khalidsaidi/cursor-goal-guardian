@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.7
+
+- Improve the Windows x64 release build using Codex’s release compilation settings.
+- Windows x64 evaluator commands use CGG’s bundled Python, so they work after installation without the build machine’s Python path.
+- Other platform runtimes are unchanged from 1.0.5.
+
 ## 1.0.5
 
 - Connecting Guardian preserves existing Cursor tools. Removing it from one project keeps other connected projects working.
